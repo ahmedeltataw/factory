@@ -52,4 +52,19 @@ describe('toolchain configuration', () => {
     ].sort()
     expect(names).toEqual(['@types/node', 'tsdown', 'typescript', 'vitest', 'zod'])
   })
+
+  it('pins the exact devDependency versions', () => {
+    expect(pkg.devDependencies).toEqual({
+      '@types/node': '24.19.2',
+      tsdown: '0.22.14',
+      typescript: '6.0.3',
+      vitest: '4.1.8',
+    })
+  })
+
+  it('pins the exact dependency versions', () => {
+    expect(pkg.dependencies).toEqual({
+      zod: '4.4.3',
+    })
+  })
 })
