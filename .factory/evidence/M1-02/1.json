@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M1-02",
+  "attempt": 1,
+  "role": "builder",
+  "provider": "opencode",
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "cli_version": "2.0.26",
+  "base_sha": "3f5a9be69527c23ecc4847cf2703c17a6301e0af",
+  "head_sha": "b133e5c93675af2333fd9ebbab4d4f8828dfb746",
+  "checks": [
+    {
+      "id": "CHK-M1-02-a",
+      "command": "sha256 of 16 ported files vs dsh blobs",
+      "result": "pass",
+      "output": "16/16 equal (Lead re-ran)"
+    },
+    {
+      "id": "CHK-M1-02-b",
+      "command": "pnpm vitest run tests/protected",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-02-c",
+      "command": "pnpm vitest run tests/retry-health.spec.ts (no @deepseek-ai import)",
+      "result": "pass",
+      "output": "173/173 incl. protected; helper adds source.kind 'model' required by retry-health.ts"
+    },
+    {
+      "id": "CHK-M1-02-d",
+      "command": "pnpm typecheck && pnpm build",
+      "result": "pass"
+    }
+  ],
+  "layers": {
+    "L1": "pass",
+    "L3": "approve (codex gpt-6.1-terra)",
+    "L4": "pass"
+  },
+  "ended_at": "2026-11-07T13:58:22+00:00"
+}
