@@ -64,7 +64,8 @@
       "id": "CHK-M1-01-g",
       "command": "tsdown.config.ts single entry; pnpm build",
       "result": "not-run",
-      "output": "build deferred to M1-04 (core absent)"
+      "output": "build deferred to M1-04 (core absent)",
+      "deferred_to": "M1-04"
     },
     {
       "id": "CHK-M1-01-f2",

@@ -45,7 +45,7 @@ Path: `.factory/evidence/<card-id>/<attempt>.json`.
 }
 ```
 
-`result` is one of `pass | fail | not-run`. `not-run` never counts as pass. Captured outputs are stored next to the record as `<attempt>.<check>.log`.
+`result` is one of `pass | fail | not-run`. `not-run` never counts as pass; it is allowed in a record only with `deferred_to: <card>` naming the card that must run it. Captured outputs are stored next to the record as `<attempt>.<check>.log`.
 
 ## 4. Hash rule
 
