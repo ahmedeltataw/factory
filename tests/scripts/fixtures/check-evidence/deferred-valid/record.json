@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "card": "M1-03",
+  "attempt": 1,
+  "role": "builder",
+  "checks": [
+    { "id": "CHK-M1-03-a", "result": "pass" },
+    { "id": "CHK-M1-03-b", "result": "not-run", "deferred_to": "M1-04" }
+  ]
+}

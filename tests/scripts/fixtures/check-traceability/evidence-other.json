@@ -1,0 +1,4 @@
+{
+  "card": "M1-U",
+  "checks": [{ "id": "CHK-M1-U-a", "result": "pass" }]
+}
