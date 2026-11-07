@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "card": "M1-03",
+  "attempt": 3,
+  "role": "builder",
+  "provider": "opencode",
+  "model": "opencode/glm-5.3-flash-free",
+  "cli_version": "2.0.26",
+  "base_sha": "1b85c447c054838325ae27d9ddae4767107fff46",
+  "head_sha": "ed707c1fea055610315035d99f11d8818b5d4e20",
+  "checks": [
+    {
+      "id": "CHK-M1-03-a",
+      "command": "review of .github/workflows/ci.yml (matrix 2 OS x Node 24/26, all five scripts)",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-03-b",
+      "command": "tests/scripts/check-forbidden-imports.spec.ts + manual negatives",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-03-c",
+      "command": "tests/scripts/check-traceability.spec.ts",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-03-d",
+      "command": "tests/scripts/check-evidence.spec.ts + manual not-run negative",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-03-e",
+      "command": "tests/scripts/check-scope.spec.ts + manual docs path negative",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-03-f",
+      "command": "tests/scripts/check-manifest.spec.ts + manual modified-core negative",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-03-g",
+      "command": "tests/scripts/windows-paths.spec.ts; no new dependency (typescript already a devDependency)",
+      "result": "pass"
+    }
+  ],
+  "attempts_log": [
+    {
+      "attempt": 0,
+      "result": "standalone server failed to start (parallel start race), retried"
+    },
+    {
+      "attempt": 1,
+      "review": "changes: CI ran 3 of 5 scripts; comment/string false positives; template import bypass; section boundary"
+    },
+    {
+      "attempt": 2,
+      "review": "changes: regex-literal bypass in hand-written scanner"
+    },
+    {
+      "attempt": 3,
+      "review": "approve; scanner replaced by TypeScript AST"
+    }
+  ],
+  "layers": {
+    "L1": "pass (vitest 252/252, Lead re-ran)",
+    "L2": "pass (negative fixtures + Lead manual negatives)",
+    "L3": "approve (codex gpt-6.1-terra, pass 3)",
+    "L4": "pass"
+  },
+  "ended_at": "2026-11-07T14:32:54+00:00"
+}
