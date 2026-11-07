@@ -16,6 +16,9 @@ jobs:
         node: [24, 26]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # full history so check-scope can diff against origin/main
+          fetch-depth: 0
 
       # pnpm version comes from package.json "packageManager"
       - uses: pnpm/action-setup@v4
@@ -28,6 +31,10 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      - name: Scope check (diff against origin/main, PR only)
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-scope.mjs --base origin/main
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -39,6 +46,9 @@ jobs:
 
       - name: Forbidden import scan
         run: node scripts/check-forbidden-imports.mjs
+
+      - name: Traceability check
+        run: node scripts/check-traceability.mjs --all
 
       - name: Manifest check
         run: node scripts/check-manifest.mjs

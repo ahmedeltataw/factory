@@ -116,4 +116,63 @@ describe('check-traceability', () => {
     expect(run.status).toBe(1)
     expect(run.stdout.trim()).toMatch(/^FAIL: /)
   })
+
+  it('does not end the section at a #### sub-heading', () => {
+    const run = runScript('check-traceability.mjs', [
+      '--spec',
+      specMd('spec-subheading.md'),
+      '--card',
+      'M1-W',
+      '--evidence',
+      specMd('evidence-subheading.json'),
+    ])
+    expect(run.status).toBe(0)
+    expect(run.stdout.trim()).toContain('OK (2 check(s) covered)')
+  })
+
+  it('rejects --all combined with other flags', () => {
+    const run = runScript('check-traceability.mjs', [
+      '--all',
+      '--spec',
+      specMd('spec.md'),
+    ])
+    expect(run.status).toBe(1)
+    expect(run.stdout.trim()).toMatch(/^FAIL: --all cannot be combined/)
+  })
+})
+
+describe('check-traceability --all', () => {
+  const allRoot = (name: string) => fixturePath('check-traceability', name)
+
+  it('fails when one checked card has an uncovered check (fixture: pass + fail + section-less card)', () => {
+    const run = runScript('check-traceability.mjs', ['--all'], { cwd: allRoot('all') })
+    expect(run.status).toBe(1)
+    const output = run.stdout.trim()
+    // the failing card is named with its uncovered check id
+    expect(output).toMatch(/^FAIL: ALL-F: /)
+    expect(output).toContain('CHK-ALL-F-a')
+    // the record with the highest attempt is used (attempt 2, a fail result)
+    expect(output).toMatch(/^FAIL: ALL-F: 1 check\(s\) without pass result/)
+    // the passing card was checked (cards are listed in sorted order)
+    expect(output).toContain('checked 2 card(s): ALL-F, ALL-P')
+    // the card without a spec section is skipped and listed
+    expect(output).toContain('skipped: ALL-S')
+  })
+
+  it('passes when every checked card is covered', () => {
+    const run = runScript('check-traceability.mjs', ['--all'], { cwd: allRoot('all-pass') })
+    expect(run.status).toBe(0)
+    const output = run.stdout.trim()
+    expect(output).toMatch(/^OK /)
+    expect(output).toContain('checked 1 card(s): ALL-P')
+    expect(output).toContain('skipped: ALL-S')
+  })
+
+  it('fails when no fixture docs/milestones directory exists', () => {
+    const run = runScript('check-traceability.mjs', ['--all'], {
+      cwd: fixturePath('check-forbidden-imports', 'clean'),
+    })
+    expect(run.status).toBe(1)
+    expect(run.stdout.trim()).toMatch(/^FAIL: cannot read docs[\\/]milestones/)
+  })
 })

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "card": "ALL-P",
+  "attempt": 1,
+  "checks": [
+    {
+      "id": "CHK-ALL-P-a",
+      "command": "pass widget exists",
+      "result": "pass"
+    }
+  ]
+}

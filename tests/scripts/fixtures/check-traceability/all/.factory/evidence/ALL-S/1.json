@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "card": "ALL-S",
+  "attempt": 1,
+  "checks": [
+    {
+      "id": "CHK-ALL-S-a",
+      "command": "no spec section for this card anywhere",
+      "result": "pass"
+    }
+  ]
+}

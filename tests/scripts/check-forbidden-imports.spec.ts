@@ -9,16 +9,30 @@ const failingCases = [
   'bad-feishu',
   'bad-dsh-prefix',
   'bad-dynamic',
+  'bad-export-star',
+  'bad-template-dynamic',
+  'bad-multiline',
   'core-nodefs',
   'core-zod',
   'core-parent',
 ]
+
+const okCases = ['ok-comment', 'ok-plain-string', 'ok-dynamic-interpolated']
 
 describe('check-forbidden-imports', () => {
   it('passes on the clean fixture', () => {
     const run = runScript('check-forbidden-imports.mjs', [
       '--root',
       fixturePath('check-forbidden-imports', 'clean'),
+    ])
+    expect(run.status).toBe(0)
+    expect(run.stdout.trim()).toContain('OK')
+  })
+
+  it.each(okCases)('passes on fixture %s (comment/string/dynamic-literal are not imports)', (dir) => {
+    const run = runScript('check-forbidden-imports.mjs', [
+      '--root',
+      fixturePath('check-forbidden-imports', dir),
     ])
     expect(run.status).toBe(0)
     expect(run.stdout.trim()).toContain('OK')

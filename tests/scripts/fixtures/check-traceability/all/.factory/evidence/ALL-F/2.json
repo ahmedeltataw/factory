@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "card": "ALL-F",
+  "attempt": 2,
+  "checks": [
+    {
+      "id": "CHK-ALL-F-a",
+      "command": "fail widget fails",
+      "result": "fail",
+      "output": "deliberate fixture failure"
+    }
+  ]
+}
