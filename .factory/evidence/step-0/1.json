@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "card": "step-0",
+  "attempt": 1,
+  "role": "lead",
+  "provider": "claude",
+  "base_sha": "3eec1abf45655d5f3ba82667b1edb8144d191dae",
+  "head_sha": null,
+  "note": "Step 0 artifacts uncommitted on branch step-0; head_sha filled at commit",
+  "checks": [
+    {
+      "id": "CHK-S0-a",
+      "command": "node -v (nvm Node 26)",
+      "exit_code": 0,
+      "result": "pass",
+      "output": "v26.13.0 via nvm (C:/Users/DownTown/AppData/Local/Author Software/nvm/.nodejs); system PATH still resolves v25.2.1 from C:/Program Files/nodejs first"
+    },
+    {
+      "id": "CHK-S0-b",
+      "command": "pnpm -v",
+      "exit_code": 0,
+      "result": "pass",
+      "output": "12.15.0"
+    },
+    {
+      "id": "CHK-S0-c",
+      "command": "git ls-remote origin HEAD",
+      "exit_code": 0,
+      "result": "pass",
+      "output": "3eec1abf45655d5f3ba82667b1edb8144d191dae\tHEAD"
+    },
+    {
+      "id": "CHK-S0-d",
+      "command": "verify blob_sha256 of 20 manifest files against pinned commit",
+      "exit_code": 0,
+      "result": "pass",
+      "output": "20/20 match"
+    },
+    {
+      "id": "CHK-S0-e",
+      "command": "git rev-parse <commit>^{tree}",
+      "exit_code": 0,
+      "result": "pass",
+      "output": "3efbb036e5a56183c6bf642e2e1856a1f64e7be3"
+    },
+    {
+      "id": "CHK-S0-f",
+      "command": "sha256 licenses/dsh-superagent-MIT.txt == license_sha256",
+      "exit_code": 0,
+      "result": "pass",
+      "output": "6d66f91815b720e18cfb2b3552043a0359236aec9a1a6917787900546f6ce550"
+    },
+    {
+      "id": "CHK-S0-g",
+      "command": "required Step 0 documents exist",
+      "exit_code": 0,
+      "result": "pass",
+      "output": "8/8 present"
+    },
+    {
+      "id": "CHK-S0-h",
+      "command": "test -f LICENSE (MIT, Designer decision)",
+      "exit_code": 0,
+      "result": "pass",
+      "output": "LICENSE present"
+    }
+  ],
+  "review": {
+    "reviewer": "codex gpt-6.1-terra",
+    "pass1": "changes (1 blocker, 4 major, 1 minor)",
+    "pass2": "changes (1 major, 1 minor)",
+    "after_pass2": "both findings fixed by Lead; not re-reviewed a third time"
+  },
+  "lead_found": "per-file hashes were first taken from CRLF working copies (core.autocrlf=true); regenerated from git blobs",
+  "layers": {
+    "L1": "n/a (no code)",
+    "L3": "pass2 findings fixed",
+    "L4": "pass"
+  },
+  "ended_at": "2026-11-07T12:54:10+00:00"
+}

@@ -1,0 +1,119 @@
+{
+  "schema_version": 2,
+  "source": {
+    "repository": "https://github.com/deepseek-ai/dsh-superagent-prototype",
+    "commit": "8c32a9dc5d72c033816c6a8110b37f40cf94fba4",
+    "commit_date": "2026-10-31T20:06:31+08:00",
+    "tree": "3efbb036e5a56183c6bf642e2e1856a1f64e7be3",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 DeepSeek Harness Team",
+    "license_sha256": "6d66f91815b720e18cfb2b3552043a0359236aec9a1a6917787900546f6ce550",
+    "trust": "untrusted research prototype; read-only reference"
+  },
+  "hash_rule": "sha256 of the git blob content at the pinned commit (`git show <commit>:<path>`), i.e. LF line endings, never of a Windows working-tree copy",
+  "recorded_at": "2026-11-07",
+  "recorded_by": "Lead",
+  "files_selected_for_m1": [
+    {
+      "path": "LICENSE",
+      "blob_sha256": "6d66f91815b720e18cfb2b3552043a0359236aec9a1a6917787900546f6ce550",
+      "action": "attribution"
+    },
+    {
+      "path": "src/app/retry-health.ts",
+      "blob_sha256": "f7478818946e6e8ed8508152803eb7262a01f1d10a436549e3a867e0724eda3a",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/assignments.ts",
+      "blob_sha256": "6acf4b858b35d95c875680e39b1e3c41557bbe6d39f65031bb26927289327065",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/engine.ts",
+      "blob_sha256": "bd9a4caff834859877d1a08ccddebc990d0e1ca568674b80f9d59ce5adcac827",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/errors.ts",
+      "blob_sha256": "aa7532a2d1f8c443608683ef1231bf3d81b842f67a87d9b77742b5c76d515009",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/evals.ts",
+      "blob_sha256": "38916de24ec6e1a27118dd5d7a7efa67bf7a2dfdbab26fb59d377516269e2fc8",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/ids.ts",
+      "blob_sha256": "bc4bc6fd43ea1377087ff2815706c57f0200666aeb4a7711a40489c377f141ab",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/index.ts",
+      "blob_sha256": "a5a1cf43f02eafaf520a5bfaf5e76b71ba521d04ee648cfcf12b3843cc474a3e",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/intake.ts",
+      "blob_sha256": "323aadefea69436ba23ed2de3bdbaad673d61915be9e239f3233ecf551a74179",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/memory.ts",
+      "blob_sha256": "36cefca987a4e533369a414e52e3fb4754945ae942bb021f8e5cf23c186cf536",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/model.ts",
+      "blob_sha256": "982155fe6a03c887a7ac4475c6d1592d12aa23c5fe3698403c93bbfd6469d44a",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/part.ts",
+      "blob_sha256": "437c4f4bcc05e836c056cdb45bbf451e55242d62b602b489f4df902be112e73e",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/ports.ts",
+      "blob_sha256": "0b44f1cd716d64776b0e3ea74a158cf0effd92e763b1b13c7705e766e9225a43",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/reasons.ts",
+      "blob_sha256": "dc29e0c3c52e4ffd6e8f27a618cbe704a83fdbd9c5a1b99a1e0c4184d5c33af4",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/replies.ts",
+      "blob_sha256": "5a8821a1b9d951d2255709543e0be762c6d3204bca07a77ff17c7bfe82ba66f4",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/stage.ts",
+      "blob_sha256": "b935012a654d2a68ca20cb27909ddc8dceafb704b56a16a23a08036a546141df",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "src/core/tickets.ts",
+      "blob_sha256": "1d9f964ad34b54cbb0403bde16af58851e5e80111177ce73a27b6034e9af940e",
+      "action": "port-verbatim"
+    },
+    {
+      "path": "tests/core-engine.spec.ts",
+      "blob_sha256": "e29358c139a2dbb1a2877e980e043f34cf39bca1905fb10ee14e0b4866bc1a6b",
+      "action": "protected-test (one import line rewritten)"
+    },
+    {
+      "path": "tests/retry-health.spec.ts",
+      "blob_sha256": "a549241ee55f456e7e82676039dd9669d534f43f70655587b5c4a698ba0e4053",
+      "action": "port-adapt"
+    },
+    {
+      "path": "tests/stage.spec.ts",
+      "blob_sha256": "3df130eae87d70643f0c924caf66fbca8cb27ced50467e0c7283dee0a39436be",
+      "action": "protected-test (one import line rewritten)"
+    }
+  ],
+  "inventory": "docs/dsh-inventory.md"
+}
