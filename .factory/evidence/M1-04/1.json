@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "card": "M1-04",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead+designer",
+  "head_sha": "20a1b8877df21369046116d07a9f8c795ef4fab0",
+  "checks": [
+    {
+      "id": "CHK-M1-04-a",
+      "command": "GitHub Actions CI on 20a1b88, matrix windows/ubuntu x Node 24/26",
+      "result": "pass",
+      "output": "all 4 cells green, reported by the Designer 2026-11-07 (gh CLI not logged in, so no run URL captured)"
+    },
+    {
+      "id": "CHK-M1-04-b",
+      "command": "check-manifest, check-forbidden-imports, check-traceability --all on fresh clone",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-04-c",
+      "command": "Reviewer verdicts",
+      "result": "pass",
+      "output": "M1-01 approve (pass 2), M1-02 approve (pass 1), M1-03 approve (pass 3); codex gpt-6.1-terra"
+    },
+    {
+      "id": "CHK-M1-04-d",
+      "command": "five scripts on main + pnpm build",
+      "result": "pass"
+    }
+  ],
+  "replay": {
+    "where": "fresh clone D:/ai-project/factory-replay, Windows, Node 26.13.0",
+    "install": 0,
+    "typecheck": 0,
+    "tests": "252/252",
+    "build": 0
+  },
+  "L5": {
+    "script": "acceptance/M1.ps1",
+    "lead_dry_run": "9/9 PASS",
+    "designer": "PASS, reported 2026-11-07"
+  },
+  "layers": {
+    "L1": "pass",
+    "L3": "pending milestone review",
+    "L4": "pass",
+    "L5": "pass"
+  },
+  "ended_at": "2026-11-07T16:00:00+00:00"
+}
