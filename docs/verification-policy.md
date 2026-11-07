@@ -47,15 +47,19 @@ Path: `.factory/evidence/<card-id>/<attempt>.json`.
 
 `result` is one of `pass | fail | not-run`. `not-run` never counts as pass. Captured outputs are stored next to the record as `<attempt>.<check>.log`.
 
-## 4. Protected tests
+## 4. Hash rule
 
-- `tests/protected/**` is written or imported by the Lead before the Builder starts. In M1 they are dsh tests copied with only the documented one-line import rewrite; after reverting that line and normalizing to LF they must match `blob_sha256` in `SOURCE_MANIFEST.json`.
+Every hash comparison normalizes CRLF to LF first: on the Designer's PC git has `core.autocrlf=true`, so working copies can be CRLF until `.gitattributes` (M1-01) forces LF.
+
+## 5. Protected tests
+
+- `tests/protected/**` is written or imported by the Lead before the Builder starts. In M1 they are dsh tests copied with only the documented import-path rewrite; after reverting it and normalizing CRLF to LF they must match `blob_sha256` in `SOURCE_MANIFEST.json`.
 - A Builder diff touching `tests/protected/**`, `schemas/**`, `docs/**` or `.factory/**` fails the scope check.
 
-## 5. Merge rule
+## 6. Merge rule
 
 A card merges only when L1 + L4 pass, every required layer passes, the scope check passes, and the Reviewer verdict is `approve`. Never merge unreviewed: if every Reviewer model is limited, the card waits (`WAITING_FOR_REVIEWER`).
 
-## 6. Milestone close
+## 7. Milestone close
 
 All cards merged; Designer passes L5; **replay**: a fresh clone of `main` passes the full check suite on both OSes and both Node lines.

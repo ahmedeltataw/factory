@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "card": "M1-00",
+  "attempt": 1,
+  "role": "lead",
+  "provider": "claude",
+  "base_sha": "532126d361d605c729cd69a30bfb56bfccaffecd",
+  "changed_paths": [
+    "tests/protected/core-engine.spec.ts",
+    "tests/protected/stage.spec.ts",
+    "docs/milestones/M1.md",
+    "docs/verification-policy.md",
+    "docs/dsh-inventory.md"
+  ],
+  "checks": [
+    {
+      "id": "CHK-M1-00-a",
+      "command": "diff vs dsh blob",
+      "result": "pass",
+      "output": "core-engine: 2 changed lines (import path), stage: 1"
+    },
+    {
+      "id": "CHK-M1-00-b",
+      "target": "core-engine",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-00-b",
+      "target": "stage",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-00-c",
+      "result": "pass"
+    }
+  ],
+  "layers": {
+    "L1": "n/a (tests run in M1-02)",
+    "L4": "pass"
+  },
+  "note": "spec corrected: core-engine has 2 import lines with the core path; hash rule normalizes CRLF",
+  "ended_at": "2026-11-07T13:19:16+00:00"
+}

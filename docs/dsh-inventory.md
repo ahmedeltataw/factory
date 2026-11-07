@@ -17,7 +17,7 @@ Source: dsh-superagent-prototype @ `8c32a9dc5d72c033816c6a8110b37f40cf94fba4` (s
 | Group | M1 action | Later |
 |---|---|---|
 | `src/core/*.ts` (15 files, ~2,088 lines) | **Port verbatim** (hash-checked), then no edits in M1 | M2+: adapt model (Task/Attempt/Authorization), rewrite engine/stage/tickets, replace evals |
-| `tests/core-engine.spec.ts`, `tests/stage.spec.ts` | Copy as protected tests (one import line rewritten, hash-checked) | Updated by Lead when core is rewritten |
+| `tests/core-engine.spec.ts`, `tests/stage.spec.ts` | Copy as protected tests (core import path rewritten, hash-checked) | Updated by Lead when core is rewritten |
 | `src/app/retry-health.ts` | Port verbatim | — |
 | `tests/retry-health.spec.ts` | Rewrite without `@deepseek-ai/*` (same assertions) | — |
 | `src/app/store.ts`, `store-read.ts`, `effects.ts`, `outbox.ts`, `migration.ts`, `versions.ts`, `kv.ts` | Not copied; reference only | M2 re-implementation |
