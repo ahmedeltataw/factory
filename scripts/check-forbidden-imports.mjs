@@ -1,14 +1,22 @@
 // Guard: forbid DSH host coupling in supervisor sources (CHK-M1-03-b).
 // Pass: exit 0 + "OK". Fail: exit 1 + one line "FAIL: <reason>".
 //
-// Matching rules: comments and plain strings are ignored. Only treated as
-// imports are `import ... from '<s>'`, `import '<s>'`, `export ... from '<s>'`
-// (including `export * from`), and `import(<literal>)` where the literal is a
-// ', " or ` string without `${`. Everything else (e.g. `const s = 'cordis'`)
-// is not an import.
+// Module specifiers are collected with the TypeScript compiler API (already a
+// devDependency), so comments, strings and regex literals are handled by the
+// real parser instead of a hand-written character scanner. Only static
+// specifiers count:
+// - `import ... from '<s>'` / `import '<s>'` (ImportDeclaration)
+// - `export ... from '<s>'`, incl. `export * from` (ExportDeclaration)
+// - `import('<s>')` where the argument is a string literal or a template
+//   literal without `${...}` substitutions
+// - `import x = require('<s>')` (ImportEqualsDeclaration with an
+//   ExternalModuleReference)
+// Everything else (e.g. `const s = 'cordis'` or `/import('cordis')/`) is not
+// an import.
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
+import ts from 'typescript'
 
 const FORBIDDEN_PREFIXES = ['@deepseek-ai/', 'dsh-']
 const FORBIDDEN_SUBSTRINGS = ['cordis', 'feishu']
@@ -51,179 +59,46 @@ function isCoreAllowed(spec) {
   return spec.startsWith('./') || CORE_ALLOWED.has(spec)
 }
 
-// Character scanner (no dependency). Returns the source with comments blanked
-// out (comment text becomes spaces) plus a per-character mask marking which
-// characters live inside a string or template literal. Literals are tracked
-// first, so a `//` inside `'...'` does not start a comment and a quote inside
-// a `//` comment does not start a string. Template `${...}` expressions are
-// scanned as code (with brace counting) and may contain comments.
-const MASK_CODE = 0
-const MASK_STRING = 1
-const MASK_COMMENT = 2
-
-function analyze(source) {
-  const len = source.length
-  const text = new Array(len)
-  for (let k = 0; k < len; k++) text[k] = source[k]
-  const mask = new Uint8Array(len)
-  let i = 0
-  let quote = null // active quote char: "'", '"', or '`' (template)
-  const templateDepths = [] // brace depth per open template ${ expression }
-
-  while (i < len) {
-    const c = source[i]
-    const n = i + 1 < len ? source[i + 1] : ''
-
-    // Inside a quoted string: keep content verbatim, honor escapes.
-    if (quote !== null && quote !== '`') {
-      mask[i] = MASK_STRING
-      if (c === '\\') {
-        if (n !== '') {
-          mask[i + 1] = MASK_STRING
-          i += 2
-        } else {
-          i += 1
-        }
-        continue
-      }
-      if (c === quote) quote = null
-      i += 1
-      continue
-    }
-
-    // Inside a template literal: keep content verbatim, honor escapes,
-    // `${` reopens code context.
-    if (quote === '`') {
-      mask[i] = MASK_STRING
-      if (c === '\\') {
-        if (n !== '') {
-          mask[i + 1] = MASK_STRING
-          i += 2
-        } else {
-          i += 1
-        }
-        continue
-      }
-      if (c === '`') {
-        quote = null
-        i += 1
-        continue
-      }
-      if (c === '$' && n === '{') {
-        templateDepths.push(0)
-        quote = null
-        i += 2
-        continue
-      }
-      i += 1
-      continue
-    }
-
-    // Code context.
-    if (c === '/' && n === '/') {
-      // Line comment: blank out, keep the newline.
-      while (i < len && source[i] !== '\n') {
-        text[i] = ' '
-        mask[i] = MASK_COMMENT
-        i += 1
-      }
-      continue
-    }
-    if (c === '/' && n === '*') {
-      // Block comment: blank out, keep newlines.
-      text[i] = ' '
-      text[i + 1] = ' '
-      mask[i] = MASK_COMMENT
-      mask[i + 1] = MASK_COMMENT
-      i += 2
-      while (i < len) {
-        if (source[i] === '*' && source[i + 1] === '/') {
-          text[i] = ' '
-          text[i + 1] = ' '
-          mask[i] = MASK_COMMENT
-          mask[i + 1] = MASK_COMMENT
-          i += 2
-          break
-        }
-        if (source[i] !== '\n') {
-          text[i] = ' '
-          mask[i] = MASK_COMMENT
-        }
-        i += 1
-      }
-      continue
-    }
-    if (c === '\'' || c === '"') {
-      quote = c
-      mask[i] = MASK_STRING
-      i += 1
-      continue
-    }
-    if (c === '`') {
-      quote = '`'
-      mask[i] = MASK_STRING
-      i += 1
-      continue
-    }
-    if (templateDepths.length > 0) {
-      if (c === '{') {
-        templateDepths[templateDepths.length - 1] += 1
-        i += 1
-        continue
-      }
-      if (c === '}') {
-        const depth = templateDepths[templateDepths.length - 1]
-        if (depth > 0) {
-          templateDepths[templateDepths.length - 1] = depth - 1
-        } else {
-          templateDepths.pop()
-          quote = '`' // back into the template literal
-        }
-        i += 1
-        continue
-      }
-    }
-    i += 1
-  }
-
-  return { text: text.join(''), mask }
+// Static specifier text when the node is a plain string literal or a template
+// literal without substitutions; a template with `${...}` is dynamic, not a
+// static specifier.
+function staticSpecifier(node) {
+  if (node === undefined || node === null) return undefined
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
+  return undefined
 }
 
-// From-imports: `import <clause> from '<s>'` / `export <clause> from '<s>'`
-// (including `export * from`). The tempered scan between the keyword and
-// `from` never crosses `=`, `;` or the word from, so
-// `export const from = 'cordis'` is not an import.
-const FROM_IMPORT_RE =
-  /(?<![\w$.])(?:import|export)\b(?:(?![=;])(?!\bfrom\b)[\s\S])*?\bfrom\s*(['"`])([^'"`\r\n]*)\1/g
-
-// Side-effect import: `import '<s>'`.
-const SIDE_EFFECT_IMPORT_RE = /(?<![\w$.])import\s*(['"`])([^'"`\r\n]*)\1/g
-
-// Static dynamic import: `import('<s>')` — literal without substitutions.
-const DYNAMIC_IMPORT_RE = /(?<![\w$.])import\s*\(\s*(['"`])([^'"`\r\n]*)\1/g
-
-function collectSpecifiers(source) {
-  const { text, mask } = analyze(source)
-  const isCodeAt = (index) => mask[index] === MASK_CODE
+// Walk the AST (forEachChild, recursively) and collect module specifiers from
+// exactly the four import shapes listed in the header. Because the compiler
+// does the tokenizing, a regex literal like /import('cordis')/ or a regex
+// containing // or /* can neither produce a false positive nor hide a real
+// import that follows it.
+function collectSpecifiers(file, source) {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const found = new Set()
   const add = (spec) => {
-    if (spec !== '') found.add(spec)
+    if (spec) found.add(spec)
   }
-  let match
-  FROM_IMPORT_RE.lastIndex = 0
-  while ((match = FROM_IMPORT_RE.exec(text)) !== null) {
-    if (isCodeAt(match.index)) add(match[2])
-  }
-  SIDE_EFFECT_IMPORT_RE.lastIndex = 0
-  while ((match = SIDE_EFFECT_IMPORT_RE.exec(text)) !== null) {
-    if (isCodeAt(match.index)) add(match[2])
-  }
-  DYNAMIC_IMPORT_RE.lastIndex = 0
-  while ((match = DYNAMIC_IMPORT_RE.exec(text)) !== null) {
-    if (isCodeAt(match.index) && !(match[1] === '`' && match[2].includes('${'))) {
-      add(match[2])
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node)) {
+      add(staticSpecifier(node.moduleSpecifier))
+    } else if (ts.isExportDeclaration(node)) {
+      // `export * from` and `export { x } from`; a bare `export { x }` has no
+      // moduleSpecifier and is not an import.
+      add(staticSpecifier(node.moduleSpecifier))
+    } else if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        add(staticSpecifier(node.arguments[0]))
+      }
+    } else if (ts.isImportEqualsDeclaration(node)) {
+      // `import x = require('y')` or an external ambient reference.
+      if (node.moduleReference && ts.isExternalModuleReference(node.moduleReference)) {
+        add(staticSpecifier(node.moduleReference.expression))
+      }
     }
+    ts.forEachChild(node, visit)
   }
+  ts.forEachChild(sf, visit)
   return [...found]
 }
 
@@ -247,7 +122,7 @@ for (const file of tsFiles) {
   const rel = path.relative(root, absolute).replaceAll('\\', '/')
   const source = await readFile(absolute, 'utf8')
   const inCore = rel.startsWith(CORE_PREFIX)
-  for (const spec of collectSpecifiers(source)) {
+  for (const spec of collectSpecifiers(absolute, source)) {
     if (isForbidden(spec)) {
       fail(`${rel}: forbidden import specifier ${JSON.stringify(spec)}`)
     }

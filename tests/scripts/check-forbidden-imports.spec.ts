@@ -12,12 +12,14 @@ const failingCases = [
   'bad-export-star',
   'bad-template-dynamic',
   'bad-multiline',
+  'bad-regex-block',
+  'bad-regex-line',
   'core-nodefs',
   'core-zod',
   'core-parent',
 ]
 
-const okCases = ['ok-comment', 'ok-plain-string', 'ok-dynamic-interpolated']
+const okCases = ['ok-comment', 'ok-plain-string', 'ok-dynamic-interpolated', 'ok-regex-import']
 
 describe('check-forbidden-imports', () => {
   it('passes on the clean fixture', () => {
