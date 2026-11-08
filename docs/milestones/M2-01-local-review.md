@@ -1,6 +1,6 @@
 # M2-01 local review and continuation
 
-Status: **not accepted**. Date: 2026-11-08. Lead and Reviewer: Codex, temporarily by Designer direction. Builder: OpenCode `opencode/deepseek-v4.1-flash-free` v2.0.26. The Builder was restricted to editing `supervisor/src/app/store.ts`; shell, network tools and external-directory access were denied. No GitHub operation was authorized or performed.
+Status: **not accepted**. Date: 2026-11-08. Lead and Reviewer: Codex, temporarily by Designer direction. Builder: OpenCode `opencode/deepseek-v4.1-flash-free` v2.0.26. The Builder was instructed to edit only `supervisor/src/app/store.ts` and not to use shell, network, GitHub, Git or external directories. Correction: the initial permission setting used V1 syntax and did not enforce those restrictions in V2; the observed first-builder output contained no shell or GitHub calls, but the claimed enforcement was not established. No GitHub operation was authorized; no upload is known to have occurred.
 
 The Lead's contract and protected tests are in local branch `codex/temporary-lead` at `310ca91`; the builder implementation is in local branch `codex/m2-01-store` at `50ea628` in `.worktrees/M2-01`. The branches have not been merged into `main` or uploaded. Review the actual branch state before continuing.
 
