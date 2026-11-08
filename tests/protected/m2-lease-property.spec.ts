@@ -183,3 +183,35 @@ it('CHK-M2-03-e: caller transaction cannot make heartbeat or release falsely app
     recovered.release(22)
   } finally { if (db.isTransaction) db.exec('ROLLBACK'); try { handle?.release(50) } catch { /* already released or lost */ }; db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
+
+it('CHK-M2-03-e: a closed database cannot strand the OS lock on release failure', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-closed-db-'))
+  const path = join(dir, 'state.sqlite')
+  const db = openStore(path)
+  const handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+  db.close()
+  try {
+    expect(() => handle.release(11)).toThrow()
+    const other = openStore(path)
+    try {
+      const recovered = acquireSupervisor(other, dir, { nowMs: 20, staleAfterMs: 10, takeover: { ownerId: handle.ownerId, generation: handle.generation, heartbeatMs: 10 } })
+      recovered.release(20)
+    } finally { other.close() }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('CHK-M2-03-e: a failed heartbeat invalidates ownership and releases the OS lock', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-heartbeat-failure-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  let handle: ReturnType<typeof acquireSupervisor> | undefined
+  try {
+    handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+    const active = handle
+    db.exec("CREATE TRIGGER refuse_heartbeat BEFORE UPDATE ON supervisor_lease WHEN NEW.heartbeat_ms != OLD.heartbeat_ms BEGIN SELECT RAISE(ABORT, 'heartbeat failed'); END")
+    expect(() => active.heartbeat(11)).toThrow()
+    db.exec('DROP TRIGGER refuse_heartbeat')
+    expect(() => active.heartbeat(12)).toThrow(LeaseLostError)
+    const recovered = acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10, takeover: { ownerId: active.ownerId, generation: active.generation, heartbeatMs: 10 } })
+    recovered.release(20)
+  } finally { try { handle?.release(30) } catch { /* already released or lost */ }; db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
