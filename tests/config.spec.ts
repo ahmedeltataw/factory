@@ -50,12 +50,24 @@ describe('toolchain configuration', () => {
         ...Object.keys(pkg.devDependencies ?? {}),
       ]),
     ].sort()
-    expect(names).toEqual(['@types/node', 'tsdown', 'typescript', 'vitest', 'zod'])
+    expect(names).toEqual([
+      '@stryker-mutator/core',
+      '@stryker-mutator/vitest-runner',
+      '@types/node',
+      'fast-check',
+      'tsdown',
+      'typescript',
+      'vitest',
+      'zod',
+    ])
   })
 
   it('pins the exact devDependency versions', () => {
     expect(pkg.devDependencies).toEqual({
+      '@stryker-mutator/core': '10.1.1',
+      '@stryker-mutator/vitest-runner': '10.1.1',
       '@types/node': '24.19.2',
+      'fast-check': '4.10.2',
       tsdown: '0.22.14',
       typescript: '6.0.3',
       vitest: '4.1.8',

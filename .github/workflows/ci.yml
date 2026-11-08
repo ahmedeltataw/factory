@@ -56,3 +56,26 @@ jobs:
       - name: Evidence check
         shell: bash
         run: node scripts/check-evidence.mjs .factory/evidence/*/*.json
+
+  mutation:
+    # Focused mutation for store.ts only (card M2 verification tools, CHK-M2-TOOLS-d).
+    name: mutation (ubuntu, node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm version comes from package.json "packageManager"
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Mutation test (focused store.ts config)
+        timeout-minutes: 40
+        run: pnpm exec stryker run
