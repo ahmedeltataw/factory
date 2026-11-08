@@ -144,3 +144,18 @@ it('CHK-M2-03-b/d: validates takeover evidence even when no prior lease exists',
     expect(() => handle.release(21)).toThrow(LeaseLostError)
   } finally { try { db.close() } catch { /* already closed */ }; rmSync(dir, { recursive: true, force: true }) }
 })
+
+it('CHK-M2-03-e: SQLite busy during acquisition closes the OS lock and leaves no lease', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-busy-'))
+  const path = join(dir, 'state.sqlite')
+  const db = openStore(path)
+  const other = openStore(path)
+  try {
+    db.exec('PRAGMA busy_timeout = 0')
+    other.exec('BEGIN IMMEDIATE')
+    try { expect(() => acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })).toThrow() } finally { other.exec('ROLLBACK') }
+    expect(db.prepare('SELECT COUNT(*) AS n FROM supervisor_lease').get()).toMatchObject({ n: 0 })
+    const handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+    handle.release(10)
+  } finally { other.close(); db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
