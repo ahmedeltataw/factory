@@ -58,6 +58,11 @@ function resolveSamePath(a: string, b: string): boolean {
   }
 }
 
+/** True only when the caller owns an active SQLite transaction on this connection. */
+function inTransaction(db: DatabaseSync): boolean {
+  return typeof db.isTransaction === 'boolean' && db.isTransaction
+}
+
 interface TakeoverEvidence {
   readonly ownerId: string
   readonly generation: number
@@ -222,12 +227,36 @@ export class SupervisorLeaseHandle {
   heartbeat(nowMs: number): void {
     const time = requireSafeInteger(nowMs, 'nowMs', 0)
     this.assertHeld()
+    // Reject backwards clocks before any database interaction: a stale clock never
+    // touches the row and never invalidates this handle.
     if (time < this.lastHeartbeat) throw new Error('supervisor: heartbeat before the last heartbeat')
-    const result = this.db.prepare("UPDATE supervisor_lease SET heartbeat_ms = ? WHERE id = 1 AND owner_id = ? AND generation = ? AND status = 'active'")
-      .run(time, this.#ownerId, this.#generation)
-    if (result.changes !== 1) {
+    // A caller-owned transaction may roll back: never report a successful heartbeat
+    // that is not durable. Reject without touching the row, this handle, or the
+    // transaction. If the transaction state itself cannot be read, fail closed.
+    let transacting = false
+    try {
+      transacting = inTransaction(this.db)
+    } catch (error) {
       this.markLost()
-      throw new LeaseLostError('supervisor: lease row no longer matches this handle')
+      throw error
+    }
+    if (transacting) {
+      throw new Error('supervisor: cannot heartbeat a supervisor lease inside an active transaction')
+    }
+    // Fail closed: if the SQLite heartbeat UPDATE throws, the row was not changed
+    // but this handle can no longer vouch for the row. Close the OS lock,
+    // invalidate the handle, then rethrow. Do not commit or rollback a caller
+    // transaction. A zero-row update preserves LeaseLostError behavior.
+    try {
+      const result = this.db.prepare("UPDATE supervisor_lease SET heartbeat_ms = ? WHERE id = 1 AND owner_id = ? AND generation = ? AND status = 'active'")
+        .run(time, this.#ownerId, this.#generation)
+      if (result.changes !== 1) {
+        this.markLost()
+        throw new LeaseLostError('supervisor: lease row no longer matches this handle')
+      }
+    } catch (error) {
+      this.markLost()
+      throw error
     }
     this.lastHeartbeat = time
   }
@@ -238,6 +267,12 @@ export class SupervisorLeaseHandle {
     this.assertHeld()
     let released = false
     try {
+      // A caller-owned transaction may roll back: never report a successful
+      // release that is not durable. Close the OS lock as on other release
+      // failures, leave the row and the caller's transaction untouched.
+      if (inTransaction(this.db)) {
+        throw new Error('supervisor: cannot release a supervisor lease inside an active transaction')
+      }
       const result = this.db.prepare("UPDATE supervisor_lease SET status = 'released' WHERE id = 1 AND owner_id = ? AND generation = ? AND status = 'active'")
         .run(this.#ownerId, this.#generation)
       released = result.changes === 1
