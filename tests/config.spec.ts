@@ -55,6 +55,7 @@ describe('toolchain configuration', () => {
       '@stryker-mutator/vitest-runner',
       '@types/node',
       'fast-check',
+      'fs-native-extensions',
       'tsdown',
       'typescript',
       'vitest',
@@ -76,6 +77,7 @@ describe('toolchain configuration', () => {
 
   it('pins the exact dependency versions', () => {
     expect(pkg.dependencies).toEqual({
+      'fs-native-extensions': '1.5.3',
       zod: '4.4.3',
     })
   })

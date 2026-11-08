@@ -23,6 +23,7 @@
     "vitest": "4.1.8"
   },
   "dependencies": {
+    "fs-native-extensions": "1.5.3",
     "zod": "4.4.3"
   }
 }

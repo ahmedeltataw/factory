@@ -22,7 +22,7 @@ describe('M2-01 SQLite storage contract', () => {
     const path = databasePath()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 3 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 4 })
       expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
       expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
       expect(db.prepare('PRAGMA busy_timeout').get()).toMatchObject({ timeout: 5000 })
@@ -31,7 +31,7 @@ describe('M2-01 SQLite storage contract', () => {
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'projects_name_idx'").get()).toBeDefined()
       const observer = new DatabaseSync(path)
       try {
-        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 3 })
+        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 4 })
         expect(observer.prepare('SELECT name FROM projects WHERE id = ?').get('p1')).toMatchObject({ name: 'Factory' })
       } finally { observer.close() }
     } finally { db.close() }
@@ -45,7 +45,7 @@ describe('M2-01 SQLite storage contract', () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const db = openStore(path)
       try {
-        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 3 })
+        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 4 })
         expect(db.prepare('SELECT name FROM projects WHERE id = ?').get('p1')).toMatchObject({ name: 'Existing' })
         expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'projects_name_idx'").get()).toBeDefined()
       } finally { db.close() }

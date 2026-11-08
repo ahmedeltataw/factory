@@ -34,7 +34,7 @@ describe('M2-02 append-only command log', () => {
     old.close()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 3 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 4 })
       expect(db.prepare("SELECT name FROM projects WHERE id = 'project-1'").get()).toMatchObject({ name: 'Existing' })
       expect(appendCommand(db, command)).toBe('created')
     } finally { db.close() }
