@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 const ASCII_WHITESPACE = 'char(32, 9, 10, 13, 12, 11)'
 const MIGRATIONS: Readonly<Record<number, string>> = {
   1: 'CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL)',
@@ -20,6 +20,15 @@ const MIGRATIONS: Readonly<Record<number, string>> = {
     CREATE TRIGGER commands_no_replace BEFORE INSERT ON commands
     WHEN EXISTS (SELECT 1 FROM commands WHERE id = NEW.id)
     BEGIN SELECT RAISE(IGNORE); END;
+  `,
+  4: `
+    CREATE TABLE supervisor_lease (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      owner_id TEXT NOT NULL CHECK (length(trim(owner_id, ${ASCII_WHITESPACE})) > 0),
+      generation INTEGER NOT NULL CHECK (generation > 0),
+      heartbeat_ms INTEGER NOT NULL CHECK (heartbeat_ms >= 0),
+      status TEXT NOT NULL CHECK (status IN ('active', 'released'))
+    )
   `,
 }
 

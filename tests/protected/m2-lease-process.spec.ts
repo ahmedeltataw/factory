@@ -40,12 +40,17 @@ it('CHK-M2-03-c/d: live OS lock blocks competitors; crash recovery requires matc
     })
     const db = openStore(path)
     try {
-      expect(() => acquireSupervisor(db, dir, { nowMs: 5000, staleAfterMs: 1000, takeover: evidence })).toThrow()
+      const assertRejected = (options: Parameters<typeof acquireSupervisor>[2]) => {
+        let acquired: ReturnType<typeof acquireSupervisor> | undefined
+        try { acquired = acquireSupervisor(db, dir, options) } catch { return }
+        try { expect.fail('unexpectedly acquired the supervisor lease') } finally { acquired?.release(options.nowMs) }
+      }
+      assertRejected({ nowMs: 5000, staleAfterMs: 1000, takeover: evidence })
       child.kill()
       await exited
-      expect(() => acquireSupervisor(db, dir, { nowMs: 1500, staleAfterMs: 1000, takeover: evidence })).toThrow()
-      expect(() => acquireSupervisor(db, dir, { nowMs: 3000, staleAfterMs: 1000 })).toThrow()
-      expect(() => acquireSupervisor(db, dir, { nowMs: 3000, staleAfterMs: 1000, takeover: { ...evidence, heartbeatMs: 999 } })).toThrow()
+      assertRejected({ nowMs: 1500, staleAfterMs: 1000, takeover: evidence })
+      assertRejected({ nowMs: 3000, staleAfterMs: 1000 })
+      assertRejected({ nowMs: 3000, staleAfterMs: 1000, takeover: { ...evidence, heartbeatMs: 999 } })
       const next = acquireSupervisor(db, dir, { nowMs: 3000, staleAfterMs: 1000, takeover: evidence })
       try { expect(next.generation).toBe(evidence.generation + 1) } finally { next.release(3001) }
     } finally { db.close() }
