@@ -94,3 +94,35 @@ it('CHK-M2-03-b/d: validates clocks and every field of takeover evidence without
     } finally { handle.release(22) }
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
+
+it('CHK-M2-03-e: ignored acquisition updates roll back and do not retain the lock', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-ignored-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  try {
+    db.exec("INSERT INTO supervisor_lease VALUES (1, 'old', 1, 10, 'released'); CREATE TRIGGER ignore_acquire BEFORE UPDATE ON supervisor_lease WHEN NEW.status = 'active' BEGIN SELECT RAISE(IGNORE); END")
+    expect(() => acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10 })).toThrow()
+    expect(db.prepare('SELECT owner_id, generation, status FROM supervisor_lease').get()).toMatchObject({ owner_id: 'old', generation: 1, status: 'released' })
+    db.exec('DROP TRIGGER ignore_acquire')
+    const handle = acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10 })
+    handle.release(20)
+    db.exec("UPDATE supervisor_lease SET status = 'active'; CREATE TRIGGER ignore_acquire BEFORE UPDATE ON supervisor_lease WHEN NEW.status = 'active' BEGIN SELECT RAISE(IGNORE); END")
+    const evidence = { ownerId: handle.ownerId, generation: handle.generation, heartbeatMs: 20 }
+    expect(() => acquireSupervisor(db, dir, { nowMs: 30, staleAfterMs: 10, takeover: evidence })).toThrow()
+    db.exec('DROP TRIGGER ignore_acquire')
+    const next = acquireSupervisor(db, dir, { nowMs: 30, staleAfterMs: 10, takeover: evidence })
+    next.release(30)
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('CHK-M2-03-e: direct release by a displaced owner fails and releases its OS lock', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-displaced-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  try {
+    const handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+    db.exec("UPDATE supervisor_lease SET owner_id = 'new', generation = 2")
+    expect(() => handle.release(11)).toThrow()
+    expect(() => handle.heartbeat(12)).toThrow()
+    const next = acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10, takeover: { ownerId: 'new', generation: 2, heartbeatMs: 10 } })
+    next.release(20)
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
