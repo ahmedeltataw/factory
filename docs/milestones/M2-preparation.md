@@ -1,6 +1,6 @@
 # M2 preparation: runtime contract
 
-Status: planning draft; contracts are not frozen and no builder has been dispatched. Baseline: M1 commit `559abdb38e9e38c8ff80bd079fc6cc813edcf6f5`; see `M1-local-review.md` for the outstanding milestone review.
+Status: planning draft. The first storage card has a local builder implementation under review; the wider runtime contracts are not frozen. Baseline: M1 commit `559abdb38e9e38c8ff80bd079fc6cc813edcf6f5`; see `M1-local-review.md` for the outstanding milestone review and `M2-01-local-review.md` for the card's current state.
 
 ## Purpose and boundaries
 
