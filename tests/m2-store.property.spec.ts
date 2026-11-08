@@ -20,7 +20,7 @@ afterEach(() => {
 type Project = { id: string; name: string }
 
 describe('M2-02 storage property (CHK-M2-TOOLS-b)', () => {
-  it('preserves every generated project across a v1 -> v2 migration and reopening is idempotent', () => {
+  it('preserves every generated project across migration from v1 and reopening is idempotent', () => {
     fc.assert(
       fc.property(
         fc.uniqueArray(
@@ -52,7 +52,7 @@ describe('M2-02 storage property (CHK-M2-TOOLS-b)', () => {
           for (let attempt = 0; attempt < 2; attempt++) {
             const db = openStore(path)
             try {
-              expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 2 })
+              expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 3 })
               expect(db.prepare('SELECT id, name, created_at FROM projects ORDER BY id').all()).toEqual(expected)
             } finally {
               db.close()
