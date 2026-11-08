@@ -12,6 +12,9 @@ it('CHK-M2-04-c/d: status CLI returns JSON, Arabic, and meaningful exit codes', 
   const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' })
   try {
     expect(run('status', '--state-dir', dir, '--bad').status).toBe(2)
+    expect(run('status', '--state-dir', '--json').status).toBe(2)
+    expect(run('status', '--state-dir', dir, '--json', '--json').status).toBe(2)
+    expect(run('status', '--state-dir', dir, '--state-dir', dir).status).toBe(2)
     expect(existsSync(path)).toBe(false)
     expect(run('status', '--state-dir', dir).status).toBe(1)
     expect(existsSync(path)).toBe(false)

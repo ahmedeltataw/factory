@@ -5,6 +5,9 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it } from 'vitest'
 import { formatStatus, readStatus } from '../../supervisor/src/app/status.ts'
+import { openStore } from '../../supervisor/src/app/store.ts'
+import { appendCommand } from '../../supervisor/src/app/commands.ts'
+import { acquireSupervisor } from '../../supervisor/src/app/supervisor-lease.ts'
 
 const dirs: string[] = []
 function directory(): string { const dir = mkdtempSync(join(tmpdir(), 'factory-status-')); dirs.push(dir); return dir }
@@ -66,4 +69,25 @@ it('CHK-M2-04-b: does not create missing DBs and rejects incompatible and malfor
   expect(() => readStatus(dir, { nowMs: -1, staleAfterMs: 500 })).toThrow()
   expect(() => readStatus(dir, { nowMs: 2000, staleAfterMs: 0 })).toThrow()
   expect(hash(path)).toBe(before)
+  const malformed = new DatabaseSync(path)
+  try { malformed.exec("PRAGMA user_version = 4; INSERT INTO supervisor_lease VALUES (1, '', 0, -1, 'unknown')") } finally { malformed.close() }
+  const malformedHash = hash(path)
+  expect(() => readStatus(dir, { nowMs: 2000, staleAfterMs: 500 })).toThrow()
+  expect(hash(path)).toBe(malformedHash)
+})
+
+it('CHK-M2-04-a: reads the real migrated store while a supervisor owns it', () => {
+  const dir = directory()
+  const db = openStore(join(dir, 'state.sqlite'))
+  try {
+    db.prepare("INSERT INTO projects VALUES ('p', 'Project', '2026-01-01T00:00:00.000Z')").run()
+    appendCommand(db, { id: 'c', projectId: 'p', kind: 'create', payloadJson: '{"private":"hidden"}', createdAt: '2026-01-01T00:00:00.000Z' })
+    const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 1000 })
+    try {
+      const status = readStatus(dir, { nowMs: 1200, staleAfterMs: 1000 })
+      expect(status).toMatchObject({ schemaVersion: 4, recordedCommandCount: 1, lease: { ownerId: handle.ownerId, generation: handle.generation, state: 'active', freshness: 'fresh' } })
+      expect(JSON.stringify(status)).not.toContain('hidden')
+    } finally { handle.release(1200) }
+    expect(readStatus(dir, { nowMs: 1200, staleAfterMs: 1000 }).lease?.state).toBe('released')
+  } finally { db.close() }
 })

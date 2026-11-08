@@ -5,6 +5,9 @@
   "type": "module",
   "license": "MIT",
   "packageManager": "pnpm@12.15.0",
+  "bin": {
+    "factory": "./lib/factory.mjs"
+  },
   "engines": {
     "node": ">=24"
   },
