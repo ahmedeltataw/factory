@@ -159,3 +159,27 @@ it('CHK-M2-03-e: SQLite busy during acquisition closes the OS lock and leaves no
     handle.release(10)
   } finally { other.close(); db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
+
+it('CHK-M2-03-e: caller transaction cannot make heartbeat or release falsely appear durable', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-transaction-'))
+  const path = join(dir, 'state.sqlite')
+  const db = openStore(path)
+  let handle: ReturnType<typeof acquireSupervisor> | undefined
+  try {
+    handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+    const active = handle
+    db.exec('BEGIN')
+    expect(() => active.heartbeat(11)).toThrow()
+    expect(db.isTransaction).toBe(true)
+    db.exec('ROLLBACK')
+    active.heartbeat(12)
+    db.exec('BEGIN')
+    expect(() => active.release(13)).toThrow()
+    expect(db.isTransaction).toBe(true)
+    db.exec('ROLLBACK')
+    expect(() => active.heartbeat(14)).toThrow()
+    expect(db.prepare('SELECT heartbeat_ms, status FROM supervisor_lease').get()).toMatchObject({ heartbeat_ms: 12, status: 'active' })
+    const recovered = acquireSupervisor(db, dir, { nowMs: 22, staleAfterMs: 10, takeover: { ownerId: active.ownerId, generation: active.generation, heartbeatMs: 12 } })
+    recovered.release(22)
+  } finally { if (db.isTransaction) db.exec('ROLLBACK'); try { handle?.release(50) } catch { /* already released or lost */ }; db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
