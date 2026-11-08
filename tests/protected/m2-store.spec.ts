@@ -59,6 +59,20 @@ describe('M2-01 SQLite storage contract', () => {
     } finally { check.close() }
   })
 
+  it('CHK-M2-01-c: rolls back every migration when a fresh setup fails', () => {
+    const path = databasePath()
+    const old = new DatabaseSync(path)
+    old.exec('CREATE TABLE unrelated (name TEXT); CREATE INDEX projects_name_idx ON unrelated(name)')
+    old.close()
+    expect(() => openStore(path)).toThrow()
+    const check = new DatabaseSync(path)
+    try {
+      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 0 })
+      expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'").get()).toBeUndefined()
+      expect(check.prepare("SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = 'projects_name_idx'").get()).toMatchObject({ tbl_name: 'unrelated' })
+    } finally { check.close() }
+  })
+
   it('CHK-M2-01-c: rejects a newer schema without changing data', () => {
     const path = databasePath()
     const future = new DatabaseSync(path)
