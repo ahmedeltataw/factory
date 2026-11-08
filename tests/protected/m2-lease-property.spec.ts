@@ -5,6 +5,7 @@ import fc from 'fast-check'
 import { expect, it } from 'vitest'
 import { openStore } from '../../supervisor/src/app/store.ts'
 import { acquireSupervisor } from '../../supervisor/src/app/supervisor-lease.ts'
+import { LeaseLostError } from '../../supervisor/src/app/supervisor-lease.ts'
 
 it('CHK-M2-03-d/f: takeover changes only at the stale boundary with exact evidence', () => {
   fc.assert(fc.property(fc.integer({ min: 0, max: 1000000 }), fc.integer({ min: 1, max: 100000 }), (heartbeatMs, staleAfterMs) => {
@@ -125,4 +126,21 @@ it('CHK-M2-03-e: direct release by a displaced owner fails and releases its OS l
     const next = acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10, takeover: { ownerId: 'new', generation: 2, heartbeatMs: 10 } })
     next.release(20)
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('CHK-M2-03-b/d: validates takeover evidence even when no prior lease exists', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-validation-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  try {
+    const good = { ownerId: 'owner', generation: 1, heartbeatMs: 0 }
+    for (const takeover of [{ ...good, ownerId: '' }, { ...good, ownerId: '  ' }, { ...good, generation: 0 }, { ...good, heartbeatMs: -1 }]) {
+      expect(() => acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10, takeover })).toThrow()
+      expect(db.prepare('SELECT COUNT(*) AS n FROM supervisor_lease').get()).toMatchObject({ n: 0 })
+    }
+    const handle = acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10 })
+    handle.release(20)
+    db.close()
+    expect(() => handle.heartbeat(21)).toThrow(LeaseLostError)
+    expect(() => handle.release(21)).toThrow(LeaseLostError)
+  } finally { try { db.close() } catch { /* already closed */ }; rmSync(dir, { recursive: true, force: true }) }
 })
