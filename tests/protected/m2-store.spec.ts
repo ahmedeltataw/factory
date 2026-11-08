@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openStore } from '../../supervisor/src/app/store.ts'
 
 const directories: string[] = []
@@ -13,12 +13,14 @@ function databasePath(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
 describe('M2-01 SQLite storage contract', () => {
   it('CHK-M2-01-a: initializes the required settings and version', () => {
-    const db = openStore(databasePath())
+    const path = databasePath()
+    const db = openStore(path)
     try {
       expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 2 })
       expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
@@ -27,6 +29,11 @@ describe('M2-01 SQLite storage contract', () => {
       db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('p1', 'Factory', '2026-11-08T00:00:00Z')
       expect(db.prepare('SELECT name FROM projects WHERE id = ?').get('p1')).toMatchObject({ name: 'Factory' })
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'projects_name_idx'").get()).toBeDefined()
+      const observer = new DatabaseSync(path)
+      try {
+        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 2 })
+        expect(observer.prepare('SELECT name FROM projects WHERE id = ?').get('p1')).toMatchObject({ name: 'Factory' })
+      } finally { observer.close() }
     } finally { db.close() }
   })
 
@@ -78,11 +85,30 @@ describe('M2-01 SQLite storage contract', () => {
     const future = new DatabaseSync(path)
     future.exec("CREATE TABLE future_data (value TEXT NOT NULL); INSERT INTO future_data VALUES ('preserved'); PRAGMA user_version = 999")
     future.close()
-    expect(() => openStore(path)).toThrow()
+    expect(() => openStore(path)).toThrow('store: unsupported schema version 999')
     const check = new DatabaseSync(path)
     try {
       expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 999 })
       expect(check.prepare('SELECT value FROM future_data').get()).toMatchObject({ value: 'preserved' })
     } finally { check.close() }
+  })
+
+  it('CHK-M2-01-c: rejects a future version observed after the initial check', () => {
+    const path = databasePath()
+    const exec = DatabaseSync.prototype.exec
+    vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (this: DatabaseSync, sql: string) {
+      if (sql === 'BEGIN IMMEDIATE') exec.call(this, 'PRAGMA user_version = 999')
+      return exec.call(this, sql)
+    })
+    expect(() => openStore(path)).toThrow('store: unsupported schema version 999')
+    vi.restoreAllMocks()
+    const check = new DatabaseSync(path)
+    try {
+      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 999 })
+    } finally { check.close() }
+  })
+
+  it('CHK-M2-01-c: refuses a database when WAL is unavailable', () => {
+    expect(() => openStore(':memory:')).toThrow('store: WAL journal mode is required')
   })
 })
