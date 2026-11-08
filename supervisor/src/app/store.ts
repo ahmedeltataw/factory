@@ -1,9 +1,26 @@
 import { DatabaseSync } from 'node:sqlite'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
+const ASCII_WHITESPACE = 'char(32, 9, 10, 13, 12, 11)'
 const MIGRATIONS: Readonly<Record<number, string>> = {
   1: 'CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL)',
   2: 'CREATE INDEX projects_name_idx ON projects(name)',
+  3: `
+    CREATE TABLE commands (
+      id TEXT PRIMARY KEY NOT NULL CHECK (length(trim(id, ${ASCII_WHITESPACE})) > 0),
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT CHECK (length(trim(project_id, ${ASCII_WHITESPACE})) > 0),
+      kind TEXT NOT NULL CHECK (length(trim(kind, ${ASCII_WHITESPACE})) > 0),
+      payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+      created_at TEXT NOT NULL
+    );
+    CREATE TRIGGER commands_no_update BEFORE UPDATE ON commands
+    BEGIN SELECT RAISE(ABORT, 'commands are append-only'); END;
+    CREATE TRIGGER commands_no_delete BEFORE DELETE ON commands
+    BEGIN SELECT RAISE(ABORT, 'commands are append-only'); END;
+    CREATE TRIGGER commands_no_replace BEFORE INSERT ON commands
+    WHEN EXISTS (SELECT 1 FROM commands WHERE id = NEW.id)
+    BEGIN SELECT RAISE(IGNORE); END;
+  `,
 }
 
 function version(db: DatabaseSync): number {
