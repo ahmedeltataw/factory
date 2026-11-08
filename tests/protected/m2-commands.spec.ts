@@ -69,7 +69,7 @@ describe('M2-02 append-only command log', () => {
         { createdAt: '2026-11-09T00:00:00.000Z' },
       ]) expect(() => appendCommand(db, { ...command, ...change })).toThrow(CommandConflictError)
       for (const change of [
-        { id: ' ' }, { projectId: ' ' }, { kind: '\t' }, { payloadJson: '{' },
+        { id: ' ' }, { projectId: ' ' }, { kind: '\t' }, { kind: '\u00a0' }, { payloadJson: '{' },
         { createdAt: '2026-11-08' }, { createdAt: '2026-02-30T00:00:00.000Z' },
       ]) expect(() => appendCommand(db, { ...command, id: 'new', ...change })).toThrow()
       expect(() => appendCommand(db, { ...command, id: 'new', projectId: 'missing' })).toThrow()
@@ -84,6 +84,8 @@ describe('M2-02 append-only command log', () => {
       appendCommand(db, command)
       expect(() => db.exec("UPDATE commands SET kind = 'changed' WHERE id = 'command-1'")).toThrow()
       expect(() => db.exec("DELETE FROM commands WHERE id = 'command-1'")).toThrow()
+      try { db.exec("INSERT OR REPLACE INTO commands VALUES ('command-1', 'project-1', 'replaced', '{}', '2026-11-08T00:00:00.000Z')") } catch { /* rejection is also valid */ }
+      expect(db.prepare("SELECT kind FROM commands WHERE id = 'command-1'").get()).toMatchObject({ kind: command.kind })
       const insert = db.prepare('INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES (?, ?, ?, ?, ?)')
       expect(() => insert.run(' ', 'project-1', 'x', '{}', command.createdAt)).toThrow()
       expect(() => insert.run('tab', 'project-1', '\t\n', '{}', command.createdAt)).toThrow()
