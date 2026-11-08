@@ -1,0 +1,17 @@
+# M2 ownership and status: temporary local review
+
+Date: 2026-11-08. Implementation is on local branch `codex/m2-04-builder`; `main` remains at `559abdb38e9e38c8ff80bd079fc6cc813edcf6f5`. The Builder was OpenCode `opencode/nemotron-3.5-super-vl-free`; Codex temporarily acted as Lead and Reviewer. This is not Claude's later review and not milestone acceptance. No GitHub upload was performed.
+
+## Verified locally
+
+- On Windows, the integrated source at `530f61d` plus the documented local Stryker configuration change passed all **287 tests** with Node 24.22.2 and 26.13.0. This includes an actual two-process lock contention and killed-owner recovery test, generated stale-boundary cases, invalid evidence, a failed release, changed ownership and `SQLITE_BUSY`. Node 24 typecheck and build passed on the earlier integrated implementation; build produced both `lib/index.mjs` and `lib/factory.mjs`. The built CLI was run against a real migrated database and returned valid JSON. Status reads without creating a missing database, and reports recorded commands rather than claiming they are pending.
+- A fresh local clone at `b088d52` installed from an existing offline cache with lifecycle scripts disabled; all 285 tests passed on Windows / Node 24 and 26, and typecheck and build passed on Node 24. The clone predates the two additional lease tests. Manifest verification and the forbidden-import scan passed on that clone; the traceability output covered M1 only and is not M2 evidence.
+- At source/test commit `4c50519`, `pnpm exec stryker run stryker.lease.local.json` on Windows / Node 24 produced **70.67%** (147 killed, 60 survived, one uncovered), below the configured 80% break threshold. This is a failure, not an exception or acceptance. The mutation target in the main configuration includes the lease so a future required run cannot silently omit it.
+
+## Review findings and open gates
+
+- The Builder initially omitted takeover SQL parameters, left ownership IDs writable at runtime, and used the wrong SQLite read-only option. Protected tests and typechecking exposed these defects; the Builder corrected them and the local checks above passed. Review remains scoped to observed behavior, not a proof of concurrency or safety on all platforms.
+- The command table is an append-only log. There is no command processor, atomic domain transition, duplicate-effect proof, or ownership fencing of domain writes. The status count is therefore recorded commands, not pending commands. External effect idempotency is also not established.
+- Mutation remains below threshold. The surviving mutants include cleanup/error handling, invalid evidence and redundant SQL/transaction guards; these require analysis rather than an unsupported blanket exemption. The acceptance policy still requires Ubuntu mutation evidence or an appropriately authorized recorded exception.
+- Ubuntu, the Windows/Ubuntu CI matrix, fresh-clone replay on Ubuntu, revision-bound machine evidence, complete domain schemas, milestone acceptance, Designer approval and Claude's later review remain pending. Do not run the existing M1 acceptance script until its fixed-directory deletion hazard documented in `M1-local-review.md` is resolved.
+- The M2 status view makes no assertion that a recent heartbeat proves a live process. The SQLite read can involve SQLite-managed WAL sidecars; it does not migrate or write domain rows.

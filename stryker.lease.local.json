@@ -1,0 +1,8 @@
+{
+  "mutate": ["supervisor/src/app/supervisor-lease.ts"],
+  "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "reporters": ["clear-text", "json"],
+  "concurrency": 1,
+  "thresholds": { "high": 80, "low": 70, "break": 80 }
+}
