@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "mutate": ["supervisor/src/app/store.ts"],
+  "mutate": ["supervisor/src/app/store.ts", "supervisor/src/app/commands.ts"],
   "testRunner": "vitest",
   "plugins": ["@stryker-mutator/vitest-runner"],
   "reporters": ["clear-text", "json"],
