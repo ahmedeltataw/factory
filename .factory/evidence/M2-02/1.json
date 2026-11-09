@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M2-02",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "5da8b97a86e5c7f29ed68ada5f1892701fc7607c",
+  "checks": [
+    {
+      "id": "CHK-M2-02-a",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent: surrogate-string finding fixed in M2-06 (Argon approve)"
+    },
+    {
+      "id": "CHK-M2-02-b",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent: surrogate-string finding fixed in M2-06 (Argon approve)"
+    },
+    {
+      "id": "CHK-M2-02-c",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent: surrogate-string finding fixed in M2-06 (Argon approve)"
+    },
+    {
+      "id": "CHK-M2-02-d",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent: surrogate-string finding fixed in M2-06 (Argon approve)"
+    },
+    {
+      "id": "CHK-M2-02-e",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent: surrogate-string finding fixed in M2-06 (Argon approve)"
+    },
+    {
+      "id": "CHK-M2-02-f",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent: surrogate-string finding fixed in M2-06 (Argon approve)"
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}

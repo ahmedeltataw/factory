@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "card": "M1-01",
+  "attempt": 2,
+  "role": "builder",
+  "provider": "opencode",
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "cli_version": "2.0.26",
+  "base_sha": "9c7217597abf125dfaa5abcd6334ea33c703c099",
+  "changed_paths": [
+    ".editorconfig",
+    ".gitattributes",
+    ".gitignore",
+    ".npmrc",
+    "package.json",
+    "pnpm-lock.yaml",
+    "tsconfig.json",
+    "tsdown.config.ts",
+    "vitest.config.ts",
+    "tests/config.spec.ts",
+    "supervisor/src/{core,app,cli,executors,sources}/.gitkeep",
+    "scripts/.gitkeep",
+    "schemas/.gitkeep",
+    "cards/.gitkeep",
+    "templates/.gitkeep",
+    "plugin/.gitkeep"
+  ],
+  "checks": [
+    {
+      "id": "CHK-M1-01-a",
+      "command": "tests/config.spec.ts (packageManager/engines/type)",
+      "result": "pass",
+      "output": "package fields asserted"
+    },
+    {
+      "id": "CHK-M1-01-b",
+      "command": "pnpm install --frozen-lockfile",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-01-c",
+      "command": "pnpm typecheck",
+      "exit_code": 2,
+      "result": "pass",
+      "output": "45 errors, all in tests/protected: 3 TS2307 + 42 TS7006; 0 elsewhere (expected before M1-02)"
+    },
+    {
+      "id": "CHK-M1-01-d",
+      "command": "tests/config.spec.ts (compilerOptions deep-equal)",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-01-e",
+      "command": "vitest/tsconfig include review",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-01-f",
+      "command": "tests/config.spec.ts (dependency set)",
+      "result": "pass"
+    },
+    {
+      "id": "CHK-M1-01-g",
+      "command": "tsdown.config.ts entries; pnpm build",
+      "result": "pass",
+      "output": "core entry supervisor/src/core/index.ts present (plus M2-04 CLI entry per amended contract); pnpm build exit 0 on fresh clone 5da8b97"
+    },
+    {
+      "id": "CHK-M1-01-f2",
+      "command": "tests/config.spec.ts exact versions",
+      "result": "pass"
+    }
+  ],
+  "verified_by": "Lead re-ran install, config tests and typecheck independently",
+  "builder_question": "typecheck cascade TS7006; Lead answer (a): accept, spec amended",
+  "finding": "nvm pnpm shim fails under Node 26 (corepack CommandNotFound); builder used the Designer's pnpm 12.15.0 from C:/Users/DownTown/.local/c2c-tools",
+  "versions": {
+    "typescript": "6.0.3",
+    "vitest": "4.1.8",
+    "tsdown": "0.22.14",
+    "@types/node": "24.19.2",
+    "zod": "4.4.3"
+  },
+  "layers": {
+    "L1": "pass",
+    "L4": "pass",
+    "L3": "approve (codex gpt-6.1-terra, pass 2)"
+  },
+  "ended_at": "2026-11-07T13:48:45+00:00",
+  "head_sha_note": "builder commits 8b97bd2 + version-pin commit",
+  "attempts_log": [
+    {
+      "attempt": 1,
+      "result": "ready",
+      "review": "changes (scope bundling by Lead; version test weak)"
+    },
+    {
+      "attempt": 2,
+      "result": "timeout: no output in 900s (transient)"
+    },
+    {
+      "attempt": 3,
+      "result": "ready; tests/config.spec.ts 5/5 pass (Lead re-ran)"
+    }
+  ],
+  "head_sha": "5da8b97a86e5c7f29ed68ada5f1892701fc7607c"
+}

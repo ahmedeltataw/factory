@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M2-05",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "5da8b97a86e5c7f29ed68ada5f1892701fc7607c",
+  "checks": [
+    {
+      "id": "CHK-M2-05-a",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; review: builder gpt-6.1-terra; reviewer gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M2-05-b",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; review: builder gpt-6.1-terra; reviewer gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M2-05-c",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; review: builder gpt-6.1-terra; reviewer gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M2-05-d",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; review: builder gpt-6.1-terra; reviewer gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M2-05-e",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; review: builder gpt-6.1-terra; reviewer gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M2-05-f",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; review: builder gpt-6.1-terra; reviewer gemini-4-argon-high: approve, no findings"
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}

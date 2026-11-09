@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M2-01",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "5da8b97a86e5c7f29ed68ada5f1892701fc7607c",
+  "checks": [
+    {
+      "id": "CHK-M2-01-a",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent (store/commands scope): no defects in migration transactions/version re-check; contract version and WAL amended by Lead 2026-11-09"
+    },
+    {
+      "id": "CHK-M2-01-b",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent (store/commands scope): no defects in migration transactions/version re-check; contract version and WAL amended by Lead 2026-11-09"
+    },
+    {
+      "id": "CHK-M2-01-c",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent (store/commands scope): no defects in migration transactions/version re-check; contract version and WAL amended by Lead 2026-11-09"
+    },
+    {
+      "id": "CHK-M2-01-d",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent (store/commands scope): no defects in migration transactions/version re-check; contract version and WAL amended by Lead 2026-11-09"
+    },
+    {
+      "id": "CHK-M2-01-e",
+      "command": "local gates + review",
+      "result": "pass",
+      "output": "fresh clone of m2-integration 5da8b97, Windows, Node 26.13.0: install frozen 0, typecheck 0, 26 files / 340 tests pass, build 0, manifest/forbidden-imports/evidence OK; Stryker (stryker.config.json) run by Lead outside sandbox: combined 81.50%; store.ts 84.00, commands.ts 82.72, supervisor-lease.ts 80.93; break 80 passed; review: Claude reviewer sub-agent (store/commands scope): no defects in migration transactions/version re-check; contract version and WAL amended by Lead 2026-11-09"
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}
