@@ -12,15 +12,19 @@ const { openStore } = await import(process.argv[1]);
 const { acquireSupervisor } = await import(process.argv[2]);
 const db = openStore(process.argv[3]);
 const handle = acquireSupervisor(db, process.argv[4], { nowMs: 10, staleAfterMs: 10 });
+if (process.argv[5] === 'double') db.exec('BEGIN');
 const original = fs.closeSync;
 fs.closeSync = () => { throw new Error('simulated close failure'); };
 syncBuiltinESMExports();
 let failed = false;
-try { handle.release(11); } catch { failed = true; }
+let message = '';
+let closeMessage = '';
+try { handle.release(11); } catch (error) { failed = true; message = error.message; closeMessage = error.cause?.message ?? ''; }
 fs.closeSync = original;
 syncBuiltinESMExports();
+if (process.argv[5] === 'double') db.exec('ROLLBACK');
 db.close();
-console.log(JSON.stringify({ failed }));
+console.log(JSON.stringify({ failed, message, closeMessage }));
 `
 
 it('CHK-M2-03-e: an OS handle close failure is not reported as successful release', () => {
@@ -34,6 +38,21 @@ it('CHK-M2-03-e: an OS handle close failure is not reported as successful releas
     ], { encoding: 'utf8', timeout: 10000 })
     expect(result.error).toBeUndefined()
     expect(result.status, result.stderr).toBe(0)
-    expect(JSON.parse(result.stdout)).toEqual({ failed: true })
+    expect(JSON.parse(result.stdout)).toMatchObject({ failed: true, message: 'simulated close failure' })
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}, 15000)
+
+it('CHK-M2-03-e: preserves the primary release failure when closing also fails', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-double-failure-'))
+  try {
+    const result = spawnSync(process.execPath, [
+      '--input-type=module', '--eval', childSource,
+      pathToFileURL(join(process.cwd(), 'supervisor/src/app/store.ts')).href,
+      pathToFileURL(join(process.cwd(), 'supervisor/src/app/supervisor-lease.ts')).href,
+      join(dir, 'state.sqlite'), dir, 'double',
+    ], { encoding: 'utf8', timeout: 10000 })
+    expect(result.error).toBeUndefined()
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({ failed: true, message: expect.stringContaining('active transaction'), closeMessage: 'simulated close failure' })
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }, 15000)

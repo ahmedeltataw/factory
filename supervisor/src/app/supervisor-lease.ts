@@ -289,6 +289,10 @@ class SupervisorLeaseHandle {
   release(nowMs: number): void {
     requireSafeInteger(nowMs, 'nowMs', 0)
     this.#assertHeld()
+    let primaryError: unknown
+    let primaryFailed = false
+    let closeError: unknown
+    let closeFailed = false
     let released = false
     try {
       // A caller-owned transaction may roll back: never report a successful
@@ -301,10 +305,31 @@ class SupervisorLeaseHandle {
         .run(this.#ownerId, this.#generation)
       released = result.changes === 1
       if (!released) throw new LeaseLostError('supervisor: lease row no longer matches this handle')
+    } catch (error) {
+      primaryFailed = true
+      primaryError = error
     } finally {
       if (!released) this.#lost = true
-      this.#closeLock()
+      try {
+        this.#closeLock()
+      } catch (error) {
+        closeFailed = true
+        closeError = error
+      }
     }
+    if (primaryFailed && closeFailed) {
+      if (primaryError !== null && (typeof primaryError === 'object' || typeof primaryError === 'function') && !('cause' in primaryError)) {
+        try {
+          Object.defineProperty(primaryError, 'cause', { value: closeError, configurable: true, writable: true, enumerable: false })
+          throw primaryError
+        } catch (e) {
+          if (e === primaryError) throw e
+        }
+      }
+      throw new AggregateError([primaryError, closeError], 'supervisor: release and close failed')
+    }
+    if (primaryFailed) throw primaryError
+    if (closeFailed) throw closeError
   }
 }
 Object.freeze(SupervisorLeaseHandle.prototype)
