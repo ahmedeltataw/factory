@@ -35,6 +35,7 @@ function isPositiveSafeInteger(value: unknown): value is number {
 }
 
 interface LeaseRow {
+  readonly id: unknown
   readonly owner_id: unknown
   readonly generation: unknown
   readonly heartbeat_ms: unknown
@@ -42,6 +43,7 @@ interface LeaseRow {
 }
 
 function isLeaseRow(value: unknown): value is LeaseRow & {
+  readonly id: 1
   readonly owner_id: string
   readonly generation: number
   readonly heartbeat_ms: number
@@ -50,6 +52,7 @@ function isLeaseRow(value: unknown): value is LeaseRow & {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
   const row = value as LeaseRow
   return (
+    row.id === 1 &&
     typeof row.owner_id === 'string' &&
     row.owner_id.trim().length > 0 &&
     Number.isSafeInteger(row.generation as number) &&
@@ -79,12 +82,17 @@ function heartbeatFreshness(
  * never reads payloads, and always closes its connection.
  */
 export function readStatus(stateDir: string, options: ReadStatusOptions): Status {
-  const { nowMs, staleAfterMs } = options
+  if (typeof stateDir !== 'string' || stateDir.trim().length === 0) {
+    throw new Error('status: stateDir must be a non-empty string')
+  }
+
+  const nowMs = options?.nowMs
+  const staleAfterMs = options?.staleAfterMs
   if (!isNonnegativeSafeInteger(nowMs)) throw new Error('status: nowMs must be a nonnegative safe integer')
   if (!isPositiveSafeInteger(staleAfterMs)) throw new Error('status: staleAfterMs must be a positive safe integer')
 
   const path = join(stateDir, 'state.sqlite')
-  const db = new DatabaseSync(path, { readOnly: true })
+  const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 })
   try {
     db.exec('BEGIN')
     try {
@@ -101,13 +109,18 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
       }
       const recordedCommandCount = countRow.count
 
-      const leaseRow = db
-        .prepare('SELECT owner_id, generation, heartbeat_ms, status FROM supervisor_lease LIMIT 1')
-        .get() as LeaseRow | undefined
+      const leaseRows = db
+        .prepare('SELECT id, owner_id, generation, heartbeat_ms, status FROM supervisor_lease LIMIT 2')
+        .all()
 
       let lease: null | Lease = null
-      if (leaseRow !== undefined) {
-        if (!isLeaseRow(leaseRow)) throw new Error('status: malformed supervisor_lease row')
+      if (leaseRows.length === 0) {
+        lease = null
+      } else if (leaseRows.length === 1) {
+        const leaseRow = leaseRows[0]
+        if (!isLeaseRow(leaseRow)) {
+          throw new Error('status: malformed supervisor_lease row')
+        }
         lease = {
           ownerId: leaseRow.owner_id,
           generation: leaseRow.generation,
@@ -115,6 +128,8 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
           state: leaseRow.status,
           freshness: heartbeatFreshness(leaseRow.status, leaseRow.heartbeat_ms, nowMs, staleAfterMs),
         }
+      } else {
+        throw new Error('status: corrupt supervisor_lease table')
       }
 
       db.exec('COMMIT')
