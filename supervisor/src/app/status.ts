@@ -152,7 +152,7 @@ function freshnessLabel(freshness: LeaseFreshness): string {
     case 'future':
       return 'في المستقبل'
     case 'not-applicable':
-      return 'غير مطبق (تم الإطلاق)'
+      return 'غير منطبق (تم تحرير الملكية)'
   }
 }
 
@@ -170,9 +170,9 @@ export function formatStatus(status: Status): string {
     lines.push('الملكية: غير موجود')
   } else {
     const { ownerId, generation, heartbeatMs, state, freshness } = status.lease
-    const stateLabel = state === 'active' ? 'نشط' : 'مُطْلَق'
+    const stateLabel = state === 'active' ? 'نشط' : 'مُحرَّر'
     lines.push(
-      `الملكية: المالك="${ownerId}", الجيل=${generation}, النبض=${heartbeatMs} ميلي ثانية, الحالة=${stateLabel}, حداثة النبض=${freshnessLabel(freshness)}`,
+      `الملكية: المالك="${ownerId}", الجيل=${generation}, وقت النبض (Unix timestamp)=${heartbeatMs} ميلي ثانية, الحالة=${stateLabel}, حداثة النبض=${freshnessLabel(freshness)}`,
     )
   }
   return lines.join('\n')
