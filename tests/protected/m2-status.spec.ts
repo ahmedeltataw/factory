@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { formatStatus, readStatus } from '../../supervisor/src/app/status.ts'
 import { openStore } from '../../supervisor/src/app/store.ts'
 import { appendCommand } from '../../supervisor/src/app/commands.ts'
@@ -90,4 +90,27 @@ it('CHK-M2-04-a: reads the real migrated store while a supervisor owns it', () =
     } finally { handle.release(1200) }
     expect(readStatus(dir, { nowMs: 1200, staleAfterMs: 1000 }).lease?.state).toBe('released')
   } finally { db.close() }
+})
+
+it('CHK-M2-04-a: reports a consistent read snapshot during concurrent changes', () => {
+  const dir = directory()
+  seed(dir)
+  const path = join(dir, 'state.sqlite')
+  const writer = new DatabaseSync(path)
+  writer.exec('PRAGMA journal_mode = WAL')
+  const original = DatabaseSync.prototype.prepare
+  let changed = false
+  const spy = vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (this: DatabaseSync, sql: string) {
+    if (!changed && sql.includes('FROM supervisor_lease')) {
+      changed = true
+      writer.exec("BEGIN; INSERT INTO commands VALUES ('c3', '{}'); INSERT INTO supervisor_lease VALUES (1, 'later-owner', 1, 1000, 'active'); COMMIT")
+    }
+    return original.call(this, sql)
+  })
+  try {
+    const status = readStatus(dir, { nowMs: 1200, staleAfterMs: 1000 })
+    expect(changed).toBe(true)
+    expect(status).toMatchObject({ recordedCommandCount: 2, lease: null })
+  } finally { spy.mockRestore(); writer.close() }
+  expect(readStatus(dir, { nowMs: 1200, staleAfterMs: 1000 })).toMatchObject({ recordedCommandCount: 3, lease: { ownerId: 'later-owner' } })
 })
