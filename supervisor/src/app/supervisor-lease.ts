@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { tryLock, unlock } from 'fs-native-extensions'
 
+export const DEFAULT_STALE_AFTER_MS = 300_000
+
 const LOCK_FILE = 'supervisor.lock'
 const DATABASE_FILE = 'state.sqlite'
 
@@ -52,7 +54,9 @@ function mainDatabaseFile(db: DatabaseSync): string | undefined {
 
 /** True only when the caller owns an active SQLite transaction on this connection. */
 function inTransaction(db: DatabaseSync): boolean {
-  return typeof db.isTransaction === 'boolean' && db.isTransaction
+  const state = db.isTransaction
+  if (typeof state !== 'boolean') throw new Error('supervisor: transaction state is unavailable')
+  return state
 }
 
 interface TakeoverEvidence {
@@ -128,19 +132,20 @@ export function acquireSupervisor(db: DatabaseSync, stateDir: string, options: L
   // `locked` is true only while this acquisition actually holds the OS lock.
   // `closeLock` must never unlock an unheld lock and must close the descriptor once only.
   let locked = false
-  const closeLock = (): void => {
-    if (closed) return
+  const closeLock = (): unknown[] => {
+    if (closed) return []
     closed = true
+    const failures: unknown[] = []
     if (locked) {
-      try { unlock(fd) } catch { /* best effort: close the descriptor below either way */ }
+      try { unlock(fd) } catch (error) { failures.push(error) }
     }
-    try { closeSync(fd) } catch { /* descriptor already closed */ }
+    try { closeSync(fd) } catch (error) { failures.push(error) }
+    return failures
   }
 
   try {
     // Cooperative processes serialize here; a live OS lock blocks acquisition even for a stale-looking lease.
     if (!tryLock(fd)) {
-      closeLock()
       throw new Error('supervisor: OS lock is held by another process')
     }
     locked = true
@@ -181,13 +186,24 @@ export function acquireSupervisor(db: DatabaseSync, stateDir: string, options: L
       db.exec('COMMIT')
     } catch (error) {
       try { db.exec('ROLLBACK') } catch { /* the failed statement may already have ended the transaction */ }
-      closeLock()
       throw error
     }
 
     return new SupervisorLeaseHandle(CONSTRUCTOR_KEY, db, fd, ownerId, generation, nowMs)
   } catch (error) {
-    closeLock()
+    const failures = closeLock()
+    if (failures.length > 0) {
+      const cleanup = failures.length === 1 ? failures[0] : new AggregateError(failures, 'supervisor: lock cleanup failed')
+      if (error !== null && (typeof error === 'object' || typeof error === 'function') && !('cause' in error)) {
+        try {
+          Object.defineProperty(error, 'cause', { value: cleanup, configurable: true, writable: true })
+          throw error
+        } catch (attached) {
+          if (attached === error) throw attached
+        }
+      }
+      throw new AggregateError([error, ...failures], 'supervisor: acquisition and cleanup failed')
+    }
     throw error
   }
 }
