@@ -17,7 +17,8 @@ it('CHK-M1-TRACE-STRICT-a: a deferral covers planning but is not a passing resul
 it('CHK-M1-TRACE-STRICT-b: strict mode accepts passing evidence and works in all mode', () => {
   expect(runScript('check-traceability.mjs', [...cardArgs('evidence-pass.json'), '--require-passing']).status).toBe(0)
   const root = path.join(fixture('all-pass'))
-  expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(0)
+  expect(runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'ALL-P'], { cwd: root }).status).toBe(0)
+  expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(1)
   const scopedPlanning = runScript('check-traceability.mjs', ['--all', '--card-prefix', 'ALL-P'], { cwd: root })
   expect(scopedPlanning.status).toBe(0)
   expect(scopedPlanning.stdout).not.toContain('ALL-S')
@@ -28,6 +29,7 @@ it('CHK-M1-TRACE-STRICT-b: strict all mode detects spec cards with no evidence d
   const root = mkdtempSync(path.join(tmpdir(), 'factory-trace-strict-'))
   try {
     cpSync(fixture('all-pass'), root, { recursive: true })
+    rmSync(path.join(root, '.factory', 'evidence', 'ALL-S'), { recursive: true })
     appendFileSync(path.join(root, 'docs', 'milestones', 'M1P.md'), '\n### ALL-M Missing card\n- CHK-ALL-M-a: evidence is required.\n')
     const strict = runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root })
     expect(strict.status).toBe(1)

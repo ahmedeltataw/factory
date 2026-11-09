@@ -315,11 +315,9 @@ if (all) {
     }
 
     if (qualifyingCards.length === 0) fail('no qualifying cards found')
-    if (cardPrefix !== undefined) {
-      const qualifyingCardIds = new Set(qualifyingCards.map((c) => c.id))
-      for (const { card: name } of cards) {
-        if (!qualifyingCardIds.has(name)) fail(`evidence card ${name} has no qualifying spec section`)
-      }
+    const qualifyingCardIds = new Set(qualifyingCards.map((c) => c.id))
+    for (const { card: name } of cards) {
+      if (!qualifyingCardIds.has(name)) fail(`evidence card ${name} has no qualifying spec section`)
     }
     const cardMap = new Map(cards.map((c) => [c.card, c]))
     const checked = []
