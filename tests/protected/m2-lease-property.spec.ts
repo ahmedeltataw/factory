@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { linkSync, mkdtempSync, mkdirSync, realpathSync, rmSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import fc from 'fast-check'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { openStore } from '../../supervisor/src/app/store.ts'
 import { acquireSupervisor } from '../../supervisor/src/app/supervisor-lease.ts'
 import { LeaseLostError } from '../../supervisor/src/app/supervisor-lease.ts'
@@ -158,6 +158,67 @@ it('CHK-M2-03-e: SQLite busy during acquisition closes the OS lock and leaves no
     const handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
     handle.release(10)
   } finally { other.close(); db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('CHK-M2-03-a/c: rejects a database resolving outside the canonical state directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'factory-lease-canonical-'))
+  const actual = join(root, 'actual')
+  const alias = join(root, 'alias')
+  mkdirSync(actual)
+  mkdirSync(alias)
+  const db = openStore(join(actual, 'state.sqlite'))
+  const native = realpathSync.native
+  const aliasDb = join(alias, 'state.sqlite')
+  const spy = vi.spyOn(realpathSync, 'native').mockImplementation(((path: Parameters<typeof native>[0], ...args: unknown[]) => {
+    if (String(path) === aliasDb) return native(join(actual, 'state.sqlite'))
+    return (native as (...values: unknown[]) => string)(path, ...args)
+  }) as typeof native)
+  let accidental: ReturnType<typeof acquireSupervisor> | undefined
+  try {
+    expect(() => { accidental = acquireSupervisor(db, alias, { nowMs: 10, staleAfterMs: 10 }) }).toThrow()
+  } finally {
+    try { accidental?.release(10) } catch { /* cleanup after a failing assertion */ }
+    spy.mockRestore()
+    db.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it('CHK-M2-03-b/e: callers cannot change the handle clock or internal ownership state', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-private-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  let handle: ReturnType<typeof acquireSupervisor> | undefined
+  try {
+    handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+    const active = handle
+    active.heartbeat(20)
+    Reflect.set(active, 'lastHeartbeat', 0)
+    expect(() => active.heartbeat(19)).toThrow()
+    active.release(20)
+    Reflect.set(active, 'closed', false)
+    Reflect.set(active, 'lost', false)
+    expect(() => active.heartbeat(21)).toThrow(LeaseLostError)
+    expect(Object.prototype.hasOwnProperty.call(active, 'fd')).toBe(false)
+  } finally { try { handle?.release(30) } catch { /* already released or lost */ }; db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('CHK-M2-03-a/c: rejects hard-linked databases that could use different lock files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'factory-lease-hardlink-'))
+  const actual = join(root, 'actual')
+  const alias = join(root, 'alias')
+  mkdirSync(actual)
+  mkdirSync(alias)
+  const path = join(actual, 'state.sqlite')
+  const otherPath = join(alias, 'state.sqlite')
+  const db = openStore(path)
+  let accidental: ReturnType<typeof acquireSupervisor> | undefined
+  try {
+    linkSync(path, otherPath)
+    expect(() => { accidental = acquireSupervisor(db, actual, { nowMs: 10, staleAfterMs: 10 }) }).toThrow()
+    unlinkSync(otherPath)
+    const valid = acquireSupervisor(db, actual, { nowMs: 20, staleAfterMs: 10 })
+    valid.release(20)
+  } finally { try { accidental?.release(30) } catch { /* cleanup after a failing assertion */ }; db.close(); rmSync(root, { recursive: true, force: true }) }
 })
 
 it('CHK-M2-03-e: caller transaction cannot make heartbeat or release falsely appear durable', () => {
