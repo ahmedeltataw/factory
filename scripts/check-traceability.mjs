@@ -207,7 +207,7 @@ async function collectEvidenceRecords(root, strict = false, cardPrefix = undefin
     return m === null ? Number.POSITIVE_INFINITY : Number(m[1])
   }
   const cards = []
-  let dirEntries = entries.filter((e) => e.isDirectory())
+  let dirEntries = entries.filter((e) => e.isDirectory() && e.name !== 'step-0')
   if (cardPrefix !== undefined) {
     dirEntries = dirEntries.filter((e) => e.name.startsWith(cardPrefix))
   }

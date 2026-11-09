@@ -18,16 +18,17 @@ export class CommandConflictError extends Error {
   }
 }
 
-const nonblank = z.string().refine(
+const wellFormed = z.string().refine((value) => value.isWellFormed(), 'must be well-formed Unicode')
+const nonblank = wellFormed.refine(
   (value) => value.trim().length > 0,
   'must not be blank',
 )
-const exactUtcTimestamp = z.string().refine((value) => {
+const exactUtcTimestamp = wellFormed.refine((value) => {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false
   const date = new Date(value)
   return !Number.isNaN(date.getTime()) && date.toISOString() === value
 }, 'must be an exact ISO-8601 UTC timestamp')
-const jsonText = z.string().refine((value) => {
+const jsonText = wellFormed.refine((value) => {
   try {
     JSON.parse(value)
     return true

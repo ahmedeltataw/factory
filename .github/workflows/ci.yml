@@ -44,11 +44,20 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Built CLI smoke test
+        shell: bash
+        run: |
+          state_dir=$(mktemp -d)
+          trap 'rm -rf "$state_dir"' EXIT
+          status=0
+          node lib/factory.mjs status --state-dir "$state_dir" --json 2>"$state_dir/stderr" || status=$?
+          test "$status" -eq 1 && test -s "$state_dir/stderr"
+
       - name: Forbidden import scan
         run: node scripts/check-forbidden-imports.mjs
 
       - name: Traceability check
-        run: node scripts/check-traceability.mjs --all
+        run: node scripts/check-traceability.mjs --all --require-passing
 
       - name: Manifest check
         run: node scripts/check-manifest.mjs
@@ -58,7 +67,7 @@ jobs:
         run: node scripts/check-evidence.mjs .factory/evidence/*/*.json
 
   mutation:
-    # Focused mutation for store.ts only (card M2 verification tools, CHK-M2-TOOLS-d).
+    # Mutation covers store.ts, commands.ts and supervisor-lease.ts; combined break threshold 80 (CHK-M2-TOOLS-c).
     name: mutation (ubuntu, node 24)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -76,6 +85,6 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Mutation test (focused store.ts config)
+      - name: Mutation test (three-file config)
         timeout-minutes: 40
         run: pnpm exec stryker run
