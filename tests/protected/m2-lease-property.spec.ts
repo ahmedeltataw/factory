@@ -6,6 +6,7 @@ import { expect, it, vi } from 'vitest'
 import { openStore } from '../../supervisor/src/app/store.ts'
 import { acquireSupervisor } from '../../supervisor/src/app/supervisor-lease.ts'
 import { LeaseLostError } from '../../supervisor/src/app/supervisor-lease.ts'
+import * as leaseModule from '../../supervisor/src/app/supervisor-lease.ts'
 
 it('CHK-M2-03-d/f: takeover changes only at the stale boundary with exact evidence', () => {
   fc.assert(fc.property(fc.integer({ min: 0, max: 1000000 }), fc.integer({ min: 1, max: 100000 }), (heartbeatMs, staleAfterMs) => {
@@ -201,6 +202,38 @@ it('CHK-M2-03-b/e: callers cannot change the handle clock or internal ownership 
     expect(Object.prototype.hasOwnProperty.call(active, 'fd')).toBe(false)
   } finally { try { handle?.release(30) } catch { /* already released or lost */ }; db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
+
+it('CHK-M2-03-e: callers cannot replace internal lock cleanup', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-private-method-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  const handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+  try {
+    Reflect.set(handle, 'closeLock', () => {})
+    handle.release(10)
+    const next = acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10 })
+    next.release(20)
+  } finally {
+    Reflect.deleteProperty(handle, 'closeLock')
+    try { handle.release(30) } catch { /* already released or lost */ }
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('CHK-M2-03-e: callers cannot shadow the lease identity or operations', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-shadow-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  const handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+  try {
+    expect(() => Object.defineProperty(handle, 'ownerId', { value: 'forged' })).toThrow()
+    expect(() => Object.defineProperty(handle, 'release', { value: () => {} })).toThrow()
+    expect(Object.isFrozen(Object.getPrototypeOf(handle))).toBe(true)
+    expect('SupervisorLeaseHandle' in leaseModule).toBe(false)
+    const ctor = Object.getPrototypeOf(handle).constructor as new (...args: unknown[]) => unknown
+    expect(() => new ctor(Symbol(), db, 0, 'forged', 1, 10)).toThrow()
+  } finally { handle.release(10); db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
 
 it('CHK-M2-03-a/c: rejects hard-linked databases that could use different lock files', () => {
   const root = mkdtempSync(join(tmpdir(), 'factory-lease-hardlink-'))

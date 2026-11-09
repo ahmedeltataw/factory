@@ -1,7 +1,7 @@
 /// <reference path="./native-lock.d.ts" />
 
 import { join } from 'node:path'
-import { closeSync, openSync, realpathSync } from 'node:fs'
+import { closeSync, openSync, realpathSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { tryLock, unlock } from 'fs-native-extensions'
@@ -31,10 +31,10 @@ function requireOwnerId(value: unknown, name = 'takeover.ownerId'): string {
   return value
 }
 
-/** Greatest generation that can still be incremented within the safe-integer range. */
-const MAX_SAFE_GENERATION = Number.MAX_SAFE_INTEGER
-
 function nextGeneration(value: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error('supervisor: generation must be a positive safe integer')
+  }
   const incremented = value + 1
   if (!Number.isSafeInteger(incremented)) {
     throw new Error(`supervisor: generation increment would overflow the safe integer range`)
@@ -45,17 +45,9 @@ function nextGeneration(value: number): number {
 function mainDatabaseFile(db: DatabaseSync): string | undefined {
   const rows = db.prepare('PRAGMA database_list').all() as Array<{ name: string; file: string } | undefined>
   for (const row of rows ?? []) {
-    if (row?.name === 'main') return row.file ?? undefined
+    if (row?.name === 'main') return row.file || undefined
   }
   return undefined
-}
-
-function resolveSamePath(a: string, b: string): boolean {
-  try {
-    return realpathSync.native(a) === realpathSync.native(b)
-  } catch {
-    return false
-  }
 }
 
 /** True only when the caller owns an active SQLite transaction on this connection. */
@@ -102,13 +94,33 @@ export function acquireSupervisor(db: DatabaseSync, stateDir: string, options: L
     }
   }
 
-  const stateDatabase = join(stateDir, DATABASE_FILE)
-  const lockFile = join(stateDir, LOCK_FILE)
+  let canonicalStateDir: string
+  try {
+    canonicalStateDir = realpathSync.native(stateDir)
+  } catch {
+    throw new Error('supervisor: state directory does not exist or cannot be resolved')
+  }
+
+  const stateDatabase = join(canonicalStateDir, DATABASE_FILE)
+  const lockFile = join(canonicalStateDir, LOCK_FILE)
 
   // The provided connection's main database must be state.sqlite inside stateDir before any lock is taken.
   const main = mainDatabaseFile(db)
-  if (main === undefined || !resolveSamePath(main, stateDatabase)) {
+  if (main === undefined) {
     throw new Error('supervisor: state directory does not contain the connection database')
+  }
+
+  try {
+    const realMain = realpathSync.native(main)
+    const realStateDb = realpathSync.native(stateDatabase)
+    if (realMain !== stateDatabase || realStateDb !== stateDatabase) {
+      throw new Error('supervisor: state directory does not contain the connection database')
+    }
+  } catch {
+    throw new Error('supervisor: state directory does not contain the connection database')
+  }
+  if (statSync(stateDatabase).nlink > 1) {
+    throw new Error('supervisor: state database has multiple hard links')
   }
 
   const fd = openSync(lockFile, 'a+')
@@ -173,30 +185,38 @@ export function acquireSupervisor(db: DatabaseSync, stateDir: string, options: L
       throw error
     }
 
-    return new SupervisorLeaseHandle(db, fd, ownerId, generation, nowMs)
+    return new SupervisorLeaseHandle(CONSTRUCTOR_KEY, db, fd, ownerId, generation, nowMs)
   } catch (error) {
     closeLock()
     throw error
   }
 }
 
+const CONSTRUCTOR_KEY = Symbol('SupervisorLeaseHandleKey')
+
+export type { SupervisorLeaseHandle }
+
 /** Handle for one held lease. Truly immutable ownerId and generation; heartbeat/release are CAS-guarded. */
-export class SupervisorLeaseHandle {
+class SupervisorLeaseHandle {
   #ownerId: string
   #generation: number
 
-  private readonly db: DatabaseSync
-  private readonly fd: number
-  private closed = false
-  private lost = false
-  private lastHeartbeat: number
+  readonly #db: DatabaseSync
+  readonly #fd: number
+  #closed = false
+  #lost = false
+  #lastHeartbeat: number
 
-  constructor(db: DatabaseSync, fd: number, ownerId: string, generation: number, lastHeartbeat: number) {
-    this.db = db
-    this.fd = fd
+  constructor(key: symbol, db: DatabaseSync, fd: number, ownerId: string, generation: number, lastHeartbeat: number) {
+    if (key !== CONSTRUCTOR_KEY) {
+      throw new Error('supervisor: SupervisorLeaseHandle cannot be constructed directly')
+    }
+    this.#db = db
+    this.#fd = fd
     this.#ownerId = ownerId
     this.#generation = generation
-    this.lastHeartbeat = lastHeartbeat
+    this.#lastHeartbeat = lastHeartbeat
+    Object.freeze(this)
   }
 
   get ownerId(): string {
@@ -207,37 +227,40 @@ export class SupervisorLeaseHandle {
     return this.#generation
   }
 
-  private assertHeld(): void {
-    if (this.closed || this.lost) throw new LeaseLostError()
+  #assertHeld(): void {
+    if (this.#closed || this.#lost) throw new LeaseLostError()
   }
 
-  private closeLock(): void {
-    if (this.closed) return
-    this.closed = true
-    try { unlock(this.fd) } catch { /* best effort: the descriptor is closed below either way */ }
-    try { closeSync(this.fd) } catch { /* descriptor already closed */ }
+  #closeLock(): void {
+    if (this.#closed) return
+    this.#closed = true
+    try {
+      try { unlock(this.#fd) } catch { /* best effort: closing releases the descriptor lock */ }
+    } finally {
+      closeSync(this.#fd)
+    }
   }
 
-  private markLost(): void {
-    this.lost = true
-    this.closeLock()
+  #markLost(): void {
+    this.#lost = true
+    this.#closeLock()
   }
 
   /** Refresh heartbeat_ms on the row this handle owns; rejects backwards clocks and lost handles. */
   heartbeat(nowMs: number): void {
     const time = requireSafeInteger(nowMs, 'nowMs', 0)
-    this.assertHeld()
+    this.#assertHeld()
     // Reject backwards clocks before any database interaction: a stale clock never
     // touches the row and never invalidates this handle.
-    if (time < this.lastHeartbeat) throw new Error('supervisor: heartbeat before the last heartbeat')
+    if (time < this.#lastHeartbeat) throw new Error('supervisor: heartbeat before the last heartbeat')
     // A caller-owned transaction may roll back: never report a successful heartbeat
     // that is not durable. Reject without touching the row, this handle, or the
     // transaction. If the transaction state itself cannot be read, fail closed.
     let transacting = false
     try {
-      transacting = inTransaction(this.db)
+      transacting = inTransaction(this.#db)
     } catch (error) {
-      this.markLost()
+      this.#markLost()
       throw error
     }
     if (transacting) {
@@ -246,40 +269,42 @@ export class SupervisorLeaseHandle {
     // Fail closed: if the SQLite heartbeat UPDATE throws, the row was not changed
     // but this handle can no longer vouch for the row. Close the OS lock,
     // invalidate the handle, then rethrow. Do not commit or rollback a caller
-    // transaction. A zero-row update preserves LeaseLostError behavior.
+    // transaction. A zero-row update preserves LeaseLostError behavior without double marking.
+    let changes: number | bigint
     try {
-      const result = this.db.prepare("UPDATE supervisor_lease SET heartbeat_ms = ? WHERE id = 1 AND owner_id = ? AND generation = ? AND status = 'active'")
-        .run(time, this.#ownerId, this.#generation)
-      if (result.changes !== 1) {
-        this.markLost()
-        throw new LeaseLostError('supervisor: lease row no longer matches this handle')
-      }
+      changes = this.#db.prepare("UPDATE supervisor_lease SET heartbeat_ms = ? WHERE id = 1 AND owner_id = ? AND generation = ? AND status = 'active'")
+        .run(time, this.#ownerId, this.#generation).changes
     } catch (error) {
-      this.markLost()
+      this.#markLost()
       throw error
     }
-    this.lastHeartbeat = time
+    if (changes !== 1) {
+      this.#markLost()
+      throw new LeaseLostError('supervisor: lease row no longer matches this handle')
+    }
+    this.#lastHeartbeat = time
   }
 
   /** Mark the owned row released, release the OS lock and close the lock descriptor. */
   release(nowMs: number): void {
-    const time = requireSafeInteger(nowMs, 'nowMs', 0)
-    this.assertHeld()
+    requireSafeInteger(nowMs, 'nowMs', 0)
+    this.#assertHeld()
     let released = false
     try {
       // A caller-owned transaction may roll back: never report a successful
       // release that is not durable. Close the OS lock as on other release
       // failures, leave the row and the caller's transaction untouched.
-      if (inTransaction(this.db)) {
+      if (inTransaction(this.#db)) {
         throw new Error('supervisor: cannot release a supervisor lease inside an active transaction')
       }
-      const result = this.db.prepare("UPDATE supervisor_lease SET status = 'released' WHERE id = 1 AND owner_id = ? AND generation = ? AND status = 'active'")
+      const result = this.#db.prepare("UPDATE supervisor_lease SET status = 'released' WHERE id = 1 AND owner_id = ? AND generation = ? AND status = 'active'")
         .run(this.#ownerId, this.#generation)
       released = result.changes === 1
       if (!released) throw new LeaseLostError('supervisor: lease row no longer matches this handle')
     } finally {
-      this.closeLock()
-      if (!released) this.lost = true
+      if (!released) this.#lost = true
+      this.#closeLock()
     }
   }
 }
+Object.freeze(SupervisorLeaseHandle.prototype)
