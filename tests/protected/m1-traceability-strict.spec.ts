@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { appendFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { expect, it } from 'vitest'
 import { fixturePath, runScript } from '../scripts/helpers.ts'
@@ -77,9 +77,25 @@ it('CHK-M1-TRACE-STRICT-b: strict mode rejects corrupt and ambiguous attempt rec
     cpSync(fixture('all-pass'), root, { recursive: true })
     const dir = path.join(root, '.factory', 'evidence', 'ALL-P')
     writeFileSync(path.join(dir, '2.json'), '{')
-    expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(1)
+    const corrupt = runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'ALL-P'], { cwd: root })
+    expect(corrupt.status).toBe(1)
+    expect(corrupt.stdout).toContain('is not valid JSON')
     const original = readFileSync(path.join(dir, '1.json'), 'utf8')
     writeFileSync(path.join(dir, '2.json'), original)
-    expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(1)
+    const duplicate = runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'ALL-P'], { cwd: root })
+    expect(duplicate.status).toBe(1)
+    expect(duplicate.stdout).toContain('duplicate attempt 1 for card ALL-P')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+it('CHK-M2-06-b: strict all mode ignores step-0 evidence', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'factory-trace-step-'))
+  try {
+    cpSync(fixture('all-pass'), root, { recursive: true })
+    rmSync(path.join(root, '.factory', 'evidence', 'ALL-S'), { recursive: true })
+    const step = path.join(root, '.factory', 'evidence', 'step-0')
+    mkdirSync(step)
+    writeFileSync(path.join(step, '1.json'), '{')
+    expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(0)
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
