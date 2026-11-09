@@ -1,6 +1,7 @@
 import { linkSync, mkdtempSync, mkdirSync, realpathSync, rmSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import fc from 'fast-check'
 import { expect, it, vi } from 'vitest'
 import { openStore } from '../../supervisor/src/app/store.ts'
@@ -232,6 +233,32 @@ it('CHK-M2-03-e: callers cannot shadow the lease identity or operations', () => 
     const ctor = Object.getPrototypeOf(handle).constructor as new (...args: unknown[]) => unknown
     expect(() => new ctor(Symbol(), db, 0, 'forged', 1, 10)).toThrow()
   } finally { handle.release(10); db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('CHK-M2-03-e: corrupted generation values cannot acquire a released lease', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-corrupt-generation-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  try {
+    db.exec('PRAGMA ignore_check_constraints = ON')
+    for (const generation of [0, -1, 1.5]) {
+      db.prepare('DELETE FROM supervisor_lease').run()
+      db.prepare("INSERT INTO supervisor_lease VALUES (1, 'old-owner', ?, 10, 'released')").run(generation)
+      expect(() => acquireSupervisor(db, dir, { nowMs: 20, staleAfterMs: 10 })).toThrow()
+      expect(db.prepare('SELECT generation, status FROM supervisor_lease').get()).toMatchObject({ generation, status: 'released' })
+    }
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('CHK-M2-03-a/c: rejects in-memory databases and missing state directories', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-invalid-paths-'))
+  const memory = new DatabaseSync(':memory:')
+  const db = openStore(join(dir, 'state.sqlite'))
+  try {
+    expect(() => acquireSupervisor(memory, dir, { nowMs: 10, staleAfterMs: 10 })).toThrow(/state directory/)
+    expect(() => acquireSupervisor(db, join(dir, 'missing'), { nowMs: 10, staleAfterMs: 10 })).toThrow(/state directory/)
+    const handle = acquireSupervisor(db, dir, { nowMs: 10, staleAfterMs: 10 })
+    handle.release(10)
+  } finally { memory.close(); db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
 
 
