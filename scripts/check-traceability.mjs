@@ -208,7 +208,7 @@ async function collectEvidenceRecords(root, strict = false, cardPrefix = undefin
   }
   const cards = []
   let dirEntries = entries.filter((e) => e.isDirectory())
-  if (strict && cardPrefix !== undefined) {
+  if (cardPrefix !== undefined) {
     dirEntries = dirEntries.filter((e) => e.name.startsWith(cardPrefix))
   }
   for (const entry of dirEntries.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -302,7 +302,12 @@ if (all) {
         const section = lines.slice(i + 1, end).join('\n')
         const idEscaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const chkRegex = new RegExp(`\\bCHK-${idEscaped}-[a-z0-9]+\\b`)
-        if (!chkRegex.test(section)) continue
+        if (!chkRegex.test(section)) {
+          if (cardPrefix !== undefined || cards.some((c) => c.card === id)) {
+            fail(`card ${id}: missing CHK-${id}-* check in spec section`)
+          }
+          continue
+        }
         if (seen.has(id)) fail(`duplicate section for card ${id}`)
         seen.add(id)
         qualifyingCards.push({ id, specSource: spec.source })
@@ -310,6 +315,12 @@ if (all) {
     }
 
     if (qualifyingCards.length === 0) fail('no qualifying cards found')
+    if (cardPrefix !== undefined) {
+      const qualifyingCardIds = new Set(qualifyingCards.map((c) => c.id))
+      for (const { card: name } of cards) {
+        if (!qualifyingCardIds.has(name)) fail(`evidence card ${name} has no qualifying spec section`)
+      }
+    }
     const cardMap = new Map(cards.map((c) => [c.card, c]))
     const checked = []
     const failures = []

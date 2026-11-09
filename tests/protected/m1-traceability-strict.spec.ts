@@ -18,6 +18,9 @@ it('CHK-M1-TRACE-STRICT-b: strict mode accepts passing evidence and works in all
   expect(runScript('check-traceability.mjs', [...cardArgs('evidence-pass.json'), '--require-passing']).status).toBe(0)
   const root = path.join(fixture('all-pass'))
   expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(0)
+  const scopedPlanning = runScript('check-traceability.mjs', ['--all', '--card-prefix', 'ALL-P'], { cwd: root })
+  expect(scopedPlanning.status).toBe(0)
+  expect(scopedPlanning.stdout).not.toContain('ALL-S')
   expect(runScript('check-traceability.mjs', [...cardArgs('evidence-missing.json'), '--require-passing']).status).toBe(1)
 })
 
@@ -32,6 +35,24 @@ it('CHK-M1-TRACE-STRICT-b: strict all mode detects spec cards with no evidence d
     expect(runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'ALL-P'], { cwd: root }).status).toBe(0)
     expect(runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'NO-SUCH-CARD'], { cwd: root }).status).toBe(1)
   } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+it('CHK-M1-TRACE-STRICT-b: a scoped card without checks cannot be skipped', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'factory-trace-no-checks-'))
+  try {
+    cpSync(fixture('all-pass'), root, { recursive: true })
+    appendFileSync(path.join(root, 'docs', 'milestones', 'M1P.md'), '\n### ALL-X Missing checks\nNo checks listed.\n')
+    const result = runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'ALL-'], { cwd: root })
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain('ALL-X')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+it('CHK-M1-TRACE-STRICT-b: scoped evidence without a matching spec fails', () => {
+  const root = path.join(fixture('all-pass'))
+  const result = runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'ALL-'], { cwd: root })
+  expect(result.status).toBe(1)
+  expect(result.stdout).toContain('ALL-S')
 })
 
 it('CHK-M1-TRACE-STRICT-b: strict mode rejects conflicting results for the same check', () => {
