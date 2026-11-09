@@ -1,5 +1,6 @@
 // Guard: every CHK-<card>-* check id in the card's spec section must have a
 // passing (or deferred not-run) result in the evidence record (CHK-M1-03-c).
+// Pass --require-passing to disallow deferred results (strict mode).
 // Single-card mode: --spec <md> --card <id> --evidence <json>.
 // All mode (--all): for every directory .factory/evidence/<card>/ take the
 // record with the highest attempt number; if any docs/milestones/*.md has a
@@ -15,7 +16,14 @@ function fail(reason) {
 }
 
 function parseFlags(argv) {
-  const flags = { all: false, spec: undefined, card: undefined, evidence: undefined }
+  const flags = {
+    all: false,
+    requirePassing: false,
+    cardPrefix: undefined,
+    spec: undefined,
+    card: undefined,
+    evidence: undefined,
+  }
   for (let i = 0; i < argv.length; i++) {
     const name = argv[i]
     if (name === '--all') {
@@ -25,18 +33,32 @@ function parseFlags(argv) {
       flags.all = true
       continue
     }
-    if (name !== '--spec' && name !== '--card' && name !== '--evidence') {
+    if (name === '--require-passing') {
+      flags.requirePassing = true
+      continue
+    }
+    if (name !== '--card-prefix' && name !== '--spec' && name !== '--card' && name !== '--evidence') {
       fail(`unexpected argument: ${name}`)
     }
-    if (flags.all) {
-      fail('--all cannot be combined with --spec, --card or --evidence')
+    const prop = name === '--card-prefix' ? 'cardPrefix' : name.slice(2)
+    if (flags[prop] !== undefined) {
+      fail(`duplicate flag ${name}`)
     }
     const value = argv[i + 1]
-    if (value === undefined) fail(`${name} requires a value`)
-    flags[name.slice(2)] = value
+    if (value === undefined || value === '' || value.startsWith('-')) {
+      fail(`${name} requires a value`)
+    }
+    flags[prop] = value
     i++
   }
-  if (!flags.all) {
+  if (flags.cardPrefix !== undefined && !flags.all) {
+    fail('--card-prefix can only be used with --all')
+  }
+  if (flags.all) {
+    if (flags.spec !== undefined || flags.card !== undefined || flags.evidence !== undefined) {
+      fail('--all cannot be combined with --spec, --card or --evidence')
+    }
+  } else {
     for (const required of ['spec', 'card', 'evidence']) {
       if (flags[required] === undefined) fail(`missing required flag --${required} (or pass --all)`)
       if (flags[required] === '') fail(`--${required} requires a value`)
@@ -67,7 +89,13 @@ function findSectionEnd(lines, start) {
   return lines.length
 }
 
-const isCovered = (checks, id) => {
+const isCovered = (checks, id, requirePassing = false) => {
+  if (requirePassing) {
+    const matching = checks.filter(
+      (entry) => Boolean(entry) && typeof entry === 'object' && entry.id === id,
+    )
+    return matching.length > 0 && matching.every((entry) => entry.result === 'pass')
+  }
   return checks.some((entry) => {
     if (!entry || typeof entry !== 'object' || entry.id !== id) return false
     if (entry.result === 'pass') return true
@@ -81,7 +109,7 @@ const isCovered = (checks, id) => {
 
 // Shared card check. Returns { sectionFound: false } when the spec has no
 // `### <card>` section (skip-listed in --all mode, failure in single mode).
-function cardCheck(specSource, card, record, evidenceLabel) {
+function cardCheck(specSource, card, record, evidenceLabel, requirePassing = false) {
   const lines = specSource.split(/\r?\n/)
   const start = findSectionStart(lines, card)
   if (start === -1) return { sectionFound: false, ok: false }
@@ -111,7 +139,7 @@ function cardCheck(specSource, card, record, evidenceLabel) {
     }
   }
 
-  const uncovered = ids.filter((id) => !isCovered(checks, id))
+  const uncovered = ids.filter((id) => !isCovered(checks, id, requirePassing))
   if (uncovered.length > 0) {
     return {
       sectionFound: true,
@@ -166,7 +194,7 @@ async function collectSpecFiles(root) {
 
 // For every evidence directory <root>/.factory/evidence/<card>/ keep the
 // record with the highest attempt number (invalid JSON counts as attempt -1).
-async function collectEvidenceRecords(root) {
+async function collectEvidenceRecords(root, strict = false, cardPrefix = undefined) {
   const dir = path.join(root, '.factory', 'evidence')
   let entries
   try {
@@ -179,7 +207,11 @@ async function collectEvidenceRecords(root) {
     return m === null ? Number.POSITIVE_INFINITY : Number(m[1])
   }
   const cards = []
-  for (const entry of entries.filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+  let dirEntries = entries.filter((e) => e.isDirectory())
+  if (strict && cardPrefix !== undefined) {
+    dirEntries = dirEntries.filter((e) => e.name.startsWith(cardPrefix))
+  }
+  for (const entry of dirEntries.sort((a, b) => a.name.localeCompare(b.name))) {
     const cardDir = path.join(dir, entry.name)
     const files = (
       await readdir(cardDir)
@@ -188,6 +220,36 @@ async function collectEvidenceRecords(root) {
       .filter((n) => n.endsWith('.json'))
       .sort((a, b) => stemNumber(a) - stemNumber(b) || a.localeCompare(b))
     if (files.length === 0) continue
+    if (strict) {
+      const seenAttempts = new Set()
+      let best = null
+      for (const file of files) {
+        const label = path.join('.factory', 'evidence', entry.name, file)
+        let record
+        try {
+          record = JSON.parse(await readFile(path.join(cardDir, file), 'utf8'))
+        } catch {
+          return fail(`evidence ${label} is not valid JSON`)
+        }
+        if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+          return fail(`evidence ${label} is not a valid JSON object`)
+        }
+        if (record.card !== entry.name) {
+          return fail(`evidence ${label} card '${record.card}' does not match directory '${entry.name}'`)
+        }
+        const attempt = record.attempt
+        if (typeof attempt !== 'number' || !Number.isSafeInteger(attempt) || attempt <= 0) {
+          return fail(`evidence ${label} attempt must be a positive safe integer`)
+        }
+        if (seenAttempts.has(attempt)) {
+          return fail(`evidence ${label} duplicate attempt ${attempt} for card ${entry.name}`)
+        }
+        seenAttempts.add(attempt)
+        if (best === null || attempt > best.attempt) best = { attempt, record, label }
+      }
+      cards.push({ card: entry.name, record: best.record, evidenceLabel: best.label })
+      continue
+    }
     let best = null
     for (const file of files) {
       const label = path.join('.factory', 'evidence', entry.name, file)
@@ -205,13 +267,13 @@ async function collectEvidenceRecords(root) {
   return cards
 }
 
-const { all, spec, card, evidence } = parseFlags(process.argv.slice(2))
+const { all, requirePassing, cardPrefix, spec, card, evidence } = parseFlags(process.argv.slice(2))
 
 if (!all) {
   const specSource = await readSpec(spec)
   const record = await readEvidence(evidence)
 
-  const result = cardCheck(specSource, card, record, evidence)
+  const result = cardCheck(specSource, card, record, evidence, requirePassing)
   if (!result.sectionFound) fail(`section '### ${card}' not found in spec ${spec}`)
   if (!result.ok) fail(result.reason)
   console.log(`OK (${result.count} check(s) covered)`)
@@ -220,8 +282,48 @@ if (!all) {
 if (all) {
   const root = path.resolve(process.cwd())
   const specs = await collectSpecFiles(root)
-  const cards = await collectEvidenceRecords(root)
+  const cards = await collectEvidenceRecords(root, requirePassing, cardPrefix)
 
+  if (requirePassing) {
+    const qualifyingCards = []
+    const seen = new Set()
+
+    for (const spec of specs) {
+      const lines = spec.source.split(/\r?\n/)
+      for (let i = 0; i < lines.length; i++) {
+        const heading = /^###\s+(.*)$/.exec(lines[i])
+        if (heading === null) continue
+        const title = heading[1].trim()
+        const idMatch = /^([^\s]+)/.exec(title)
+        if (!idMatch) continue
+        const id = idMatch[1]
+        if (cardPrefix !== undefined && !id.startsWith(cardPrefix)) continue
+        const end = findSectionEnd(lines, i)
+        const section = lines.slice(i + 1, end).join('\n')
+        const idEscaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const chkRegex = new RegExp(`\\bCHK-${idEscaped}-[a-z0-9]+\\b`)
+        if (!chkRegex.test(section)) continue
+        if (seen.has(id)) fail(`duplicate section for card ${id}`)
+        seen.add(id)
+        qualifyingCards.push({ id, specSource: spec.source })
+      }
+    }
+
+    if (qualifyingCards.length === 0) fail('no qualifying cards found')
+    const cardMap = new Map(cards.map((c) => [c.card, c]))
+    const checked = []
+    const failures = []
+    for (const { id, specSource } of qualifyingCards) {
+      const recordEntry = cardMap.get(id)
+      if (!recordEntry) fail(`missing evidence record for card ${id}`)
+      const result = cardCheck(specSource, id, recordEntry.record, recordEntry.evidenceLabel, true)
+      checked.push(id)
+      if (!result.ok) failures.push(`${id}: ${result.reason}`)
+    }
+    const summary = `checked ${checked.length} card(s): ${checked.join(', ') || 'none'}; skipped: none`
+    if (failures.length > 0) fail(`${failures.join('; ')} (${summary})`)
+    console.log(`OK (${summary})`)
+  } else {
   const checked = []
   const skipped = []
   const failures = []
@@ -234,7 +336,7 @@ if (all) {
       skipped.push(name)
       continue
     }
-    const result = cardCheck(owner.source, name, record, evidenceLabel)
+    const result = cardCheck(owner.source, name, record, evidenceLabel, requirePassing)
     checked.push(name)
     if (!result.ok) failures.push(`${name}: ${result.reason}`)
   }
@@ -244,5 +346,6 @@ if (all) {
     fail(`${failures.join('; ')} (${summary})`)
   }
   console.log(`OK (${summary})`)
+  }
 }
 

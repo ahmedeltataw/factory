@@ -1,4 +1,6 @@
 import path from 'node:path'
+import { appendFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { expect, it } from 'vitest'
 import { fixturePath, runScript } from '../scripts/helpers.ts'
 
@@ -17,4 +19,44 @@ it('CHK-M1-TRACE-STRICT-b: strict mode accepts passing evidence and works in all
   const root = path.join(fixture('all-pass'))
   expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(0)
   expect(runScript('check-traceability.mjs', [...cardArgs('evidence-missing.json'), '--require-passing']).status).toBe(1)
+})
+
+it('CHK-M1-TRACE-STRICT-b: strict all mode detects spec cards with no evidence directory', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'factory-trace-strict-'))
+  try {
+    cpSync(fixture('all-pass'), root, { recursive: true })
+    appendFileSync(path.join(root, 'docs', 'milestones', 'M1P.md'), '\n### ALL-M Missing card\n- CHK-ALL-M-a: evidence is required.\n')
+    const strict = runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root })
+    expect(strict.status).toBe(1)
+    expect(strict.stdout).toContain('ALL-M')
+    expect(runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'ALL-P'], { cwd: root }).status).toBe(0)
+    expect(runScript('check-traceability.mjs', ['--all', '--require-passing', '--card-prefix', 'NO-SUCH-CARD'], { cwd: root }).status).toBe(1)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+it('CHK-M1-TRACE-STRICT-b: strict mode rejects conflicting results for the same check', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'factory-trace-duplicates-'))
+  try {
+    const record = JSON.parse(readFileSync(fixture('evidence-pass.json'), 'utf8')) as { checks: Array<{ id: string; result: string }> }
+    const id = record.checks[0]!.id
+    record.checks.push({ id, result: 'fail' })
+    const evidence = path.join(root, 'conflicting.json')
+    writeFileSync(evidence, JSON.stringify(record))
+    const result = runScript('check-traceability.mjs', ['--spec', fixture('spec.md'), '--card', 'M1-T', '--evidence', evidence, '--require-passing'])
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain(id)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+it('CHK-M1-TRACE-STRICT-b: strict mode rejects corrupt and ambiguous attempt records', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'factory-trace-attempts-'))
+  try {
+    cpSync(fixture('all-pass'), root, { recursive: true })
+    const dir = path.join(root, '.factory', 'evidence', 'ALL-P')
+    writeFileSync(path.join(dir, '2.json'), '{')
+    expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(1)
+    const original = readFileSync(path.join(dir, '1.json'), 'utf8')
+    writeFileSync(path.join(dir, '2.json'), original)
+    expect(runScript('check-traceability.mjs', ['--all', '--require-passing'], { cwd: root }).status).toBe(1)
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })

@@ -1,4 +1,4 @@
-# M1 acceptance (L5). Run in PowerShell:  powershell -ExecutionPolicy Bypass -File acceptance\M1.ps1
+﻿# M1 acceptance (L5). Run in PowerShell:  powershell -ExecutionPolicy Bypass -File acceptance\M1.ps1
 # كل خطوة بتطبع PASS أو FAIL. النتيجة المطلوبة: كل الخطوات PASS.
 param(
   [string]$Source = 'https://github.com/ahmedeltataw/factory.git'
@@ -72,7 +72,7 @@ if (-not (Step 7 'Manifest: ported files match dsh' { node scripts/check-manifes
 # 8) مفيش أي حاجة من DeepSeek أو Feishu
 if (-not (Step 8 'No forbidden imports' { node scripts/check-forbidden-imports.mjs })) { Show-Fail }
 # 9) كل شرط في كل كارت له دليل نجاح
-if (-not (Step 9 'Every DoD check has passing evidence' { node scripts/check-traceability.mjs --all })) { Show-Fail }
+if (-not (Step 9 'Every DoD check has passing evidence' { node scripts/check-traceability.mjs --all --require-passing --card-prefix M1- })) { Show-Fail }
 
 Write-Host "`n===== M1 acceptance =====" -ForegroundColor Yellow
 $results | Format-Table -AutoSize
