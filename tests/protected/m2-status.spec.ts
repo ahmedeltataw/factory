@@ -114,3 +114,20 @@ it('CHK-M2-04-a: reports a consistent read snapshot during concurrent changes', 
   } finally { spy.mockRestore(); writer.close() }
   expect(readStatus(dir, { nowMs: 1200, staleAfterMs: 1000 })).toMatchObject({ recordedCommandCount: 3, lease: { ownerId: 'later-owner' } })
 })
+
+it('CHK-M2-04-b: rejects a non-singleton or incorrectly keyed lease table', () => {
+  const dir = directory()
+  seed(dir)
+  const db = new DatabaseSync(join(dir, 'state.sqlite'))
+  try {
+    db.exec("INSERT INTO supervisor_lease VALUES (2, 'owner', 1, 10, 'active')")
+    expect(() => readStatus(dir, { nowMs: 20, staleAfterMs: 10 })).toThrow()
+    db.exec("INSERT INTO supervisor_lease VALUES (1, 'other', 2, 10, 'active')")
+    expect(() => readStatus(dir, { nowMs: 20, staleAfterMs: 10 })).toThrow()
+  } finally { db.close() }
+})
+
+it('CHK-M2-04-b: rejects missing or blank state directories before opening files', () => {
+  expect(() => readStatus('', { nowMs: 20, staleAfterMs: 10 })).toThrow(/stateDir/i)
+  expect(() => readStatus('  ', { nowMs: 20, staleAfterMs: 10 })).toThrow(/stateDir/i)
+})
