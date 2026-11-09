@@ -194,7 +194,7 @@ export function acquireSupervisor(db: DatabaseSync, stateDir: string, options: L
 
 const CONSTRUCTOR_KEY = Symbol('SupervisorLeaseHandleKey')
 
-export type { SupervisorLeaseHandle }
+export { SupervisorLeaseHandle }
 
 /** Handle for one held lease. Truly immutable ownerId and generation; heartbeat/release are CAS-guarded. */
 class SupervisorLeaseHandle {

@@ -228,7 +228,7 @@ it('CHK-M2-03-e: callers cannot shadow the lease identity or operations', () => 
     expect(() => Object.defineProperty(handle, 'ownerId', { value: 'forged' })).toThrow()
     expect(() => Object.defineProperty(handle, 'release', { value: () => {} })).toThrow()
     expect(Object.isFrozen(Object.getPrototypeOf(handle))).toBe(true)
-    expect('SupervisorLeaseHandle' in leaseModule).toBe(false)
+    expect(handle).toBeInstanceOf(leaseModule.SupervisorLeaseHandle)
     const ctor = Object.getPrototypeOf(handle).constructor as new (...args: unknown[]) => unknown
     expect(() => new ctor(Symbol(), db, 0, 'forged', 1, 10)).toThrow()
   } finally { handle.release(10); db.close(); rmSync(dir, { recursive: true, force: true }) }
