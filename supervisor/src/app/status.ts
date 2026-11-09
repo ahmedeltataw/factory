@@ -86,36 +86,43 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
   const path = join(stateDir, 'state.sqlite')
   const db = new DatabaseSync(path, { readOnly: true })
   try {
-    const versionRow = db.prepare('PRAGMA user_version').get() as { readonly user_version?: number } | undefined
-    if (Number(versionRow?.user_version) !== SCHEMA_VERSION) {
-      throw new Error(`status: unsupported schema version ${Number(versionRow?.user_version)}`)
-    }
-
-    const countRow = db
-      .prepare('SELECT COUNT(*) AS count FROM commands')
-      .get() as { readonly count?: unknown } | undefined
-    if (!isNonnegativeSafeInteger(countRow?.count)) {
-      throw new Error('status: command count is not a nonnegative safe integer')
-    }
-    const recordedCommandCount = countRow.count
-
-    const leaseRow = db
-      .prepare('SELECT owner_id, generation, heartbeat_ms, status FROM supervisor_lease LIMIT 1')
-      .get() as LeaseRow | undefined
-
-    let lease: null | Lease = null
-    if (leaseRow !== undefined) {
-      if (!isLeaseRow(leaseRow)) throw new Error('status: malformed supervisor_lease row')
-      lease = {
-        ownerId: leaseRow.owner_id,
-        generation: leaseRow.generation,
-        heartbeatMs: leaseRow.heartbeat_ms,
-        state: leaseRow.status,
-        freshness: heartbeatFreshness(leaseRow.status, leaseRow.heartbeat_ms, nowMs, staleAfterMs),
+    db.exec('BEGIN')
+    try {
+      const versionRow = db.prepare('PRAGMA user_version').get() as { readonly user_version?: number } | undefined
+      if (Number(versionRow?.user_version) !== SCHEMA_VERSION) {
+        throw new Error(`status: unsupported schema version ${Number(versionRow?.user_version)}`)
       }
-    }
 
-    return { schemaVersion: SCHEMA_VERSION, recordedCommandCount, lease }
+      const countRow = db
+        .prepare('SELECT COUNT(*) AS count FROM commands')
+        .get() as { readonly count?: unknown } | undefined
+      if (!isNonnegativeSafeInteger(countRow?.count)) {
+        throw new Error('status: command count is not a nonnegative safe integer')
+      }
+      const recordedCommandCount = countRow.count
+
+      const leaseRow = db
+        .prepare('SELECT owner_id, generation, heartbeat_ms, status FROM supervisor_lease LIMIT 1')
+        .get() as LeaseRow | undefined
+
+      let lease: null | Lease = null
+      if (leaseRow !== undefined) {
+        if (!isLeaseRow(leaseRow)) throw new Error('status: malformed supervisor_lease row')
+        lease = {
+          ownerId: leaseRow.owner_id,
+          generation: leaseRow.generation,
+          heartbeatMs: leaseRow.heartbeat_ms,
+          state: leaseRow.status,
+          freshness: heartbeatFreshness(leaseRow.status, leaseRow.heartbeat_ms, nowMs, staleAfterMs),
+        }
+      }
+
+      db.exec('COMMIT')
+      return { schemaVersion: SCHEMA_VERSION, recordedCommandCount, lease }
+    } catch (error) {
+      try { db.exec('ROLLBACK') } catch { /* the failed statement may already have ended the transaction */ }
+      throw error
+    }
   } finally {
     db.close()
   }
