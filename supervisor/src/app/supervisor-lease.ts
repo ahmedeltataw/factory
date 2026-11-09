@@ -246,6 +246,31 @@ class SupervisorLeaseHandle {
     this.#closeLock()
   }
 
+  #markLostWithError(primary: unknown): never {
+    let cleanupFailed = false
+    let cleanupError: unknown
+    try {
+      this.#markLost()
+    } catch (error) {
+      cleanupFailed = true
+      cleanupError = error
+    }
+    if (cleanupFailed) {
+      if (primary !== null && (typeof primary === 'object' || typeof primary === 'function') && !('cause' in primary)) {
+        let attached = false
+        try {
+          Object.defineProperty(primary, 'cause', { value: cleanupError, configurable: true, writable: true, enumerable: false })
+          attached = true
+        } catch {
+          // primary is not extensible or property definition failed
+        }
+        if (attached) throw primary
+      }
+      throw new AggregateError([primary, cleanupError], 'supervisor: lost marking failed')
+    }
+    throw primary
+  }
+
   /** Refresh heartbeat_ms on the row this handle owns; rejects backwards clocks and lost handles. */
   heartbeat(nowMs: number): void {
     const time = requireSafeInteger(nowMs, 'nowMs', 0)
@@ -260,8 +285,7 @@ class SupervisorLeaseHandle {
     try {
       transacting = inTransaction(this.#db)
     } catch (error) {
-      this.#markLost()
-      throw error
+      this.#markLostWithError(error)
     }
     if (transacting) {
       throw new Error('supervisor: cannot heartbeat a supervisor lease inside an active transaction')
@@ -275,12 +299,10 @@ class SupervisorLeaseHandle {
       changes = this.#db.prepare("UPDATE supervisor_lease SET heartbeat_ms = ? WHERE id = 1 AND owner_id = ? AND generation = ? AND status = 'active'")
         .run(time, this.#ownerId, this.#generation).changes
     } catch (error) {
-      this.#markLost()
-      throw error
+      this.#markLostWithError(error)
     }
     if (changes !== 1) {
-      this.#markLost()
-      throw new LeaseLostError('supervisor: lease row no longer matches this handle')
+      this.#markLostWithError(new LeaseLostError('supervisor: lease row no longer matches this handle'))
     }
     this.#lastHeartbeat = time
   }
