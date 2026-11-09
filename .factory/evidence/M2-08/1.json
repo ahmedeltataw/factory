@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "card": "M2-08",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "257a7fd08beb52daea0b76e2727756efabf78f48",
+  "checks": [
+    {
+      "id": "CHK-M2-08-a",
+      "command": "powershell -ExecutionPolicy Bypass -File acceptance/M2.ps1",
+      "result": "pass",
+      "output": "Lead ran acceptance/M2.ps1 on Windows PowerShell 5.1, Node 26.13.0, fresh clone of GitHub main 0f5eefa: 15/15 PASS, exit 0, temp folder removed; review: builder gemini-3.8-flash-high (8 rounds incl. Lead-found PS 5.1 defects); reviewer gpt-6.1-sol: changes, changes, approve (round 3)"
+    },
+    {
+      "id": "CHK-M2-08-b",
+      "command": "powershell -ExecutionPolicy Bypass -File acceptance/M2.ps1",
+      "result": "pass",
+      "output": "Lead ran acceptance/M2.ps1 on Windows PowerShell 5.1, Node 26.13.0, fresh clone of GitHub main 0f5eefa: 15/15 PASS, exit 0, temp folder removed; review: builder gemini-3.8-flash-high (8 rounds incl. Lead-found PS 5.1 defects); reviewer gpt-6.1-sol: changes, changes, approve (round 3)"
+    },
+    {
+      "id": "CHK-M2-08-c",
+      "command": "powershell -ExecutionPolicy Bypass -File acceptance/M2.ps1",
+      "result": "pass",
+      "output": "Lead ran acceptance/M2.ps1 on Windows PowerShell 5.1, Node 26.13.0, fresh clone of GitHub main 0f5eefa: 15/15 PASS, exit 0, temp folder removed; review: builder gemini-3.8-flash-high (8 rounds incl. Lead-found PS 5.1 defects); reviewer gpt-6.1-sol: changes, changes, approve (round 3)"
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}
