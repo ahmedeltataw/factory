@@ -28,3 +28,60 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-a/b: failed local cl
     expect(pathOf(a.stdout)).not.toBe(pathOf(b.stdout))
   } finally { rmSync(temp, { recursive: true, force: true }) }
 }, 40000)
+
+it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: a failing install that writes output stops acceptance', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'factory-accept-failed-install-'))
+  const source = join(temp, 'source')
+  const bin = join(temp, 'bin')
+  mkdirSync(source)
+  mkdirSync(bin)
+  writeFileSync(join(source, 'README.md'), 'local acceptance fixture')
+  writeFileSync(join(bin, 'pnpm.cmd'), '@echo off\r\necho deliberate install failure\r\nexit /b 7\r\n')
+  const git = (...args: string[]) => {
+    const result = spawnSync('git', args, { cwd: source, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+    if (result.status !== 0) throw new Error(result.stderr)
+  }
+  try {
+    git('init', '-q')
+    git('add', 'README.md')
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', source], {
+      encoding: 'utf8', timeout: 20000, env: { ...process.env, TEMP: temp, TMP: temp, USERPROFILE: temp, PATH: `${bin};${process.env.PATH}`, GIT_TERMINAL_PROMPT: '0' },
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.status).not.toBe(0)
+    expect(result.stdout, result.stderr).toContain('deliberate install failure')
+    expect(result.stdout).not.toContain('[4] Typecheck')
+    expect(result.stdout).not.toContain('M1: PASS')
+  } finally { rmSync(temp, { recursive: true, force: true }) }
+}, 40000)
+
+it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: an unsupported Node version stops before clone', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'factory-accept-node-version-'))
+  const bin = join(temp, 'bin')
+  mkdirSync(bin)
+  writeFileSync(join(bin, 'node.cmd'), '@echo off\r\necho v99.0.0\r\nexit /b 0\r\n')
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', join(temp, 'missing')], {
+      encoding: 'utf8', timeout: 15000, env: { ...process.env, TEMP: temp, TMP: temp, PATH: `${bin};${process.env.PATH}` },
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.status).not.toBe(0)
+    expect(result.stdout).not.toContain('[2] Fresh clone')
+  } finally { rmSync(temp, { recursive: true, force: true }) }
+}, 30000)
+
+it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: a failing Node command cannot pass with version-like output', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'factory-accept-node-failure-'))
+  const bin = join(temp, 'bin')
+  mkdirSync(bin)
+  writeFileSync(join(bin, 'node.cmd'), '@echo off\r\necho v24.0.0\r\nexit /b 9\r\n')
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', join(temp, 'missing')], {
+      encoding: 'utf8', timeout: 15000, env: { ...process.env, TEMP: temp, TMP: temp, PATH: `${bin};${process.env.PATH}` },
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.status).not.toBe(0)
+    expect(result.stdout).not.toContain('[2] Fresh clone')
+  } finally { rmSync(temp, { recursive: true, force: true }) }
+}, 30000)
