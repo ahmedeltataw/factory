@@ -9,3 +9,5 @@ Designer direction, 2026-11-09. These are local operating instructions for the c
 - **Git boundary:** work locally in separate branches and worktrees. No GitHub upload, merge into `main`, or remote write is authorized. Claude's later review remains pending.
 
 Antigravity CLI authentication and model listing succeeded on the host. This does not establish headless write permission, sandbox enforcement, successful dispatch, or completed review. Record each separately from the policy above. Never pass secrets or client-confidential material to providers not authorized for it.
+
+Availability check on 2026-11-09: Antigravity `gemini-3.8-flash-high` completed a bounded Builder edit. No-tools probes of OpenCode `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free` returned “Free usage limit reached”; those primary and fallback lanes remain configured in the instructions but cannot be treated as available until a later successful probe. No paid substitution was made.
