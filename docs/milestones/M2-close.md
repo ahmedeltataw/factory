@@ -10,7 +10,7 @@ Allowed paths: new `acceptance/M2.ps1` only. Model it on `acceptance/M1.ps1` (sa
 - `CHK-M2-08-b`: the Designer can see the runtime work: the script creates a temp state dir, runs `node lib/factory.mjs status --state-dir <dir>` on a missing database and expects exit 1 with an Arabic message; then creates a database and lease through a short Node one-liner that imports the built or source modules (`openStore`, `acquireSupervisor`), runs `status` (Arabic view and `--json`) and expects exit 0 with an active lease shown; then a second `acquireSupervisor` from another process must fail (lease refused); then the lease is released and `status` shows the released label `مُحرَّر`.
 - `CHK-M2-08-c`: every temp dir the script creates is removed at the end, even on failure; the final line is `M2: PASS` or `M2: FAIL` and the exit code matches.
 
-### M2-09 M2 close · Lead + Designer
+M2-09 M2 close · Lead + Designer (becomes a traced card heading when its evidence is recorded)
 
 - `CHK-M2-09-a`: GitHub Actions on the pushed M2 head is green on all four matrix cells, and the mutation job passes.
 - `CHK-M2-09-b`: the Designer runs `acceptance/M2.ps1` and it ends `M2: PASS`.
