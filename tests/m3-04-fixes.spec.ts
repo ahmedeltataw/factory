@@ -336,11 +336,17 @@ function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: stri
   if (!nonces.length) return []
   if (process.platform === 'win32') {
     const query = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      "$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Property ProcessId,CommandLine | Where-Object { $_.CommandLine }); ConvertTo-Json -InputObject $p -Compress"],
+      "$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Property ProcessId,CommandLine | Where-Object { $_.CommandLine } | ForEach-Object { @{ ProcessId = $_.ProcessId; CommandLine = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_.CommandLine)) } }); ConvertTo-Json -InputObject $p -Compress"],
     { encoding: 'utf8', timeout: 10000, windowsHide: true })
     if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
     const rows = JSON.parse(query.stdout) as Array<{ ProcessId: number; CommandLine: string }>
-    return rows.flatMap((row) => nonces.filter((nonce) => row.CommandLine.includes(nonce)).map((nonce) => ({ pid: row.ProcessId, nonce })))
+    return rows.flatMap((row) => {
+      if (typeof row.CommandLine !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(row.CommandLine)) throw new Error('Invalid process command')
+      const bytes = Buffer.from(row.CommandLine, 'base64')
+      if (bytes.length % 2 !== 0 || bytes.toString('base64') !== row.CommandLine) throw new Error('Invalid process command')
+      const command = bytes.toString('utf16le')
+      return nonces.filter((nonce) => command.includes(nonce)).map((nonce) => ({ pid: row.ProcessId, nonce }))
+    })
   }
   const query = spawnSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 10000 })
   if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
@@ -363,6 +369,24 @@ async function cleanupWorkers(workers: Array<{ pid: number; nonce: string }>): P
     }
   }
 }
+
+describe.skipIf(process.platform !== 'win32')('Windows command line encoding', () => {
+  it('finds a process whose command line contains control characters', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'm4-th-'))
+    const nonce = randomUUID()
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)', `\u0001\u001b\n${nonce}`], { cwd: root, stdio: 'ignore', windowsHide: true })
+    try {
+      await once(child, 'spawn', { signal: AbortSignal.timeout(5000) })
+      expect(processesWithNonces([nonce])).toContainEqual({ pid: child.pid, nonce })
+    } finally {
+      try {
+        if (child.pid) expect((await killTree(child.pid, nonce)).result).toBe('killed')
+      } finally {
+        rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+      }
+    }
+  }, 60000)
+})
 
 describe('real process regression', () => {
   it('kills 50 workers immediately without leaving nonce-bearing processes', async () => {
