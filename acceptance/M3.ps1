@@ -74,16 +74,16 @@ function Remove-AcceptanceTempDir([string]$dir) {
   }
 }
 
-function Register-TrackedPid([int]$pId, [string]$nonce = $null) {
-  if ($pId -le 0 -or $pId -eq $PID) { return }
+function Register-TrackedPid([int]$targetPid, [string]$nonce = $null) {
+  if ($targetPid -le 0 -or $targetPid -eq $PID) { return }
   try {
-    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $pId" -Property ProcessId, Name, CommandLine, CreationDate -ErrorAction Stop
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $targetPid" -Property ProcessId, Name, CommandLine, CreationDate -ErrorAction Stop
   } catch {
     $proc = $null
   }
   if ($null -ne $proc) {
     foreach ($rec in $script:trackedProcessRecords) {
-      if ($rec.ProcessId -eq $pId -and $rec.CreationDate -eq $proc.CreationDate) {
+      if ($rec.ProcessId -eq $targetPid -and $rec.CreationDate -eq $proc.CreationDate) {
         if (-not [string]::IsNullOrWhiteSpace($nonce) -and [string]::IsNullOrWhiteSpace($rec.Nonce)) {
           $rec.Nonce = $nonce
         }
@@ -91,7 +91,7 @@ function Register-TrackedPid([int]$pId, [string]$nonce = $null) {
       }
     }
     $record = [pscustomobject]@{
-      ProcessId    = $pId
+      ProcessId    = $targetPid
       CreationDate = $proc.CreationDate
       CommandLine  = $proc.CommandLine
       Nonce        = $nonce
@@ -99,13 +99,13 @@ function Register-TrackedPid([int]$pId, [string]$nonce = $null) {
     $script:trackedProcessRecords.Add($record)
   } elseif (-not [string]::IsNullOrWhiteSpace($nonce)) {
     foreach ($rec in $script:trackedProcessRecords) {
-      if ($rec.ProcessId -eq $pId -and [string]::IsNullOrWhiteSpace($rec.Nonce)) {
+      if ($rec.ProcessId -eq $targetPid -and [string]::IsNullOrWhiteSpace($rec.Nonce)) {
         $rec.Nonce = $nonce
       }
     }
   }
-  if (-not $script:ownedPids.Contains($pId)) {
-    $script:ownedPids.Add($pId)
+  if (-not $script:ownedPids.Contains($targetPid)) {
+    $script:ownedPids.Add($targetPid)
   }
 }
 
@@ -143,8 +143,8 @@ function Test-CommandLineMatchesRun([string]$cmd, [string]$specificNonce = $null
 
 function Test-TrackedPidIdentityValid($rec) {
   if ($null -eq $rec -or $rec.ProcessId -le 0 -or $rec.ProcessId -eq $PID) { return $false }
-  $pId = $rec.ProcessId
-  $curr = Get-CimInstance Win32_Process -Filter "ProcessId = $pId" -Property ProcessId, Name, CommandLine, CreationDate -ErrorAction Stop
+  $targetPid = $rec.ProcessId
+  $curr = Get-CimInstance Win32_Process -Filter "ProcessId = $targetPid" -Property ProcessId, Name, CommandLine, CreationDate -ErrorAction Stop
   if ($null -eq $curr) {
     return $false
   }
