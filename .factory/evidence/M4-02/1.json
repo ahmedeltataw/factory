@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M4-02",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "a861fa09555c866dc7571ba97d86e3d595cdc885",
+  "checks": [
+    {
+      "id": "CHK-M4-02-a",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-scope.spec.ts tests/protected/m4-scope-property.spec.ts tests/m4-02-scope.spec.ts && node scripts/check-forbidden-imports.mjs && node scripts/check-manifest.mjs; stryker --mutate supervisor/src/core/scope.ts (CI run 42911113893)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 101/101 scope tests, typecheck 0, forbidden-imports OK, manifest OK; scope.ts mutation 99.18% (CI 42911113893). Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (approve after fixes). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol: 3 rounds; review found Windows path aliases (trailing dot/space, Unicode case, 8.3 names, device names), closed by Lead contract amendments; approve."
+    },
+    {
+      "id": "CHK-M4-02-b",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-scope.spec.ts tests/protected/m4-scope-property.spec.ts tests/m4-02-scope.spec.ts && node scripts/check-forbidden-imports.mjs && node scripts/check-manifest.mjs; stryker --mutate supervisor/src/core/scope.ts (CI run 42911113893)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 101/101 scope tests, typecheck 0, forbidden-imports OK, manifest OK; scope.ts mutation 99.18% (CI 42911113893). Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (approve after fixes). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol: 3 rounds; review found Windows path aliases (trailing dot/space, Unicode case, 8.3 names, device names), closed by Lead contract amendments; approve."
+    },
+    {
+      "id": "CHK-M4-02-c",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-scope.spec.ts tests/protected/m4-scope-property.spec.ts tests/m4-02-scope.spec.ts && node scripts/check-forbidden-imports.mjs && node scripts/check-manifest.mjs; stryker --mutate supervisor/src/core/scope.ts (CI run 42911113893)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 101/101 scope tests, typecheck 0, forbidden-imports OK, manifest OK; scope.ts mutation 99.18% (CI 42911113893). Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (approve after fixes). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol: 3 rounds; review found Windows path aliases (trailing dot/space, Unicode case, 8.3 names, device names), closed by Lead contract amendments; approve."
+    },
+    {
+      "id": "CHK-M4-02-d",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-scope.spec.ts tests/protected/m4-scope-property.spec.ts tests/m4-02-scope.spec.ts && node scripts/check-forbidden-imports.mjs && node scripts/check-manifest.mjs; stryker --mutate supervisor/src/core/scope.ts (CI run 42911113893)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 101/101 scope tests, typecheck 0, forbidden-imports OK, manifest OK; scope.ts mutation 99.18% (CI 42911113893). Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (approve after fixes). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol: 3 rounds; review found Windows path aliases (trailing dot/space, Unicode case, 8.3 names, device names), closed by Lead contract amendments; approve."
+    },
+    {
+      "id": "CHK-M4-02-e",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-scope.spec.ts tests/protected/m4-scope-property.spec.ts tests/m4-02-scope.spec.ts && node scripts/check-forbidden-imports.mjs && node scripts/check-manifest.mjs; stryker --mutate supervisor/src/core/scope.ts (CI run 42911113893)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 101/101 scope tests, typecheck 0, forbidden-imports OK, manifest OK; scope.ts mutation 99.18% (CI 42911113893). Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (approve after fixes). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol: 3 rounds; review found Windows path aliases (trailing dot/space, Unicode case, 8.3 names, device names), closed by Lead contract amendments; approve."
+    }
+  ],
+  "ended_at": "2026-11-10T22:19:41.829Z"
+}

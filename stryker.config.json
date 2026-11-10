@@ -8,7 +8,8 @@
     "supervisor/src/app/apply-commands.ts",
     "supervisor/src/app/outbox.ts",
     "supervisor/src/app/recovery.ts",
-    "supervisor/src/app/supervisor-loop.ts"
+    "supervisor/src/app/supervisor-loop.ts",
+    "supervisor/src/core/scope.ts"
   ],
   "testRunner": "vitest",
   "plugins": [

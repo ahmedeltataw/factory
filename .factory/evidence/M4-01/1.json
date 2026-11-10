@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M4-01",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "15da12b7623dfc2b679a726961208951d1e7e7fb",
+  "checks": [
+    {
+      "id": "CHK-M4-01-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate supervisor/src/app/store.ts (CI run 42910268175)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 572/574 tests (2 failures in tests/m3-04-fixes.spec.ts from a host-wide CIM JSON parse error caused by another tool's process, unrelated; tracked as M4-TH), typecheck and build 0; store.ts mutation 89.33% (CI 42910268175). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    },
+    {
+      "id": "CHK-M4-01-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate supervisor/src/app/store.ts (CI run 42910268175)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 572/574 tests (2 failures in tests/m3-04-fixes.spec.ts from a host-wide CIM JSON parse error caused by another tool's process, unrelated; tracked as M4-TH), typecheck and build 0; store.ts mutation 89.33% (CI 42910268175). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    },
+    {
+      "id": "CHK-M4-01-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate supervisor/src/app/store.ts (CI run 42910268175)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 572/574 tests (2 failures in tests/m3-04-fixes.spec.ts from a host-wide CIM JSON parse error caused by another tool's process, unrelated; tracked as M4-TH), typecheck and build 0; store.ts mutation 89.33% (CI 42910268175). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    },
+    {
+      "id": "CHK-M4-01-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate supervisor/src/app/store.ts (CI run 42910268175)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 572/574 tests (2 failures in tests/m3-04-fixes.spec.ts from a host-wide CIM JSON parse error caused by another tool's process, unrelated; tracked as M4-TH), typecheck and build 0; store.ts mutation 89.33% (CI 42910268175). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    }
+  ],
+  "ended_at": "2026-11-10T22:19:41.494Z"
+}
