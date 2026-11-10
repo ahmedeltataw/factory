@@ -346,7 +346,8 @@ process.exit(0)
           try {
             const dbPath = join(testDir, 'state.sqlite')
             db = openStore(dbPath)
-            db.exec('CREATE TABLE test_fence_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, payload TEXT NOT NULL)')
+            const store: DatabaseSync = db
+            store.exec('CREATE TABLE test_fence_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, payload TEXT NOT NULL)')
 
             const helperScript = join(testDir, 'crashed-owner.mjs')
             writeFileSync(
@@ -363,7 +364,7 @@ process.exit(0)
 
             let clock = 1000
             const staleAfterMs = 200
-            let activeHandle: SupervisorLeaseHandle = acquireSupervisor(db, testDir, { nowMs: clock, staleAfterMs })
+            let activeHandle: SupervisorLeaseHandle = acquireSupervisor(store, testDir, { nowMs: clock, staleAfterMs })
             handlesToRelease.push(activeHandle)
 
             const staleHandles: SupervisorLeaseHandle[] = []
@@ -371,8 +372,8 @@ process.exit(0)
 
             // Initial write commits on generation 1
             const initPayload = `init-${clock}`
-            const initRes = fencedWrite(db, activeHandle, () => {
-              db.prepare('INSERT INTO test_fence_entries (generation, payload) VALUES (?, ?)').run(activeHandle.generation, initPayload)
+            const initRes = fencedWrite(store, activeHandle, () => {
+              store.prepare('INSERT INTO test_fence_entries (generation, payload) VALUES (?, ?)').run(activeHandle.generation, initPayload)
               return initPayload
             })
             expect(initRes).toBe(initPayload)
@@ -382,8 +383,8 @@ process.exit(0)
               clock += 20
               if (action.type === 'write_active') {
                 const payload = `active-${action.payload}-${clock}`
-                const res = fencedWrite(db, activeHandle, () => {
-                  db.prepare('INSERT INTO test_fence_entries (generation, payload) VALUES (?, ?)').run(activeHandle.generation, payload)
+                const res = fencedWrite(store, activeHandle, () => {
+                  store.prepare('INSERT INTO test_fence_entries (generation, payload) VALUES (?, ?)').run(activeHandle.generation, payload)
                   return payload
                 })
                 expect(res).toBe(payload)
@@ -393,12 +394,12 @@ process.exit(0)
                   const stale = staleHandles[action.handleIndex % staleHandles.length]!
                   const payload = `stale-${action.payload}-${clock}`
                   expect(() => {
-                    fencedWrite(db, stale, () => {
-                      db.prepare('INSERT INTO test_fence_entries (generation, payload) VALUES (?, ?)').run(stale.generation, payload)
+                    fencedWrite(store, stale, () => {
+                      store.prepare('INSERT INTO test_fence_entries (generation, payload) VALUES (?, ?)').run(stale.generation, payload)
                       return payload
                     })
                   }).toThrow(LeaseLostError)
-                  expect(db.prepare('SELECT 1 FROM test_fence_entries WHERE payload = ?').get(payload)).toBeUndefined()
+                  expect(store.prepare('SELECT 1 FROM test_fence_entries WHERE payload = ?').get(payload)).toBeUndefined()
                 }
               } else if (action.type === 'heartbeat') {
                 activeHandle.heartbeat(clock)
@@ -406,7 +407,7 @@ process.exit(0)
                 activeHandle.release(clock)
                 staleHandles.push(activeHandle)
                 clock += 20
-                activeHandle = acquireSupervisor(db, testDir, { nowMs: clock, staleAfterMs })
+                activeHandle = acquireSupervisor(store, testDir, { nowMs: clock, staleAfterMs })
                 handlesToRelease.push(activeHandle)
               } else if (action.type === 'takeover') {
                 // Free OS lock from parent so child process can acquire and crash
@@ -428,7 +429,7 @@ process.exit(0)
 
                 // Advance clock beyond staleAfterMs window
                 clock += staleAfterMs + 50
-                activeHandle = acquireSupervisor(db, testDir, {
+                activeHandle = acquireSupervisor(store, testDir, {
                   nowMs: clock,
                   staleAfterMs,
                   takeover: evidence,
@@ -438,7 +439,7 @@ process.exit(0)
             }
 
             // Invariant: persisted rows must strictly match independent expected model
-            const actualRows = db
+            const actualRows = store
               .prepare('SELECT generation, payload FROM test_fence_entries ORDER BY id ASC')
               .all() as Array<{ generation: number; payload: string }>
             expect(actualRows).toEqual(expectedRows)
