@@ -225,7 +225,7 @@ it.each([
   db.prepare("INSERT INTO workers (attempt_id,nonce,pid,state,worktree_path) VALUES ('ax','n',42,'running','w')").run()
   const calls: unknown[] = []
   try {
-    await runTick(db, handle, { ...loopDeps(dir), wrapReconcileWorkers: () => undefined, killTree: async (pid, nonce) => { calls.push([pid, nonce]); return { result, ...(detail === null ? {} : { detail }) } } }, 1100)
+    await runTick(db, handle, { ...loopDeps(dir), wrapReconcileWorkers: <T>() => undefined as T, killTree: async (pid, nonce) => { calls.push([pid, nonce]); return { result, ...(detail === null ? {} : { detail }) } } }, 1100)
     expect(calls).toEqual([[42, 'n']])
     expect(db.prepare("SELECT state FROM workers WHERE attempt_id='ax'").get()?.state).toBe(state)
     if (result === 'kill-failed') {
