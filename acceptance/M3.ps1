@@ -225,7 +225,8 @@ function Cleanup-TaskWorktrees {
       if ($code -ne 0) {
         & git -C $tempRepo worktree prune 2>&1 | Out-Null
         $wtList = (& git -C $tempRepo worktree list --porcelain 2>&1) -join "`n"
-        if ($wtList -match [regex]::Escape($d.FullName)) {
+        $escapedWt = [regex]::Escape($d.FullName)
+        if ($wtList -match "(?m)^worktree\s+${escapedWt}\s*$") {
           throw "Worktree removal failed for '$($d.FullName)' with code ${code}: $($out -join ' ')"
         }
       }
@@ -414,6 +415,7 @@ import { randomUUID } from 'node:crypto';
 
 const stateDir = process.env.FACTORY_STATE_DIR;
 const taskId = process.env.FACTORY_TASK_ID;
+const runDirOverride = process.env.FACTORY_RUN_DIR;
 
 if (!stateDir || !taskId) {
   process.stderr.write('Missing required environment variables FACTORY_STATE_DIR or FACTORY_TASK_ID\n');
@@ -442,7 +444,7 @@ try {
     process.exit(1);
   }
 
-  const runDir = join(stateDir, 'runs', attempt.id);
+  const runDir = runDirOverride || join(stateDir, 'runs', attempt.id);
   const resultFile = join(runDir, 'result.json');
   let result;
   try {
@@ -947,55 +949,79 @@ try {
     $timeoutSec = 20
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $running = $false
+    $lastObservedTask2 = 'none'
     while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
       if ($supPre.HasExited) { break }
       try {
         $parsed = Invoke-FactoryStatus $stateDir
         $task2 = @(@($parsed.tasks) | Where-Object { $_.id -eq $tId })[0]
-        if ($null -ne $task2 -and $task2.status -eq 'progress' -and @($task2.attempts).Count -ge 1) {
-          $att = @($task2.attempts)[0]
-          if ($att.status -eq 'running' -and $null -ne $att.worker -and $att.worker.state -eq 'running' -and $att.worker.pid -gt 0) {
-            $script:worker2Pid = $att.worker.pid
-            $script:attemptId2 = $att.id
-            $script:ownedPids.Add($att.worker.pid)
-            $running = $true
-            break
+        if ($null -ne $task2) {
+          $attCount = if ($null -ne $task2.attempts) { @($task2.attempts).Count } else { 0 }
+          $lastObservedTask2 = "status=$($task2.status), attempts=$attCount"
+          if ($task2.status -eq 'progress' -and $attCount -ge 1) {
+            $att = @($task2.attempts)[0]
+            $wState = if ($null -ne $att.worker) { $att.worker.state } else { 'null' }
+            $wPid = if ($null -ne $att.worker) { $att.worker.pid } else { 'null' }
+            $lastObservedTask2 = "status=$($task2.status), attStatus=$($att.status), workerState=$wState, workerPid=$wPid"
+            if ($att.status -eq 'running' -and $null -ne $att.worker -and $att.worker.state -eq 'running' -and $att.worker.pid -gt 0) {
+              $script:worker2Pid = $att.worker.pid
+              if ($null -ne $att.id) {
+                $script:attemptId2 = $att.id
+              }
+              $script:ownedPids.Add($att.worker.pid)
+              $running = $true
+              break
+            }
           }
         }
-      } catch {}
+      } catch {
+        $lastObservedTask2 = "status error: $($_.Exception.Message)"
+      }
       Start-Sleep -Milliseconds 200
     }
     [void]$sw.Stop()
 
     if (-not $running) {
-      Write-Host "Task 2 worker failed to reach running state" -ForegroundColor Red
+      Write-Host "Task 2 worker failed to reach running state within ${timeoutSec}s timeout. Last observed: $lastObservedTask2" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
     }
 
-    # Harvest worker.json to find worker nonce and grandchild
+    # Harvest worker.json to find worker nonce, grandchild, and run directory
+    $worker2RunDir = $null
     $runsDir = Join-Path $stateDir 'runs'
+    $timeoutSec = 15
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($sw.Elapsed.TotalSeconds -lt 15) {
+    $lastObservedWorker = 'none'
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
       if (Test-Path -LiteralPath $runsDir) {
         $workerJsonFiles = @(Get-ChildItem -LiteralPath $runsDir -Filter 'worker.json' -Recurse -ErrorAction SilentlyContinue)
         foreach ($wf in $workerJsonFiles) {
           try {
             $wj = (Get-Content -LiteralPath $wf.FullName -Raw) | ConvertFrom-Json
+            $lastObservedWorker = "PID=$($wj.pid), Grandchild=$($wj.grandchildPid), Nonce=$($wj.nonce), Dir=$($wf.DirectoryName)"
             if ($wj.pid -eq $script:worker2Pid -and $null -ne $wj.grandchildPid -and $wj.grandchildPid -gt 0 -and -not [string]::IsNullOrWhiteSpace($wj.nonce)) {
               $script:worker2GrandchildPid = [int]$wj.grandchildPid
               $script:ownedPids.Add($script:worker2GrandchildPid)
               $script:worker2Nonce = $wj.nonce
               $script:trackedWorkerNonces.Add($wj.nonce)
+              $worker2RunDir = $wf.DirectoryName
+              $script:attemptId2 = $wf.Directory.Name
               break
             }
           } catch {}
         }
       }
-      if ($null -ne $script:worker2GrandchildPid) { break }
+      if ($null -ne $script:worker2GrandchildPid -and -not [string]::IsNullOrWhiteSpace($worker2RunDir)) { break }
       Start-Sleep -Milliseconds 100
     }
     [void]$sw.Stop()
+
+    if ($null -eq $script:worker2GrandchildPid -or [string]::IsNullOrWhiteSpace($worker2RunDir)) {
+      Write-Host "Failed to find worker.json for worker 2 (PID=$($script:worker2Pid)) within ${timeoutSec}s timeout. Last observed: $lastObservedWorker" -ForegroundColor Red
+      $global:LASTEXITCODE = 1
+      return
+    }
 
     # Stop supervisor cleanly so we can intercept before evidence.commit
     if (-not $supPre.HasExited) {
@@ -1004,12 +1030,15 @@ try {
     }
 
     # Wait bounded for the executor to complete its work and write result.json
-    $attemptDir = Join-Path $runsDir $script:attemptId2
-    $resultFile = Join-Path $attemptDir 'result.json'
+    $resultDir = if (-not [string]::IsNullOrWhiteSpace($worker2RunDir)) { $worker2RunDir } elseif (-not [string]::IsNullOrWhiteSpace($script:attemptId2)) { Join-Path $runsDir $script:attemptId2 } else { $runsDir }
+    $resultFile = Join-Path $resultDir 'result.json'
+    $timeoutSec = 15
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $resultFound = $false
-    while ($sw.Elapsed.TotalSeconds -lt 15) {
-      if (Test-Path -LiteralPath $resultFile) {
+    $lastObservedResult = $false
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+      $lastObservedResult = Test-Path -LiteralPath $resultFile
+      if ($lastObservedResult) {
         $resultFound = $true
         break
       }
@@ -1018,26 +1047,45 @@ try {
     [void]$sw.Stop()
 
     if (-not $resultFound) {
-      Write-Host "Executor failed to write result.json within timeout" -ForegroundColor Red
+      $presentFiles = if (Test-Path -LiteralPath $resultDir) {
+        @((Get-ChildItem -LiteralPath $resultDir -ErrorAction SilentlyContinue) | ForEach-Object { $_.Name }) -join ', '
+      } else {
+        '<directory does not exist>'
+      }
+      Write-Host "Executor failed to write result.json within ${timeoutSec}s timeout. Waited for: '$resultFile'. Last observed: exists=$lastObservedResult. Files present in '$resultDir': [$presentFiles]" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
     }
 
     # Wait for executor process to terminate
+    $timeoutSec = 5
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($sw.Elapsed.TotalSeconds -lt 5) {
+    $execExited = $false
+    $lastObservedExec = 'running'
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
       $p = Get-Process -Id $script:worker2Pid -ErrorAction SilentlyContinue
-      if ($null -eq $p -or $p.HasExited) { break }
+      $lastObservedExec = if ($null -eq $p) { 'exited' } else { "running (PID=$($p.Id), HasExited=$($p.HasExited))" }
+      if ($null -eq $p -or $p.HasExited) {
+        $execExited = $true
+        break
+      }
       Start-Sleep -Milliseconds 100
     }
     [void]$sw.Stop()
 
+    if (-not $execExited) {
+      Write-Host "Executor PID $($script:worker2Pid) failed to terminate within ${timeoutSec}s timeout. Last observed: $lastObservedExec" -ForegroundColor Red
+      $global:LASTEXITCODE = 1
+      return
+    }
+
     # Arrange pending evidence.commit in outbox with worker exited and attempt succeeded
     $env:FACTORY_STATE_DIR = $stateDir
     $env:FACTORY_TASK_ID = $tId
+    $env:FACTORY_RUN_DIR = $worker2RunDir
     $rawArrange = & $script:nodeExe "$arrangePendingScript" 2>&1
     $codeArrange = $LASTEXITCODE
-    Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue
+    Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID, env:FACTORY_RUN_DIR -ErrorAction SilentlyContinue
     foreach ($l in $rawArrange) { Write-Host "ARRANGE: $l" }
     if ($codeArrange -ne 0) {
       Write-Host "Failed to arrange pending evidence.commit" -ForegroundColor Red
@@ -1072,8 +1120,11 @@ try {
     $script:startedProcesses.Add($supFault)
     Remove-Item env:FACTORY_FAULT -ErrorAction SilentlyContinue
 
+    $timeoutSec = 30
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    while (-not $supFault.HasExited -and $sw.Elapsed.TotalSeconds -lt 30) {
+    $lastObservedFault = 'running'
+    while (-not $supFault.HasExited -and $sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+      $lastObservedFault = "HasExited=$($supFault.HasExited), ExitCode=$($supFault.ExitCode)"
       Start-Sleep -Milliseconds 200
     }
     [void]$sw.Stop()
@@ -1083,7 +1134,7 @@ try {
     Write-Host "Supervisor with fault exited: $faultExited; ExitCode: $faultCode"
 
     if (-not $faultExited -or $faultCode -eq 0) {
-      Write-Host "Supervisor under fault unexpectedly did not exit non-zero" -ForegroundColor Red
+      Write-Host "Supervisor under fault unexpectedly did not exit non-zero within ${timeoutSec}s timeout. Last observed: $lastObservedFault" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
     }
@@ -1106,10 +1157,11 @@ try {
     $commitMsgRaw = & git -C $tempRepo log -1 --format=%B $fSha 2>&1
     $commitMsgCode = $LASTEXITCODE
     $commitMsg = $commitMsgRaw -join "`n"
-    $hasTrailer = ($commitMsgCode -eq 0) -and ($commitMsg -match "Factory-Attempt:\s*$($script:attemptId2)")
+    $escapedAttemptId2 = [regex]::Escape($script:attemptId2)
+    $hasTrailer = ($commitMsgCode -eq 0) -and ($commitMsg -match "(?m)^Factory-Attempt:\s*${escapedAttemptId2}\s*$")
     Write-Host "Commit message at crash boundary contains attempt trailer: $hasTrailer"
     if (-not $hasTrailer) {
-      Write-Host "Commit message at crash boundary does not contain attempt trailer" -ForegroundColor Red
+      Write-Host "Commit message at crash boundary does not contain attempt trailer (attemptId=$($script:attemptId2), message=$commitMsg)" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
     }
@@ -1509,7 +1561,7 @@ try {
 
   # Restore environment variables
   try {
-    Remove-Item env:FAKE_SLEEP_MS, env:FACTORY_FAULT, env:FACTORY_WT_DIR, env:FACTORY_HEAD_SHA, env:FACTORY_FILES_JSON, env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue
+    Remove-Item env:FAKE_SLEEP_MS, env:FACTORY_FAULT, env:FACTORY_WT_DIR, env:FACTORY_HEAD_SHA, env:FACTORY_FILES_JSON, env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID, env:FACTORY_RUN_DIR -ErrorAction SilentlyContinue
   } catch {}
 
   # Restore console and output encodings
