@@ -22,7 +22,7 @@ export function spawnWorker(options: { runDir: string; cwd: string; taskId: stri
     if (!executor) throw new Error('Fake executor not found')
     const child = spawn(process.execPath, [executor, options.taskId, nonce, runDir], {
       cwd: options.cwd, env: options.env ?? process.env, stdio: ['ignore', stdout, stderr],
-      detached: process.platform !== 'win32', windowsHide: true,
+      detached: true, windowsHide: true,
     })
     child.on('error', () => {})
     if (!child.pid) throw new Error('Failed to spawn worker')
@@ -134,9 +134,29 @@ export async function killTree(pid: number, nonce: string, options?: { killComma
     const deadline = Date.now() + 5000
     do {
       const remaining = process.platform === 'win32' ? windowsProcesses() : linuxProcesses()
-      for (const item of remaining) if (item.group === pid || pids.has(item.parent)) pids.add(item.pid)
-      if (!remaining.some((item) => pids.has(item.pid))) return { result: 'killed' }
-      await delay(100)
+      let previousSize: number
+      do {
+        previousSize = pids.size
+        for (const item of remaining) if (item.group === pid || pids.has(item.parent)) pids.add(item.pid)
+      } while (pids.size !== previousSize)
+      const alive = remaining.filter((item) => pids.has(item.pid))
+      if (!alive.length) return { result: 'killed' }
+      if (!options?.killCommand) {
+        for (const item of alive) {
+          if (process.platform === 'win32') {
+            // A process may exit between enumeration and taskkill; verify on the next poll.
+            spawnSync('taskkill', ['/T', '/F', '/PID', String(item.pid)], {
+              encoding: 'utf8', timeout: Math.max(1, deadline - Date.now()), windowsHide: true,
+            })
+          } else {
+            try { process.kill(item.pid, 'SIGKILL') } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+            }
+          }
+          if (Date.now() >= deadline) break
+        }
+      }
+      await delay(Math.min(100, Math.max(0, deadline - Date.now())))
     } while (Date.now() < deadline)
     return { result: 'kill-failed', detail: 'Process tree remained alive after timeout' }
   } catch (error) {

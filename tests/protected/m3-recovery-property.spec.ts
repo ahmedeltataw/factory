@@ -640,6 +640,7 @@ describe('CHK-M3-06-f: recovery and lifecycle property invariants', () => {
       expect(totalCompletedAttempts).toBeGreaterThan(0)
       expect(totalEvidenceRows).toBeGreaterThan(0)
     },
-    30000,
+    // Explicit per-test timeout matching documented budget (measured basis: numRuns 10, ~5-8 s per example on Windows)
+    180000,
   )
 })

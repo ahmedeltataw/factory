@@ -1531,9 +1531,11 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
             status: string
           }>
           expect(attempts).toHaveLength(1)
-          expect(attempts[0].id).toBe(oldAttemptId)
-          expect(attempts[0].attempt_no).toBe(1)
-          expect(attempts[0].status).toBe('failed')
+          const a0 = attempts[0]
+          if (!a0) throw new Error('expected attempts[0] to be defined')
+          expect(a0.id).toBe(oldAttemptId)
+          expect(a0.attempt_no).toBe(1)
+          expect(a0.status).toBe('failed')
           const attempt2 = attempts.find((a) => a.attempt_no === 2)
           expect(attempt2).toBeUndefined()
         } finally {
