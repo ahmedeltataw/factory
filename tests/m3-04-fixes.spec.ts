@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -117,9 +117,11 @@ describe('simulated Windows kill flow', () => {
         .mockReturnValueOnce(ok(JSON.stringify([record(123, 1), record(124, 123)])))
         .mockReturnValueOnce(ok(''))
         .mockReturnValueOnce(ok(JSON.stringify([record(125, 124)])))
+        .mockReturnValueOnce(ok(''))
         .mockReturnValueOnce(ok('[]'))
       expect(await killTree(123, 'nonce')).toEqual({ result: 'killed' })
       expect(vi.mocked(spawnSync)).toHaveBeenCalledWith('taskkill', ['/T', '/F', '/PID', '123'], { encoding: 'utf8', timeout: 10000, windowsHide: true })
+      expect(vi.mocked(spawnSync)).toHaveBeenCalledWith('taskkill', ['/T', '/F', '/PID', '125'], expect.objectContaining({ windowsHide: true }))
     } finally { platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
   })
 
@@ -128,7 +130,7 @@ describe('simulated Windows kill flow', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(100).mockReturnValue(5100)
     try {
       vi.mocked(spawnSync).mockReturnValueOnce(ok(target)).mockReturnValueOnce(ok('[]'))
-        .mockReturnValueOnce(ok('')).mockReturnValueOnce(ok(JSON.stringify([record(123, 1)])))
+        .mockReturnValueOnce(ok('')).mockReturnValueOnce(ok(JSON.stringify([record(123, 1)]))).mockReturnValueOnce(ok(''))
       expect(await killTree(123, 'nonce')).toEqual({ result: 'kill-failed', detail: 'Process tree remained alive after timeout' })
     } finally { clock.mockRestore(); platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
   })
@@ -138,7 +140,7 @@ describe('simulated Windows kill flow', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(100).mockReturnValue(5099)
     try {
       vi.mocked(spawnSync).mockReturnValueOnce(ok(target)).mockReturnValueOnce(ok('[]')).mockReturnValueOnce(ok(''))
-        .mockReturnValueOnce(ok(JSON.stringify([record(123, 1)]))).mockReturnValueOnce(ok('[]'))
+        .mockReturnValueOnce(ok(JSON.stringify([record(123, 1)]))).mockReturnValueOnce(ok('')).mockReturnValueOnce(ok('[]'))
       expect(await killTree(123, 'nonce')).toEqual({ result: 'killed' })
       vi.mocked(spawnSync).mockImplementationOnce(() => { throw 'enumeration broke' })
       expect(await killTree(123, 'nonce')).toEqual({ result: 'kill-failed', detail: 'enumeration broke' })
@@ -169,7 +171,7 @@ describe.skipIf(process.platform !== 'win32')('Windows process enumeration', () 
     let worker: ReturnType<typeof spawnWorker> | undefined
     try {
       await once(helper, 'spawn', { signal: AbortSignal.timeout(5000) })
-      worker = spawnWorker({ runDir, cwd: process.cwd(), taskId: 'm3-04', attemptId: '1', env: { ...process.env, FAKE_SLEEP_MS: '30000' } })
+      worker = spawnWorker({ runDir, cwd: runDir, taskId: 'm3-04', attemptId: '1', env: { ...process.env, FAKE_SLEEP_MS: '30000' } })
       expect(await killTree(worker.pid, worker.nonce)).toEqual({ result: 'killed' })
     } finally {
       helper.kill()
@@ -179,4 +181,87 @@ describe.skipIf(process.platform !== 'win32')('Windows process enumeration', () 
       rmSync(runDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
     }
   }, 60000)
+})
+
+async function waitForFile(path: string): Promise<void> {
+  const deadline = Date.now() + 20000
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${path}`)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+}
+
+function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: string }> {
+  if (!nonces.length) return []
+  if (process.platform === 'win32') {
+    const query = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      "$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Property ProcessId,CommandLine | Where-Object { $_.CommandLine }); ConvertTo-Json -InputObject $p -Compress"],
+    { encoding: 'utf8', timeout: 10000, windowsHide: true })
+    if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
+    const rows = JSON.parse(query.stdout) as Array<{ ProcessId: number; CommandLine: string }>
+    return rows.flatMap((row) => nonces.filter((nonce) => row.CommandLine.includes(nonce)).map((nonce) => ({ pid: row.ProcessId, nonce })))
+  }
+  const query = spawnSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 10000 })
+  if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
+  return query.stdout.split('\n').flatMap((line) => {
+    const match = line.trim().match(/^(\d+)\s+(.*)$/)
+    return match ? nonces.filter((nonce) => match[2]!.includes(nonce)).map((nonce) => ({ pid: Number(match[1]), nonce })) : []
+  })
+}
+
+async function cleanupWorkers(workers: Array<{ pid: number; nonce: string }>): Promise<void> {
+  for (const worker of workers) await killTree(worker.pid, worker.nonce)
+  // Any orphan is killed only after its own command line has been checked for the nonce.
+  for (const survivor of processesWithNonces(workers.map((worker) => worker.nonce))) {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/T', '/F', '/PID', String(survivor.pid)], { timeout: 5000, windowsHide: true })
+    } else {
+      try { process.kill(survivor.pid, 'SIGKILL') } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+      }
+    }
+  }
+}
+
+describe('real process regression', () => {
+  it('kills 50 workers immediately without leaving nonce-bearing processes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'm3-04-race-'))
+    const workers: Array<{ pid: number; nonce: string }> = []
+    try {
+      for (let i = 0; i < 50; i++) {
+        const worker = spawnWorker({ runDir: join(root, String(i)), cwd: root, taskId: `task-${i}`, attemptId: '1', env: { ...process.env, FAKE_SLEEP_MS: '30000' } })
+        workers.push(worker)
+        expect(await killTree(worker.pid, worker.nonce)).toEqual({ result: 'killed' })
+      }
+      expect(processesWithNonces(workers.map((worker) => worker.nonce))).toEqual([])
+    } finally {
+      try { await cleanupWorkers(workers) } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }) }
+    }
+  }, 300000)
+
+  it('keeps the executor alive after its spawner dies', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'm3-04-parent-'))
+    const resultFile = join(root, 'spawned.json')
+    const script = join(root, 'parent.mjs')
+    const moduleUrl = new URL('../supervisor/src/app/process-tree.ts', import.meta.url).href
+    writeFileSync(script, `import { spawnWorker } from ${JSON.stringify(moduleUrl)};\nimport { writeFileSync } from 'node:fs';\nconst worker = spawnWorker({ runDir: ${JSON.stringify(join(root, 'run'))}, cwd: ${JSON.stringify(root)}, taskId: 'parent-test', attemptId: '1', env: { ...process.env, FAKE_SLEEP_MS: '30000' } });\nwriteFileSync(${JSON.stringify(resultFile)}, JSON.stringify(worker));\nsetInterval(() => {}, 1000);\n`)
+    const parent = spawn(process.execPath, [script], { stdio: 'ignore', windowsHide: true })
+    let worker: { pid: number; nonce: string } | undefined
+    try {
+      await waitForFile(resultFile)
+      worker = JSON.parse(readFileSync(resultFile, 'utf8'))
+      await waitForFile(join(root, 'run', 'worker.json'))
+      const exited = once(parent, 'exit')
+      parent.kill('SIGKILL')
+      await exited
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      expect(processesWithNonces([worker!.nonce]).some((item) => item.pid === worker!.pid)).toBe(true)
+      expect(await killTree(worker!.pid, worker!.nonce)).toEqual({ result: 'killed' })
+      expect(processesWithNonces([worker!.nonce])).toEqual([])
+    } finally {
+      parent.kill('SIGKILL')
+      if (!worker && existsSync(resultFile)) worker = JSON.parse(readFileSync(resultFile, 'utf8'))
+      try { if (worker) await cleanupWorkers([worker]) } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }) }
+    }
+  }, 90000)
 })
