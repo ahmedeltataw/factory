@@ -28,12 +28,23 @@ export function readCompletion(dir: string): { exitCode: number } | undefined {
     return Number.isSafeInteger(value.exitCode) ? value : undefined
   } catch { return undefined }
 }
+export const RETRY_BASE_MS = 1000
+export const RETRY_MAX_MS = 60000
+
+export function retryTask(db: DatabaseSync, taskId: string, attemptId: string, nowMs: number): void {
+  const task = db.prepare('SELECT t.max_attempts, t.attempt_base, a.attempt_no FROM tasks t JOIN attempts a ON a.task_id = t.id WHERE t.id = ? AND a.id = ?').get(taskId, attemptId) as { max_attempts: number; attempt_base: number; attempt_no: number }
+  const used = task.attempt_no - task.attempt_base
+  const delay = Math.min(RETRY_BASE_MS * 2 ** (used - 1), RETRY_MAX_MS)
+  db.prepare("UPDATE tasks SET status = ?, not_before_ms = ?, updated_at = ? WHERE id = ? AND status = 'progress'").run(used < task.max_attempts ? 'ready' : 'failed', used < task.max_attempts ? nowMs + delay : 0, new Date(nowMs).toISOString(), taskId)
+}
+
 export function finishAttempt(db: DatabaseSync, handle: SupervisorLeaseHandle, row: { id: string; task_id: string; worktree_path: string | null }, stateDir: string, code: number, nowMs: number): void {
   fencedWrite(db, handle, () => {
     const now = new Date(nowMs).toISOString()
     db.prepare("UPDATE workers SET state = 'exited', ended_at = ? WHERE attempt_id = ?").run(now, row.id)
-    db.prepare('UPDATE attempts SET status = ?, exit_code = ?, ended_at = ? WHERE id = ?').run(code === 0 ? 'succeeded' : 'failed', code, now, row.id)
-    db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status != ?').run(code === 0 ? 'progress' : 'failed', now, row.task_id, 'dropped')
+    db.prepare('UPDATE attempts SET status = ?, exit_code = ?, error_class = ?, ended_at = ? WHERE id = ?').run(code === 0 ? 'succeeded' : 'failed', code, code === 0 ? null : code === 75 ? 'transient' : 'exit', now, row.id)
+    if (code === 75) retryTask(db, row.task_id, row.id, nowMs)
+    else db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status != ?').run(code === 0 ? 'progress' : 'failed', now, row.task_id, 'dropped')
     if (code === 0) {
       const config = db.prepare('SELECT base_ref FROM project_config JOIN tasks ON tasks.project_id = project_config.project_id WHERE tasks.id = ?').get(row.task_id) as { base_ref: string }
       const dir = join(stateDir, 'runs', row.id)
@@ -72,16 +83,16 @@ export function failExhaustedEffects(db: DatabaseSync, handle: SupervisorLeaseHa
   })
 }
 export function scheduleAttempt(db: DatabaseSync, handle: SupervisorLeaseHandle, taskId: string, stateDir: string, nowMs: number): void {
-  const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId) as { status: string } | undefined
-  if (task?.status !== 'ready') return
+  const task = db.prepare('SELECT status, max_attempts, attempt_base, not_before_ms FROM tasks WHERE id = ?').get(taskId) as { status: string; max_attempts: number; attempt_base: number; not_before_ms: number } | undefined
+  if (task?.status !== 'ready' || task.not_before_ms > nowMs) return
   const count = db.prepare('SELECT COALESCE(MAX(attempt_no), 0) AS n FROM attempts WHERE task_id = ?').get(taskId) as { n: number }
   const now = new Date(nowMs).toISOString()
-  if (count.n >= MAX_ATTEMPTS) { db.prepare("UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = ?").run(now, taskId); return }
+  if (count.n + 1 - task.attempt_base > task.max_attempts) { db.prepare("UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = ?").run(now, taskId); return }
   const id = randomUUID()
   db.prepare("INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation, started_at) VALUES (?, ?, ?, 'pending', ?, ?)").run(id, taskId, count.n + 1, handle.generation, now)
   db.prepare("UPDATE tasks SET status = 'progress', updated_at = ? WHERE id = ?").run(now, taskId)
   enqueueInTransaction(db, { idempotencyKey: `worktree.ensure:${id}`, kind: 'worktree.ensure', payloadJson: JSON.stringify({ taskId }), nowMs })
-  enqueueInTransaction(db, { idempotencyKey: `attempt.start:${id}`, kind: 'attempt.start', payloadJson: JSON.stringify({ attemptId: id, taskId, runDir: join(stateDir, 'runs', id), cwd: join(stateDir, 'worktrees', taskId) }), nowMs })
+  enqueueInTransaction(db, { idempotencyKey: `attempt.start:${id}`, kind: 'attempt.start', payloadJson: JSON.stringify({ attemptId: id, taskId, runDir: join(stateDir, 'runs', id), cwd: join(stateDir, 'worktrees', taskId), env: { FACTORY_ATTEMPT_NO: String(count.n + 1) } }), nowMs })
 }
 export async function reconcileWorkers(db: DatabaseSync, handle: SupervisorLeaseHandle, deps: RecoveryDeps, nowMs: number): Promise<ReconcileResult> {
   const stateDir = deps.stateDir ?? stateDirectory(db)

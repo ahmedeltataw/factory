@@ -16,6 +16,7 @@ export interface OutboxRow {
 export interface EnqueueOptions { idempotencyKey: string; kind: string; payloadJson: string; nowMs?: number }
 export const MAX_TRIES = 3
 export const BACKOFF_MS = 1000
+export const OUTBOX_BACKOFF_MAX_MS = 30000
 
 export function enqueueInTransaction(db: DatabaseSync, options: EnqueueOptions): OutboxRow {
   const nowMs = options.nowMs ?? Date.now()
@@ -30,7 +31,7 @@ export function enqueue(db: DatabaseSync, handle: SupervisorLeaseHandle, options
 }
 
 const lease = Symbol('outbox lease')
-type Context = { idempotencyKey: string; [lease]?: SupervisorLeaseHandle }
+type Context = { idempotencyKey: string; nowMs?: number; [lease]?: SupervisorLeaseHandle }
 export type OutboxHandler = (row: OutboxRow, context: { idempotencyKey: string }) => void | Promise<void>
 export interface EffectHandlerDeps {
   db: DatabaseSync
@@ -72,11 +73,12 @@ export function createEffectHandlers(deps: EffectHandlerDeps): Record<string, Ou
       if (!handle) throw new Error('outbox lease required')
       const dir = runDir ?? join(deps.config?.stateDir ?? '.', 'runs', attemptId)
       const worktree = cwd ?? join(deps.config?.stateDir ?? '.', 'worktrees', taskId)
-      const result = await deps.spawnWorker({ runDir: dir, cwd: worktree, taskId, attemptId, env })
+      const result = await deps.spawnWorker({ runDir: dir, cwd: worktree, taskId, attemptId, env: { ...process.env, ...env } as Record<string, string> })
       fencedWrite(deps.db, handle, () => {
         deps.db.prepare(`INSERT INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at)
           VALUES (?, ?, ?, 'running', ?, ?, ?) ON CONFLICT(attempt_id) DO UPDATE SET nonce = excluded.nonce, pid = excluded.pid, state = excluded.state, worktree_path = excluded.worktree_path, heartbeat_ms = excluded.heartbeat_ms, started_at = excluded.started_at WHERE workers.state = 'starting'`)
-          .run(attemptId, result.nonce, result.pid, worktree, Date.now(), new Date().toISOString())
+          .run(attemptId, result.nonce, result.pid, worktree, context.nowMs ?? Date.now(), new Date(context.nowMs ?? Date.now()).toISOString())
+        deps.db.prepare("UPDATE attempts SET status = 'running', deadline_ms = (SELECT CASE WHEN timeout_ms IS NULL THEN NULL ELSE ? + timeout_ms END FROM tasks WHERE id = attempts.task_id) WHERE id = ? AND status = 'pending'").run(context.nowMs ?? Date.now(), attemptId)
       })
     },
     'evidence.commit': async (row, context: Context) => {
@@ -98,20 +100,20 @@ export async function runDue(db: DatabaseSync, handle: SupervisorLeaseHandle, ha
       if (options?.fault === 'outbox-before-effect') triggerFault(options.fault)
       const handler = Object.hasOwn(handlers, row.kind) ? handlers[row.kind] : undefined
       if (!handler) throw new Error(`no handler for ${row.kind}`)
-      await handler(row, { idempotencyKey: row.idempotency_key, [lease]: handle } as Context)
+      await handler(row, { idempotencyKey: row.idempotency_key, nowMs, [lease]: handle } as Context)
       if (options?.fault === 'outbox-after-effect') triggerFault(options.fault)
       fencedWrite(db, handle, () => {
         db.prepare("UPDATE outbox SET status = 'done', updated_at = ? WHERE id = ? AND status = 'pending'").run(new Date(nowMs).toISOString(), row.id)
       })
       result.done++
     } catch (error) {
-      if (error instanceof LeaseLostError) throw error
+      if (error instanceof LeaseLostError || (typeof error === 'object' && error !== null && 'errcode' in error && (error.errcode === 5 || error.errcode === 6))) throw error
       const tries = row.tries + 1
       const failed = tries >= MAX_TRIES
       const message = error instanceof Error ? error.message || String(error) : String(error) || 'unknown error'
       fencedWrite(db, handle, () => {
         db.prepare('UPDATE outbox SET status = ?, tries = ?, next_attempt_ms = ?, last_error = ?, updated_at = ? WHERE id = ? AND status = \'pending\'')
-          .run(failed ? 'failed' : 'pending', tries, nowMs + BACKOFF_MS, message, new Date(nowMs).toISOString(), row.id)
+          .run(failed ? 'failed' : 'pending', tries, nowMs + Math.min(BACKOFF_MS * 2 ** (tries - 1), OUTBOX_BACKOFF_MAX_MS), message, new Date(nowMs).toISOString(), row.id)
       })
       if (failed) result.failed++
       else result.retried++

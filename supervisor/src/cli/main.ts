@@ -275,8 +275,13 @@ async function runStart(argv: readonly string[]): Promise<number> {
       try {
         await reconcileWorkers(db, handle, { killTree, stateDir, staleAfterMs }, Date.now())
         while (true) {
-          const result = await runTick(db, handle, { spawnWorker, killTree, stateDir, staleAfterMs, readResult: readCompletion, isAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } } }, Date.now(), { fault })
-          if (idle && result.idle) break
+          try {
+            const result = await runTick(db, handle, { spawnWorker, killTree, stateDir, staleAfterMs, readResult: readCompletion, isAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } } }, Date.now(), { fault })
+            if (idle && result.idle) break
+          } catch (error) {
+            if (typeof error !== 'object' || error === null || !('errcode' in error) || (error.errcode !== 5 && error.errcode !== 6)) throw error
+            process.stderr.write('\u0642\u0627\u0639\u062f\u0629 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a \u0645\u0634\u063a\u0648\u0644\u0629\u061b \u0633\u062a\u062a\u0645 \u0625\u0639\u0627\u062f\u0629 \u0627\u0644\u0645\u062d\u0627\u0648\u0644\u0629\n')
+          }
           await new Promise((resolve) => setTimeout(resolve, heartbeatMs))
         }
       } finally { handle.release(Date.now()) }
