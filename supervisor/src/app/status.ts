@@ -12,7 +12,7 @@ import {
 } from './domain.ts'
 
 /** Storage schema version this status reader supports: the M3 storage schema (v5). */
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 export type LeaseState = 'active' | 'released'
 export type LeaseFreshness = 'fresh' | 'stale' | 'future' | 'not-applicable'
@@ -71,7 +71,7 @@ export interface TaskStatusItem {
 }
 
 export interface Status {
-  readonly schemaVersion: 5
+  readonly schemaVersion: 6
   readonly recordedCommandCount: number
   readonly lease: null | Lease
   readonly commands?: CommandsSummary

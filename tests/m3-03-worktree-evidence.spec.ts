@@ -47,7 +47,7 @@ function database(stateDir: string, attempt = 'attempt-1') {
     '{}',
     '2026-01-01',
   )
-  db.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
     'task-1',
     'p',
     'c',
