@@ -157,10 +157,24 @@ export async function killTree(pid: number, nonce: string, options?: { killComma
       }
     }
     let remaining = process.platform === 'win32' ? windowsProcesses() : linuxProcesses()
+    const finished = async (): Promise<KillResult> => {
+      if (process.platform !== 'win32') {
+        do {
+          try { process.kill(pid, 0) } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') return { result: 'killed' }
+            throw error
+          }
+          if (Date.now() >= deadline) break
+          await delay(Math.min(100, Math.max(0, deadline - Date.now())))
+        } while (true)
+        return { result: 'kill-failed', detail: 'Process tree remained alive after timeout' }
+      }
+      return { result: 'killed' }
+    }
     do {
       members = treeMembers(remaining, members)
       const alive = aliveMembers(remaining, members)
-      if (!alive.length) return { result: 'killed' }
+      if (!alive.length) return await finished()
       if (!options?.killCommand) {
         // ponytail: PID reuse between this snapshot and kill remains an accepted, milliseconds-long window.
         for (const item of alive.reverse()) {
@@ -180,7 +194,7 @@ export async function killTree(pid: number, nonce: string, options?: { killComma
       remaining = process.platform === 'win32' ? windowsProcesses() : linuxProcesses()
     } while (Date.now() < deadline)
     members = treeMembers(remaining, members)
-    return aliveMembers(remaining, members).length ? { result: 'kill-failed', detail: 'Process tree remained alive after timeout' } : { result: 'killed' }
+    return aliveMembers(remaining, members).length ? { result: 'kill-failed', detail: 'Process tree remained alive after timeout' } : await finished()
   } catch (error) {
     return { result: 'kill-failed', detail: error instanceof Error ? error.message : String(error) }
   }

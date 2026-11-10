@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -9,6 +10,37 @@ import { killTree, parseLinuxStat, parseWindowsProcesses, spawnWorker, treeMembe
 vi.mock('node:child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:child_process')>()
   return { ...original, spawnSync: vi.fn(original.spawnSync) }
+})
+
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>()
+  return { ...original, readFileSync: vi.fn(original.readFileSync), readdirSync: vi.fn(original.readdirSync) }
+})
+
+it('waits for a zombie root to disappear before reporting POSIX success', async () => {
+  const pid = 123456789
+  const nonce = randomUUID()
+  const stat = `${pid} (worker) S 1 17 ${Array(16).fill('0').join(' ')} 100`
+  const zombie = `${pid} (worker) Z`
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+  const kill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+    if (signal === 0 && kill.mock.calls.filter(([, value]) => value === 0).length === 3) {
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' })
+    }
+    return true
+  })
+  let statReads = 0
+  vi.mocked(readFileSync).mockImplementation(((path: unknown) => String(path).endsWith('/cmdline') ? `worker ${nonce}` : ++statReads <= 3 ? stat : zombie) as unknown as typeof readFileSync)
+  vi.mocked(readdirSync).mockReturnValue([String(pid)] as never)
+  try {
+    expect(await killTree(pid, nonce)).toEqual({ result: 'killed' })
+    expect(kill.mock.calls.filter(([, signal]) => signal === 0)).toHaveLength(3)
+  } finally {
+    platform.mockRestore()
+    kill.mockRestore()
+    vi.mocked(readFileSync).mockRestore()
+    vi.mocked(readdirSync).mockRestore()
+  }
 })
 
 describe('process identity safety', () => {
