@@ -185,7 +185,7 @@ function Cleanup-TaskWorktrees {
         & git -C $tempRepo worktree prune 2>&1 | Out-Null
         $wtList = (& git -C $tempRepo worktree list --porcelain 2>&1) -join "`n"
         if ($wtList -match [regex]::Escape($d.FullName)) {
-          throw "Worktree removal failed for '$($d.FullName)' with code $code: $($out -join ' ')"
+          throw "Worktree removal failed for '$($d.FullName)' with code ${code}: $($out -join ' ')"
         }
       }
     }
@@ -193,7 +193,7 @@ function Cleanup-TaskWorktrees {
   $pruneOut = & git -C $tempRepo worktree prune 2>&1
   $pruneCode = $LASTEXITCODE
   if ($pruneCode -ne 0) {
-    throw "git worktree prune failed with code $pruneCode: $($pruneOut -join ' ')"
+    throw "git worktree prune failed with code ${pruneCode}: $($pruneOut -join ' ')"
   }
 }
 
@@ -217,7 +217,7 @@ function Invoke-FactoryStatus([string]$sDir) {
   [void]$proc.WaitForExit(10000)
   $code = $proc.ExitCode
   if ($code -ne 0) {
-    throw "factory status failed with exit code $code: $stderr"
+    throw "factory status failed with exit code ${code}: $stderr"
   }
   return ($stdout | ConvertFrom-Json)
 }
