@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M3-04-fix",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "abdcc572c5c37f449a450562102991263ff344ad",
+  "checks": [
+    {
+      "id": "CHK-M3-04-fix-a",
+      "command": "pnpm exec vitest run tests/m3-04-fixes.spec.ts tests/protected/m3-process-tree.spec.ts (Windows, outside sandbox); gh workflow run ci.yml --ref card/M3-04-mut -f mutate=supervisor/src/app/process-tree.ts",
+      "result": "pass",
+      "output": "Tests 36 passed (36); CI run 42883233314 mutation score 87.70 (break 80) on ubuntu node 24; Argon approve"
+    },
+    {
+      "id": "CHK-M3-04-fix-b",
+      "command": "pnpm exec vitest run tests/m3-04-fixes.spec.ts tests/protected/m3-process-tree.spec.ts (Windows, outside sandbox); gh workflow run ci.yml --ref card/M3-04-mut -f mutate=supervisor/src/app/process-tree.ts",
+      "result": "pass",
+      "output": "Tests 36 passed (36); CI run 42883233314 mutation score 87.70 (break 80) on ubuntu node 24; Argon approve"
+    },
+    {
+      "id": "CHK-M3-04-fix-c",
+      "command": "pnpm exec vitest run tests/m3-04-fixes.spec.ts tests/protected/m3-process-tree.spec.ts (Windows, outside sandbox); gh workflow run ci.yml --ref card/M3-04-mut -f mutate=supervisor/src/app/process-tree.ts",
+      "result": "pass",
+      "output": "Tests 36 passed (36); CI run 42883233314 mutation score 87.70 (break 80) on ubuntu node 24; Argon approve"
+    },
+    {
+      "id": "CHK-M3-04-fix-d",
+      "command": "pnpm exec vitest run tests/m3-04-fixes.spec.ts tests/protected/m3-process-tree.spec.ts (Windows, outside sandbox); gh workflow run ci.yml --ref card/M3-04-mut -f mutate=supervisor/src/app/process-tree.ts",
+      "result": "pass",
+      "output": "Tests 36 passed (36); CI run 42883233314 mutation score 87.70 (break 80) on ubuntu node 24; Argon approve"
+    }
+  ],
+  "ended_at": "2026-11-10T19:33:55.543Z"
+}
