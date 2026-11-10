@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M4-03",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "a0dcef0e6c6f12368b9e11f3fb74a14463672289",
+  "checks": [
+    {
+      "id": "CHK-M4-03-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate apply-commands.ts,commands.ts (CI run 42917610750)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 738/740 tests (2 known host CIM helper failures, fixed by M4-TH), typecheck and build 0; mutation apply-commands.ts 88.55%, commands.ts 82.72% (CI 42917610750). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (2 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    },
+    {
+      "id": "CHK-M4-03-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate apply-commands.ts,commands.ts (CI run 42917610750)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 738/740 tests (2 known host CIM helper failures, fixed by M4-TH), typecheck and build 0; mutation apply-commands.ts 88.55%, commands.ts 82.72% (CI 42917610750). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (2 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    },
+    {
+      "id": "CHK-M4-03-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate apply-commands.ts,commands.ts (CI run 42917610750)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 738/740 tests (2 known host CIM helper failures, fixed by M4-TH), typecheck and build 0; mutation apply-commands.ts 88.55%, commands.ts 82.72% (CI 42917610750). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (2 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    },
+    {
+      "id": "CHK-M4-03-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate apply-commands.ts,commands.ts (CI run 42917610750)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 738/740 tests (2 known host CIM helper failures, fixed by M4-TH), typecheck and build 0; mutation apply-commands.ts 88.55%, commands.ts 82.72% (CI 42917610750). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (2 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    },
+    {
+      "id": "CHK-M4-03-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate apply-commands.ts,commands.ts (CI run 42917610750)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 738/740 tests (2 known host CIM helper failures, fixed by M4-TH), typecheck and build 0; mutation apply-commands.ts 88.55%, commands.ts 82.72% (CI 42917610750). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (2 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    },
+    {
+      "id": "CHK-M4-03-f",
+      "command": "pnpm typecheck && pnpm test && pnpm build; stryker --mutate apply-commands.ts,commands.ts (CI run 42917610750)",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 738/740 tests (2 known host CIM helper failures, fixed by M4-TH), typecheck and build 0; mutation apply-commands.ts 88.55%, commands.ts 82.72% (CI 42917610750). Protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (2 rounds; approve). Implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve)."
+    }
+  ],
+  "ended_at": "2026-11-10T23:01:37.781Z"
+}
