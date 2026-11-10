@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 
 /** Storage schema version this status reader supports: the M2-03 storage schema. */
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 export type LeaseState = 'active' | 'released'
 export type LeaseFreshness = 'fresh' | 'stale' | 'future' | 'not-applicable'
@@ -16,7 +16,7 @@ export interface Lease {
 }
 
 export interface Status {
-  readonly schemaVersion: 4
+  readonly schemaVersion: 5
   readonly recordedCommandCount: number
   readonly lease: null | Lease
 }
