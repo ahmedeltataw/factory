@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M3-08",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "254a5afd76e908d777195ea691dcfa91307dc4c4",
+  "checks": [
+    {
+      "id": "CHK-M3-08-a",
+      "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File acceptance/M3.ps1 -Source <worktree> -SkipBaseline (dev run 15); baseline steps covered by owner full run at M3-09",
+      "result": "pass",
+      "output": "14/14 executed steps PASS, run directory removed, zero leftover processes; reviewers sol (rounds 1-4) and gemini-4-argon (rounds 5-6) approve"
+    },
+    {
+      "id": "CHK-M3-08-b",
+      "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File acceptance/M3.ps1 -Source <worktree> -SkipBaseline (dev run 15); baseline steps covered by owner full run at M3-09",
+      "result": "pass",
+      "output": "14/14 executed steps PASS, run directory removed, zero leftover processes; reviewers sol (rounds 1-4) and gemini-4-argon (rounds 5-6) approve"
+    },
+    {
+      "id": "CHK-M3-08-c",
+      "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File acceptance/M3.ps1 -Source <worktree> -SkipBaseline (dev run 15); baseline steps covered by owner full run at M3-09",
+      "result": "pass",
+      "output": "14/14 executed steps PASS, run directory removed, zero leftover processes; reviewers sol (rounds 1-4) and gemini-4-argon (rounds 5-6) approve"
+    },
+    {
+      "id": "CHK-M3-08-d",
+      "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File acceptance/M3.ps1 -Source <worktree> -SkipBaseline (dev run 15); baseline steps covered by owner full run at M3-09",
+      "result": "pass",
+      "output": "14/14 executed steps PASS, run directory removed, zero leftover processes; reviewers sol (rounds 1-4) and gemini-4-argon (rounds 5-6) approve"
+    },
+    {
+      "id": "CHK-M3-08-e",
+      "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File acceptance/M3.ps1 -Source <worktree> -SkipBaseline (dev run 15); baseline steps covered by owner full run at M3-09",
+      "result": "pass",
+      "output": "14/14 executed steps PASS, run directory removed, zero leftover processes; reviewers sol (rounds 1-4) and gemini-4-argon (rounds 5-6) approve"
+    }
+  ],
+  "ended_at": "2026-11-10T19:24:28.031Z"
+}
