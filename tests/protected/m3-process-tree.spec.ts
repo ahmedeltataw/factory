@@ -88,6 +88,7 @@ function trackProcess(pid: number, nonce: string): void {
 function untrackDeadProcesses(): void {
   for (let i = trackedProcesses.length - 1; i >= 0; i--) {
     const item = trackedProcesses[i]
+    if (!item) continue
     if (!isProcessAlive(item.pid)) {
       trackedProcesses.splice(i, 1)
     }
