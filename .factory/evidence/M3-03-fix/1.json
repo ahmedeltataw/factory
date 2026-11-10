@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "card": "M3-03-fix",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "9b3764d554fda317c79060d97b65f626464c6c49",
+  "checks": [
+    {
+      "id": "CHK-M3-03-fix-a",
+      "command": "pnpm test (CI run 42874573065, windows-latest 8.3 TEMP, node 24/26)",
+      "result": "pass",
+      "output": "Test step passed on all 4 verify cells; tests/m3-03-fix.spec.ts and tests/protected/m3-outbox-property.spec.ts pass with 8.3 TEMP"
+    },
+    {
+      "id": "CHK-M3-03-fix-b",
+      "command": "pnpm test (CI run 42874573065, windows-latest 8.3 TEMP, node 24/26)",
+      "result": "pass",
+      "output": "Test step passed on all 4 verify cells; tests/m3-03-fix.spec.ts and tests/protected/m3-outbox-property.spec.ts pass with 8.3 TEMP"
+    },
+    {
+      "id": "CHK-M3-03-fix-c",
+      "command": "pnpm test (CI run 42874573065, windows-latest 8.3 TEMP, node 24/26)",
+      "result": "pass",
+      "output": "Test step passed on all 4 verify cells; tests/m3-03-fix.spec.ts and tests/protected/m3-outbox-property.spec.ts pass with 8.3 TEMP"
+    }
+  ],
+  "ended_at": "2026-11-10T19:17:05.934Z"
+}

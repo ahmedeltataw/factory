@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M3-CI",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "13a6ad51c2c6f9549baf2f5311b4d38793b04455",
+  "checks": [
+    {
+      "id": "CHK-M3-CI-a",
+      "command": "gh workflow run ci.yml --ref <branch> -f mutate=<files>; push to m3-integration",
+      "result": "pass",
+      "output": "dispatch ran mutation job only with mutate list and uploaded mutation-report; push run 42874573065 ran full matrix; PR scope check uses origin/BASE_REF"
+    },
+    {
+      "id": "CHK-M3-CI-b",
+      "command": "gh workflow run ci.yml --ref <branch> -f mutate=<files>; push to m3-integration",
+      "result": "pass",
+      "output": "dispatch ran mutation job only with mutate list and uploaded mutation-report; push run 42874573065 ran full matrix; PR scope check uses origin/BASE_REF"
+    },
+    {
+      "id": "CHK-M3-CI-c",
+      "command": "gh workflow run ci.yml --ref <branch> -f mutate=<files>; push to m3-integration",
+      "result": "pass",
+      "output": "dispatch ran mutation job only with mutate list and uploaded mutation-report; push run 42874573065 ran full matrix; PR scope check uses origin/BASE_REF"
+    },
+    {
+      "id": "CHK-M3-CI-d",
+      "command": "gh workflow run ci.yml --ref <branch> -f mutate=<files>; push to m3-integration",
+      "result": "pass",
+      "output": "dispatch ran mutation job only with mutate list and uploaded mutation-report; push run 42874573065 ran full matrix; PR scope check uses origin/BASE_REF"
+    }
+  ],
+  "ended_at": "2026-11-10T19:17:06.119Z"
+}
