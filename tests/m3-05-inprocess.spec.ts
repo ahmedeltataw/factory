@@ -44,10 +44,19 @@ describe('in-process outbox effect coverage', () => {
   it('requires a spawner and a lease for direct built-in handler calls', async () => {
     const { db, handle } = setup()
     const row = enqueue(db, handle, { idempotencyKey: 'a', kind: 'attempt.start', payloadJson: '{"attemptId":"a","taskId":"t"}', nowMs: 1 })
-    await expect(createEffectHandlers({ db })['attempt.start'](row, { idempotencyKey: 'a' })).rejects.toThrow('spawnWorker required')
-    await expect(createEffectHandlers({ db, spawnWorker: vi.fn() })['attempt.start'](row, { idempotencyKey: 'a' })).rejects.toThrow('outbox lease required')
+    const startWithoutSpawner = createEffectHandlers({ db })['attempt.start']
+    expect(startWithoutSpawner).toBeDefined()
+    if (!startWithoutSpawner) throw new Error('attempt.start handler missing')
+    await expect(startWithoutSpawner(row, { idempotencyKey: 'a' })).rejects.toThrow('spawnWorker required')
+    const startWithoutLease = createEffectHandlers({ db, spawnWorker: vi.fn() })['attempt.start']
+    expect(startWithoutLease).toBeDefined()
+    if (!startWithoutLease) throw new Error('attempt.start handler missing')
+    await expect(startWithoutLease(row, { idempotencyKey: 'a' })).rejects.toThrow('outbox lease required')
     const evidenceRow = enqueue(db, handle, { idempotencyKey: 'e', kind: 'evidence.commit', payloadJson: '{"attemptId":"a"}', nowMs: 1 })
-    await expect(createEffectHandlers({ db })['evidence.commit'](evidenceRow, { idempotencyKey: 'e' })).rejects.toThrow('outbox lease required')
+    const commitEvidence = createEffectHandlers({ db })['evidence.commit']
+    expect(commitEvidence).toBeDefined()
+    if (!commitEvidence) throw new Error('evidence.commit handler missing')
+    await expect(commitEvidence(evidenceRow, { idempotencyKey: 'e' })).rejects.toThrow('outbox lease required')
   })
 
   it('fences evidence inserts, preserves database methods, and skips existing evidence', async () => {
