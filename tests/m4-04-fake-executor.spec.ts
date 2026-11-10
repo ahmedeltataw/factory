@@ -189,7 +189,7 @@ describe('M4-04 unit tests for fake-executor', () => {
     })
   })
 
-  it('handles FAKE_WRITE with Windows backslashes', async () => {
+  it.skipIf(process.platform !== 'win32')('handles FAKE_WRITE with Windows backslashes', async () => {
     await run({ FAKE_WRITE: 'subpath\\windows-style.txt' }, (f, code) => {
       expect(code).toBe(0)
       expect(result(f)).toEqual({ exitCode: 0 })
