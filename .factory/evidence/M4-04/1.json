@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M4-04",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "d6e8b73df5b18dc0f719ea597a8d70167d14ad81",
+  "checks": [
+    {
+      "id": "CHK-M4-04-a",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-fake-executor.spec.ts tests/m4-04-fake-executor.spec.ts tests/protected/m3-worktree-evidence.spec.ts tests/protected/m3-process-tree.spec.ts tests/protected/m3-recovery.spec.ts && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 42/42 targeted tests incl. M3 executor/process/recovery protected suites, 0 leaked executor processes, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve by Lead after fixes verified). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (1 finding: Windows-only backslash test, fixed). No mutation: not core (policy section 1)."
+    },
+    {
+      "id": "CHK-M4-04-b",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-fake-executor.spec.ts tests/m4-04-fake-executor.spec.ts tests/protected/m3-worktree-evidence.spec.ts tests/protected/m3-process-tree.spec.ts tests/protected/m3-recovery.spec.ts && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 42/42 targeted tests incl. M3 executor/process/recovery protected suites, 0 leaked executor processes, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve by Lead after fixes verified). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (1 finding: Windows-only backslash test, fixed). No mutation: not core (policy section 1)."
+    },
+    {
+      "id": "CHK-M4-04-c",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-fake-executor.spec.ts tests/m4-04-fake-executor.spec.ts tests/protected/m3-worktree-evidence.spec.ts tests/protected/m3-process-tree.spec.ts tests/protected/m3-recovery.spec.ts && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 42/42 targeted tests incl. M3 executor/process/recovery protected suites, 0 leaked executor processes, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve by Lead after fixes verified). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (1 finding: Windows-only backslash test, fixed). No mutation: not core (policy section 1)."
+    },
+    {
+      "id": "CHK-M4-04-d",
+      "command": "pnpm typecheck && pnpm exec vitest run tests/protected/m4-fake-executor.spec.ts tests/m4-04-fake-executor.spec.ts tests/protected/m3-worktree-evidence.spec.ts tests/protected/m3-process-tree.spec.ts tests/protected/m3-recovery.spec.ts && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 42/42 targeted tests incl. M3 executor/process/recovery protected suites, 0 leaked executor processes, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve by Lead after fixes verified). Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (1 finding: Windows-only backslash test, fixed). No mutation: not core (policy section 1)."
+    }
+  ],
+  "ended_at": "2026-11-10T22:01:56.929Z"
+}
