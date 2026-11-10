@@ -366,17 +366,27 @@ function Stop-AllAcceptanceProcesses {
 }
 
 function Normalize-Paths([string[]]$paths) {
+  $ErrorActionPreference = 'Continue'
   $helperPath = Join-Path $helpersDir 'canonicalize-paths.mjs'
   $helperCode = @'
 import fs from 'node:fs';
+import path from 'node:path';
 
 const paths = JSON.parse(process.env.FACTORY_PATHS_JSON);
-const canonical = paths.map((path) => {
-  try {
-    return fs.realpathSync.native(path);
-  } catch (error) {
-    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return path;
-    throw error;
+const canonical = paths.map((inputPath) => {
+  const resolved = path.resolve(inputPath);
+  let ancestor = resolved;
+  const remaining = [];
+  while (true) {
+    try {
+      return path.join(fs.realpathSync.native(ancestor), ...remaining);
+    } catch (error) {
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) return resolved;
+      remaining.unshift(path.basename(ancestor));
+      ancestor = parent;
+    }
   }
 });
 process.stdout.write(JSON.stringify(canonical));
@@ -406,6 +416,7 @@ process.stdout.write(JSON.stringify(canonical));
 }
 
 function Cleanup-TaskWorktrees {
+  $ErrorActionPreference = 'Continue'
   if ([string]::IsNullOrWhiteSpace($tempRepo) -or -not (Test-Path -LiteralPath $tempRepo)) { return }
   if ([string]::IsNullOrWhiteSpace($stateDir) -or -not (Test-Path -LiteralPath $stateDir)) { return }
   $wtBase = Join-Path $stateDir 'worktrees'
