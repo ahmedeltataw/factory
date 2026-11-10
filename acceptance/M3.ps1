@@ -58,19 +58,40 @@ function Remove-AcceptanceTempDir([string]$dir) {
     throw "Safety error: refused to delete path outside ${expectedShared} subdirectories: $dir"
   }
 
-  $timeoutSec = 10
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  while ((Test-Path -LiteralPath $dir) -and $sw.Elapsed.TotalSeconds -lt $timeoutSec) {
-    try {
-      Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
-    } catch {
-      Start-Sleep -Milliseconds 200
+  $dir = $fullDir
+  $empty = Join-Path $expectedShared ("empty-" + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $empty -Force | Out-Null
+  try {
+    $timeoutSec = 10
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ((Test-Path -LiteralPath $dir) -and $sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+      try {
+        if (-not (Test-Path -LiteralPath $empty)) {
+          New-Item -ItemType Directory -Path $empty -Force | Out-Null
+        }
+        $robocopyOut = & robocopy $empty $dir /MIR /NFL /NDL /NJH /NJS /NP 2>&1
+        $robocopyExit = $LASTEXITCODE
+        if ($robocopyExit -ge 8) {
+          throw "robocopy failed with exit code $robocopyExit"
+        }
+        $global:LASTEXITCODE = 0
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+      } catch {
+        Start-Sleep -Milliseconds 200
+      }
     }
-  }
-  [void]$sw.Stop()
+    [void]$sw.Stop()
 
-  if (Test-Path -LiteralPath $dir) {
-    throw "Cleanup error: failed to remove temporary directory within timeout: $dir"
+    if (Test-Path -LiteralPath $dir) {
+      throw "Cleanup error: failed to remove temporary directory within timeout: $dir"
+    }
+    if (Test-Path -LiteralPath $empty) {
+      Remove-Item -LiteralPath $empty -Force -ErrorAction SilentlyContinue
+    }
+  } finally {
+    if (Test-Path -LiteralPath $empty) {
+      Remove-Item -LiteralPath $empty -Force -ErrorAction SilentlyContinue
+    }
   }
 }
 
