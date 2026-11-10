@@ -39,9 +39,12 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Scope check (diff against origin/main, PR only)
+      - name: Scope check (diff against PR base branch, PR only)
         if: github.event_name == 'pull_request'
-        run: node scripts/check-scope.mjs --base origin/main
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node scripts/check-scope.mjs --base "origin/$BASE_REF"
 
       - name: Typecheck
         run: pnpm typecheck
