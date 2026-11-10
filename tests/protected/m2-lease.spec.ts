@@ -23,7 +23,7 @@ describe('M2-03 Supervisor lease', () => {
     old.close()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 5 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 })
       expect(db.prepare("SELECT name FROM projects WHERE id = 'p1'").get()).toMatchObject({ name: 'Project' })
       expect(db.prepare("SELECT project_id FROM commands WHERE id = 'c1'").get()).toMatchObject({ project_id: 'p1' })
     } finally { db.close() }
@@ -45,7 +45,7 @@ describe('M2-03 Supervisor lease', () => {
     const dir = stateDir()
     const db = openStore(join(dir, 'state.sqlite'))
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 5 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 })
       const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 1000 })
       try {
         expect(handle.generation).toBe(1)
