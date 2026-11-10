@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M4-TH",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "e53f63ef7f990b2cc5362e16724af9b8a04bc470",
+  "checks": [
+    {
+      "id": "CHK-M4-TH-a",
+      "command": "pnpm exec vitest run tests/m3-04-fixes.spec.ts",
+      "result": "pass",
+      "output": "Lead, Windows Node 26, outside sandbox, while an Antigravity process with a multi-line argv was live: 32/32 (before the fix the same file failed 2 tests with a JSON control-character parse error). Builder gpt-6.1-terra; reviewer gemini-4-argon-high (approve)."
+    }
+  ],
+  "ended_at": "2026-11-10T22:46:59.040Z"
+}
