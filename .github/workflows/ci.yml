@@ -3,10 +3,18 @@ name: CI
 
 on:
   push:
+    branches: [main, 'm*-integration']
   pull_request:
+  workflow_dispatch:
+    inputs:
+      mutate:
+        description: Comma-separated list of files to mutate
+        required: false
+        type: string
 
 jobs:
   verify:
+    if: github.event_name != 'workflow_dispatch'
     name: verify (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -67,10 +75,10 @@ jobs:
         run: node scripts/check-evidence.mjs .factory/evidence/*/*.json
 
   mutation:
-    # Mutation covers store.ts, commands.ts and supervisor-lease.ts; combined break threshold 80 (CHK-M2-TOOLS-c).
+    # The mutation module list lives in stryker.config.json; combined break threshold 80 (CHK-M2-TOOLS-c).
     name: mutation (ubuntu, node 24)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -85,6 +93,20 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Mutation test (three-file config)
-        timeout-minutes: 40
-        run: pnpm exec stryker run
+      - name: Mutation test
+        timeout-minutes: 110
+        env:
+          MUTATE: ${{ inputs.mutate }}
+        run: |
+          if [ -n "$MUTATE" ]; then
+            pnpm exec stryker run --mutate "$MUTATE"
+          else
+            pnpm exec stryker run
+          fi
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/mutation.json
