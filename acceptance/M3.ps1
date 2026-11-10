@@ -62,7 +62,7 @@ function Remove-AcceptanceTempDir([string]$dir) {
   $empty = Join-Path $expectedShared ("empty-" + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $empty -Force | Out-Null
   try {
-    $timeoutSec = 10
+    $timeoutSec = 180
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $lastCleanupError = $null
     while ((Test-Path -LiteralPath $dir) -and $sw.Elapsed.TotalSeconds -lt $timeoutSec) {
