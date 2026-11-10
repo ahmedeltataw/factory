@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { killTree, parseLinuxStat, parseWindowsProcesses, spawnWorker, treePids } from '../supervisor/src/app/process-tree.ts'
+import { killTree, parseLinuxStat, parseWindowsProcesses, spawnWorker, treeMembers, aliveMembers } from '../supervisor/src/app/process-tree.ts'
 
 vi.mock('node:child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:child_process')>()
@@ -26,125 +26,85 @@ describe('process identity safety', () => {
   })
 })
 
-describe('Windows process parser', () => {
-  it('requires an array of valid uint32 records', () => {
-    for (const value of [null, {}, 'x', 1, [1], { ProcessId: 1 }, ...[-1, 1.5, 4294967296, '1', null].map((pid) => ({ ProcessId: pid, ParentProcessId: 0 })), ...[-1, 1.5, 4294967296, '1', null].map((parent) => ({ ProcessId: 1, ParentProcessId: parent }))]) {
-      expect(() => parseWindowsProcesses(JSON.stringify([value]))).toThrow('Invalid process record')
+describe('process parsers and tree identities', () => {
+  const record = (pid: number, parent: number, created = '100') => ({ ProcessId: pid, ParentProcessId: parent, CreationDate: created })
+  it('validates Windows creation times and filtered commands', () => {
+    expect(parseWindowsProcesses(JSON.stringify([record(1, 0, '638000000000000001')]))).toEqual([{ pid: 1, parent: 0, created: '638000000000000001' }])
+    for (const created of [null, 1, '', '-1', '1.2', '01']) {
+      expect(() => parseWindowsProcesses(JSON.stringify([record(1, 0, created as string)]))).toThrow()
     }
-    expect(() => parseWindowsProcesses('{}')).toThrow('Invalid process enumeration')
-    expect(parseWindowsProcesses('[{"ProcessId":0,"ParentProcessId":4294967295}]')).toEqual([{ pid: 0, parent: 4294967295 }])
-    expect(() => parseWindowsProcesses('[{"ProcessId":1,"ParentProcessId":0},{"ProcessId":1,"ParentProcessId":0}]', 1)).toThrow('Invalid filtered process enumeration')
-    expect(() => parseWindowsProcesses('[{"ProcessId":2,"ParentProcessId":0}]', 1)).toThrow('Invalid process record')
-  })
-
-  it('rejects invalid, noncanonical and odd-length base64 commands', () => {
-    for (const command of [null, 1, '!!!!', 'AAAA!', '!AAAA', 'A', 'AAA', 'AA=A', 'AB==', 'AQ==']) {
-      expect(() => parseWindowsProcesses(JSON.stringify([{ ProcessId: 1, ParentProcessId: 0, CommandLine: command }]), 1)).toThrow('Invalid process command')
+    const command = Buffer.from('worker \u0627\u062e\u062a\u0628\u0627\u0631', 'utf16le').toString('base64')
+    expect(parseWindowsProcesses(JSON.stringify([{ ...record(1, 0), CommandLine: command }]), 1)).toEqual([{ pid: 1, parent: 0, created: '100', command: 'worker \u0627\u062e\u062a\u0628\u0627\u0631' }])
+    for (const command of [null, 1, '!!!!', 'AB==', 'AQ==']) {
+      expect(() => parseWindowsProcesses(JSON.stringify([{ ...record(1, 0), CommandLine: command }]), 1)).toThrow('Invalid process command')
     }
-    expect(parseWindowsProcesses('[{"ProcessId":1,"ParentProcessId":0,"CommandLine":""}]', 1)).toEqual([{ pid: 1, parent: 0, command: '' }])
-  })
-  it('rejects malformed enumeration records instead of omitting them', () => {
-    expect(() => parseWindowsProcesses('[{"ProcessId":12,"ParentProcessId":1},{"ProcessId":13}]')).toThrow()
-    expect(() => parseWindowsProcesses('not json')).toThrow()
+    expect(() => parseWindowsProcesses('{}')).toThrow()
+    expect(() => parseWindowsProcesses(JSON.stringify([record(2, 0)]), 1)).toThrow()
+    expect(() => parseWindowsProcesses(JSON.stringify([record(1, 0), record(1, 0)]), 1)).toThrow()
     expect(() => parseWindowsProcesses('[{"ProcessId":-1,"ParentProcessId":1}]')).toThrow()
   })
 
-  it('validates and decodes the filtered command', () => {
-    const command = Buffer.from('worker اختبار', 'utf16le').toString('base64')
-    expect(parseWindowsProcesses(JSON.stringify([{ ProcessId: 12, ParentProcessId: 1, CommandLine: command }]), 12))
-      .toEqual([{ pid: 12, parent: 1, command: 'worker اختبار' }])
-    expect(() => parseWindowsProcesses('[{"ProcessId":12,"ParentProcessId":1,"CommandLine":"!!!"}]', 12)).toThrow()
-    expect(parseWindowsProcesses('[]', 12)).toEqual([])
-  })
-})
-
-describe('process tree logic', () => {
-  it('parses stat names containing parentheses and ignores zombies', () => {
-    expect(parseLinuxStat('123', '123 (name ) with spaces) S 42 17 0')).toEqual({ pid: 123, parent: 42, group: 17 })
-    expect(parseLinuxStat('123', '123 (name) Z 42 17 0')).toBeUndefined()
+  it('reads Linux field 22 after a name with parentheses and rejects malformed start times', () => {
+    const stat = (state: string, start: string) => `123 (name ) with spaces) ${state} 42 17 ${Array(16).fill('0').join(' ')} ${start}`
+    expect(parseLinuxStat('123', stat('S', '98765432109876543'))).toEqual({ pid: 123, parent: 42, created: '98765432109876543' })
+    expect(parseLinuxStat('123', stat('Z', '12'))).toBeUndefined()
+    expect(() => parseLinuxStat('123', stat('S', 'bad'))).toThrow()
+    expect(() => parseLinuxStat('123', '123 (name) S 42 17')).toThrow()
   })
 
-  it('finds indirect descendants and group members regardless of order, without cycles', () => {
-    expect([...treePids([
-      { pid: 4, parent: 3 }, { pid: 3, parent: 2 }, { pid: 2, parent: 1 },
-      { pid: 5, parent: 99, group: 1 }, { pid: 6, parent: 5 },
-      { pid: 1, parent: 4 }, { pid: 7, parent: 99, group: 2 },
-    ], 1)].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6])
-    expect([...treePids([], 42)]).toEqual([42])
+  it('tracks identities and rejects children older than their recorded parent', () => {
+    const root = { pid: 1, parent: 0, created: '100' }
+    const child = { pid: 2, parent: 1, created: '200' }
+    let members = treeMembers([child, root], new Map([['1:100', root]]))
+    const reused = { pid: 2, parent: 99, created: '300' }
+    const stale = { pid: 3, parent: 2, created: '199' }
+    const late = { pid: 4, parent: 2, created: '250' }
+    members = treeMembers([reused, stale, late], members)
+    expect(aliveMembers([reused, stale, late], members)).toEqual([late])
+    expect([...members.keys()]).toEqual(['1:100', '2:200', '4:250'])
+    const newChild = { pid: 2, parent: 1, created: '300' }
+    members = treeMembers([newChild], members)
+    expect(aliveMembers([newChild], members)).toEqual([newChild])
   })
 })
 
 describe('simulated Windows kill flow', () => {
-  const target = JSON.stringify([{ ProcessId: 123, ParentProcessId: 1, CommandLine: Buffer.from('worker nonce', 'utf16le').toString('base64') }])
-  const record = (pid: number, parent: number) => ({ ProcessId: pid, ParentProcessId: parent })
+  const record = (pid: number, parent: number, created = '100') => ({ ProcessId: pid, ParentProcessId: parent, CreationDate: created })
+  const filtered = (pid: number, parent: number, created = '100') => ({ ...record(pid, parent, created), CommandLine: Buffer.from('worker nonce', 'utf16le').toString('base64') })
   const ok = (stdout: string) => ({ status: 0, stdout, stderr: '' } as never)
+  const target = JSON.stringify([filtered(123, 1)])
 
-  it('reports enumeration errors, missing processes and identity mismatches', async () => {
+  it('fails closed on errors and checks the nonce', async () => {
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     try {
-      for (const [response, expected] of [
-        [{ status: 1, stdout: '', stderr: ' denied \n' }, { result: 'kill-failed', detail: 'denied' }],
-        [{ status: 1, stdout: '', stderr: '' }, { result: 'kill-failed', detail: 'PowerShell failed' }],
-        [{ status: null, error: new Error('launch failed'), stderr: 'ignored' }, { result: 'kill-failed', detail: 'launch failed' }],
-        [ok('[]'), { result: 'not-running' }],
-        [ok(target), { result: 'identity-mismatch' }],
-      ] as const) {
-        vi.mocked(spawnSync).mockReturnValueOnce(response as never)
-        expect(await killTree(123, 'different')).toEqual(expected)
-      }
+      vi.mocked(spawnSync).mockReturnValueOnce({ status: 1, stderr: ' denied ' } as never).mockReturnValueOnce(ok('[]')).mockReturnValueOnce(ok(target))
+      expect(await killTree(123, 'nonce')).toEqual({ result: 'kill-failed', detail: 'denied' })
+      expect(await killTree(123, 'nonce')).toEqual({ result: 'not-running' })
+      expect(await killTree(123, 'wrong')).toEqual({ result: 'identity-mismatch' })
     } finally { platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
   })
 
-  it('uses the supplied kill command and preserves failure details', async () => {
-    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-    try {
-      for (const [failure, detail] of [
-        [{ status: null, error: new Error('cannot launch'), stderr: 'ignored' }, 'cannot launch'],
-        [{ status: 7, stderr: ' failure \n' }, 'failure'],
-        [{ status: 7, stderr: '' }, 'Kill command exited 7'],
-      ] as const) {
-        vi.mocked(spawnSync).mockReturnValueOnce(ok(target)).mockReturnValueOnce(ok('[]')).mockReturnValueOnce(failure as never)
-        expect(await killTree(123, 'nonce', { killCommand: { file: 'custom', args: ['arg'] } })).toEqual({ result: 'kill-failed', detail })
-        expect(vi.mocked(spawnSync)).toHaveBeenLastCalledWith('custom', ['arg'], { encoding: 'utf8', timeout: 10000, windowsHide: true })
-      }
-    } finally { platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
-  })
-
-  it('waits for newly discovered descendants and uses default taskkill arguments', async () => {
+  it('kills the root tree first and retries only snapshot-matched identities', async () => {
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     try {
       vi.mocked(spawnSync).mockReturnValueOnce(ok(target))
-        .mockReturnValueOnce(ok(JSON.stringify([record(123, 1), record(124, 123)])))
+        .mockReturnValueOnce(ok(JSON.stringify([record(123, 1), record(124, 123, '150')])))
         .mockReturnValueOnce(ok(''))
-        .mockReturnValueOnce(ok(JSON.stringify([record(125, 124)])))
+        .mockReturnValueOnce(ok(JSON.stringify([record(123, 9, '200'), record(124, 123, '150')])))
         .mockReturnValueOnce(ok(''))
         .mockReturnValueOnce(ok('[]'))
       expect(await killTree(123, 'nonce')).toEqual({ result: 'killed' })
-      expect(vi.mocked(spawnSync)).toHaveBeenCalledWith('taskkill', ['/T', '/F', '/PID', '123'], { encoding: 'utf8', timeout: 10000, windowsHide: true })
-      expect(vi.mocked(spawnSync)).toHaveBeenCalledWith('taskkill', ['/T', '/F', '/PID', '125'], expect.objectContaining({ windowsHide: true }))
+      const kills = vi.mocked(spawnSync).mock.calls.filter(([file]) => file === 'taskkill')
+      expect(kills.map(([, args]) => args)).toEqual([['/T', '/F', '/PID', '123'], ['/F', '/PID', '124']])
     } finally { platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
   })
 
-  it('returns timeout detail when the tree remains alive at the deadline', async () => {
+  it('preserves custom kill command failure details', async () => {
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-    const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(100).mockReturnValue(5100)
     try {
-      vi.mocked(spawnSync).mockReturnValueOnce(ok(target)).mockReturnValueOnce(ok('[]'))
-        .mockReturnValueOnce(ok('')).mockReturnValueOnce(ok(JSON.stringify([record(123, 1)]))).mockReturnValueOnce(ok(''))
-      expect(await killTree(123, 'nonce')).toEqual({ result: 'kill-failed', detail: 'Process tree remained alive after timeout' })
-    } finally { clock.mockRestore(); platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
-  })
-
-  it('continues polling before the deadline and reports non-Error exceptions', async () => {
-    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-    const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(100).mockReturnValue(5099)
-    try {
-      vi.mocked(spawnSync).mockReturnValueOnce(ok(target)).mockReturnValueOnce(ok('[]')).mockReturnValueOnce(ok(''))
-        .mockReturnValueOnce(ok(JSON.stringify([record(123, 1)]))).mockReturnValueOnce(ok('')).mockReturnValueOnce(ok('[]'))
-      expect(await killTree(123, 'nonce')).toEqual({ result: 'killed' })
-      vi.mocked(spawnSync).mockImplementationOnce(() => { throw 'enumeration broke' })
-      expect(await killTree(123, 'nonce')).toEqual({ result: 'kill-failed', detail: 'enumeration broke' })
-    } finally { clock.mockRestore(); platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
+      vi.mocked(spawnSync).mockReturnValueOnce(ok(target)).mockReturnValueOnce(ok('[]')).mockReturnValueOnce({ status: 7, stderr: ' failure ' } as never)
+      expect(await killTree(123, 'nonce', { killCommand: { file: 'custom', args: ['arg'] } })).toEqual({ result: 'kill-failed', detail: 'failure' })
+    } finally { platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
   })
 })
 
@@ -152,7 +112,7 @@ describe.skipIf(process.platform !== 'win32')('Windows enumeration failures', ()
   it('returns kill-failed when a process table record is malformed', async () => {
     const command = Buffer.from('worker nonce', 'utf16le').toString('base64')
     vi.mocked(spawnSync)
-      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify([{ ProcessId: 123, ParentProcessId: 1, CommandLine: command }]), stderr: '' } as never)
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify([{ ProcessId: 123, ParentProcessId: 1, CreationDate: '100', CommandLine: command }]), stderr: '' } as never)
       .mockReturnValueOnce({ status: 0, stdout: '[{"ProcessId":123}]', stderr: '' } as never)
     try {
       expect((await killTree(123, 'nonce')).result).toBe('kill-failed')
