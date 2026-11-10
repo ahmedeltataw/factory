@@ -56,8 +56,8 @@ function seedV5(dir: string) {
       db.prepare("INSERT INTO command_outcomes VALUES ('cmd-1', 'applied', NULL, 1, ?)").run(stamp)
       db.prepare("INSERT INTO command_outcomes VALUES ('cmd-3', 'rejected', 'already completed', 1, ?)").run(stamp)
 
-      db.prepare("INSERT INTO tasks VALUES ('t-1', 'proj-1', 'cmd-1', 'Task 1', 'progress', ?, ?)").run(stamp, stamp)
-      db.prepare("INSERT INTO attempts VALUES ('att-1', 't-1', 1, 'running', NULL, NULL, 1, ?, NULL)").run(stamp)
+      db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at) VALUES ('t-1', 'proj-1', 'cmd-1', 'Task 1', 'progress', ?, ?)").run(stamp, stamp)
+      db.prepare("INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('att-1', 't-1', 1, 'running', NULL, NULL, 1, ?, NULL)").run(stamp)
       db.prepare("INSERT INTO workers VALUES ('att-1', 'nonce-secret-1', 9999, 'running', '/worktree/t-1', 1000, ?, NULL)").run(stamp)
       db.prepare("INSERT INTO evidence VALUES ('att-1', 'base-sha', 'head-sha-123', ?, 'out-hash', 'err-hash', ?)").run(
         JSON.stringify([{ path: 'src/main.ts', sha256: 'beefcafe1234' }]),
@@ -258,7 +258,7 @@ describe('M3-07 Status Reader and Formatter', () => {
       const dir = fixtureDir()
       const { db, handle } = seedV5(dir)
       try {
-        db.exec("INSERT INTO attempts VALUES ('att-bad-1', 't-1', 2, 'succeeded', 0, NULL, 1, 'now', NULL); INSERT INTO evidence VALUES ('att-bad-1', 'base', 'head', '{bad json', 'out', 'err', 'now')")
+        db.exec("INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('att-bad-1', 't-1', 2, 'succeeded', 0, NULL, 1, 'now', NULL); INSERT INTO evidence VALUES ('att-bad-1', 'base', 'head', '{bad json', 'out', 'err', 'now')")
         expect(() => readStatus(dir, { nowMs: 1200, staleAfterMs: 500 })).toThrow(/malformed evidence/i)
       } finally {
         try { handle.release(1200) } finally { db.close() }
@@ -270,7 +270,7 @@ describe('M3-07 Status Reader and Formatter', () => {
       const dir = fixtureDir()
       const { db, handle } = seedV5(dir)
       try {
-        db.exec("INSERT INTO attempts VALUES ('att-bad-2', 't-1', 2, 'succeeded', 0, NULL, 1, 'now', NULL); INSERT INTO evidence VALUES ('att-bad-2', 'base', 'head', '{\"path\":\"a\"}', 'out', 'err', 'now')")
+        db.exec("INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('att-bad-2', 't-1', 2, 'succeeded', 0, NULL, 1, 'now', NULL); INSERT INTO evidence VALUES ('att-bad-2', 'base', 'head', '{\"path\":\"a\"}', 'out', 'err', 'now')")
         expect(() => readStatus(dir, { nowMs: 1200, staleAfterMs: 500 })).toThrow(/must be an array/i)
       } finally {
         try { handle.release(1200) } finally { db.close() }
@@ -282,7 +282,7 @@ describe('M3-07 Status Reader and Formatter', () => {
       const dir = fixtureDir()
       const { db, handle } = seedV5(dir)
       try {
-        db.exec("INSERT INTO attempts VALUES ('att-bad-3', 't-1', 2, 'succeeded', 0, NULL, 1, 'now', NULL); INSERT INTO evidence VALUES ('att-bad-3', 'base', 'head', '[{\"path\": 123}]', 'out', 'err', 'now')")
+        db.exec("INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('att-bad-3', 't-1', 2, 'succeeded', 0, NULL, 1, 'now', NULL); INSERT INTO evidence VALUES ('att-bad-3', 'base', 'head', '[{\"path\": 123}]', 'out', 'err', 'now')")
         expect(() => readStatus(dir, { nowMs: 1200, staleAfterMs: 500 })).toThrow(/invalid evidence file entry/i)
       } finally {
         try { handle.release(1200) } finally { db.close() }
@@ -309,7 +309,7 @@ describe('M3-07 Status Reader and Formatter', () => {
 
   it('every enum value has a distinct Arabic label', () => {
     const base = {
-      schemaVersion: 5 as const,
+      schemaVersion: 6 as const,
       recordedCommandCount: 0,
       lease: null,
       commands: { recorded: 0, applied: 0, rejected: 0, pending: 0 },
@@ -389,7 +389,7 @@ describe('M3-07 Status Reader and Formatter', () => {
         INSERT INTO commands VALUES ('c1', 'payload1'), ('c2', 'payload2');
         CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT);
         INSERT INTO supervisor_lease VALUES (1, 'legacy-owner', 1, 500, 'active');
-        PRAGMA user_version = 5;
+        PRAGMA user_version = 6;
       `)
     } finally {
       db.close()
@@ -397,7 +397,7 @@ describe('M3-07 Status Reader and Formatter', () => {
 
     const status = readStatus(dir, { nowMs: 600, staleAfterMs: 500 })
     expect(status).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       recordedCommandCount: 2,
       lease: {
         ownerId: 'legacy-owner',

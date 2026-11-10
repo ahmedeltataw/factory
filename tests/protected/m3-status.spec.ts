@@ -70,14 +70,14 @@ it('CHK-M3-07-a: JSON reports command, task and outbox facts without writing', a
     const { db, handle } = seed(dir)
     try {
       await runDue(db, handle, { done: () => {} }, 1000)
-      db.exec("INSERT INTO attempts VALUES ('attempt-1', 'task-one', 1, 'succeeded', 0, NULL, 1, NULL, NULL); INSERT INTO attempts VALUES ('attempt-2', 'task-one', 2, 'running', NULL, NULL, 1, NULL, NULL); INSERT INTO workers VALUES ('attempt-1', 'nonce-1', 12345, 'exited', '/work', 42, NULL, NULL); INSERT INTO evidence VALUES ('attempt-1', 'base', 'head-sha', '[{\"path\":\"src/a.ts\",\"sha256\":\"abc123\"}]', 'out', 'err', 'now')")
+      db.exec("INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('attempt-1', 'task-one', 1, 'succeeded', 0, NULL, 1, NULL, NULL); INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('attempt-2', 'task-one', 2, 'running', NULL, NULL, 1, NULL, NULL); INSERT INTO workers VALUES ('attempt-1', 'nonce-1', 12345, 'exited', '/work', 42, NULL, NULL); INSERT INTO evidence VALUES ('attempt-1', 'base', 'head-sha', '[{\"path\":\"src/a.ts\",\"sha256\":\"abc123\"}]', 'out', 'err', 'now')")
       const before = counts(db)
       const lease = db.prepare('SELECT * FROM supervisor_lease').get()
       const result = run(dir, '--json')
       expect(result.status).toBe(0)
       const status = JSON.parse(result.stdout)
       expect(Object.keys(status).sort()).toEqual(['commands', 'lease', 'outbox', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
-      expect(status.schemaVersion).toBe(5)
+      expect(status.schemaVersion).toBe(6)
       expect(status.recordedCommandCount).toBe(6)
       expect(status.commands).toEqual({ recorded: 6, applied: 1, rejected: 2, pending: 3 })
       expect(status.tasks).toEqual( [{ id: 'task-one', title: 'Example task', status: 'ready', attempts: [{ no: 1, status: 'succeeded', exitCode: 0, worker: { pid: 12345, state: 'exited', heartbeatMs: 42 }, evidence: { headSha: 'head-sha', files: [{ path: 'src/a.ts', sha256: 'abc123' }] } }, { no: 2, status: 'running', exitCode: null, worker: null, evidence: null }] }])
@@ -95,7 +95,7 @@ it('CHK-M3-07-b: Arabic view includes task and count facts without command paylo
   try {
     const { db, handle } = seed(dir)
     try {
-      db.exec(`INSERT INTO attempts VALUES ('a', 'task-one', 1, 'succeeded', 7, NULL, 1, NULL, NULL); INSERT INTO workers VALUES ('a', 'nonce-1', 12345, 'exited', '/work', 42, NULL, NULL); INSERT INTO evidence VALUES ('a', 'base', 'head-sha', '[{"path":"src/a.ts","sha256":"abc123"}]', 'out', 'err', 'now')`)
+      db.exec(`INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('a', 'task-one', 1, 'succeeded', 7, NULL, 1, NULL, NULL); INSERT INTO workers VALUES ('a', 'nonce-1', 12345, 'exited', '/work', 42, NULL, NULL); INSERT INTO evidence VALUES ('a', 'base', 'head-sha', '[{"path":"src/a.ts","sha256":"abc123"}]', 'out', 'err', 'now')`)
       const result = run(dir)
       expect(result.status).toBe(0)
       expect(result.stdout).toMatch(/[\u0600-\u06ff]/)
@@ -150,7 +150,7 @@ it('extracts counter labels from supported formats', () => {
 })
 
 it('CHK-M3-07-b: every displayed enum value has a distinct Arabic label', () => {
-  const base = { schemaVersion: 5, recordedCommandCount: 0, lease: null, commands: { recorded: 0, applied: 0, rejected: 0, pending: 0 }, outbox: { pending: 0, done: 0, failed: 0 }, tasks: [{ id: 'task', title: 'title', status: 'ready', attempts: [{ no: 1, status: 'succeeded', exitCode: 0, worker: { pid: 12345, state: 'running', heartbeatMs: 1 }, evidence: null }] }] }
+  const base = { schemaVersion: 6, recordedCommandCount: 0, lease: null, commands: { recorded: 0, applied: 0, rejected: 0, pending: 0 }, outbox: { pending: 0, done: 0, failed: 0 }, tasks: [{ id: 'task', title: 'title', status: 'ready', attempts: [{ no: 1, status: 'succeeded', exitCode: 0, worker: { pid: 12345, state: 'running', heartbeatMs: 1 }, evidence: null }] }] }
   const cases: Array<[readonly string[], (s: typeof base, v: string) => void]> = [
     [TaskStatusSchema.options, (s, v) => { s.tasks[0]!.status = v }],
     [AttemptStatusSchema.options, (s, v) => { s.tasks[0]!.attempts[0]!.status = v }],
@@ -191,7 +191,7 @@ it('CHK-M3-07-c: persisted stale live PID is suspect without process probes', ()
   try {
     const { db, handle } = seed(dir)
     try {
-      db.prepare("INSERT INTO attempts VALUES ('live', 'task-one', 1, 'running', NULL, NULL, 1, NULL, NULL)").run()
+      db.prepare("INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('live', 'task-one', 1, 'running', NULL, NULL, 1, NULL, NULL)").run()
       db.prepare("INSERT INTO workers VALUES ('live', 'live-nonce', ?, 'running', '/work', 1000, NULL, NULL)").run(process.pid)
       const kill = vi.spyOn(process, 'kill')
       const spawns = (['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync'] as const).map(name => vi.spyOn(childProcess, name))
@@ -238,7 +238,7 @@ it('CHK-M3-07-d: rejects malformed evidence JSON', () => {
   try {
     const { db, handle } = seed(dir)
     try {
-      db.exec("INSERT INTO attempts VALUES ('a', 'task-one', 1, 'succeeded', 0, NULL, 1, NULL, NULL); INSERT INTO evidence VALUES ('a', 'base', 'head', '{bad', 'out', 'err', 'now')")
+      db.exec("INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('a', 'task-one', 1, 'succeeded', 0, NULL, 1, NULL, NULL); INSERT INTO evidence VALUES ('a', 'base', 'head', '{bad', 'out', 'err', 'now')")
       const result = run(dir, '--json')
       expect(result.status).toBe(1)
       expect(result.stderr).toContain('\u0628\u064a\u0627\u0646\u0627\u062a \u0642\u0627\u0639\u062f\u0629 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a \u063a\u064a\u0631 \u0635\u0627\u0644\u062d\u0629')
@@ -247,11 +247,11 @@ it('CHK-M3-07-d: rejects malformed evidence JSON', () => {
 })
 
 it.each([
-  ['attempt status', "INSERT INTO attempts VALUES ('a', 'task-one', 1, 'unknown', NULL, NULL, 1, NULL, NULL)"],
-  ['worker state', "INSERT INTO attempts VALUES ('a', 'task-one', 1, 'succeeded', 0, NULL, 1, NULL, NULL); INSERT INTO workers VALUES ('a', 'nonce', 1, 'unknown', '/work', 1, NULL, NULL)"],
+  ['attempt status', "INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('a', 'task-one', 1, 'unknown', NULL, NULL, 1, NULL, NULL)"],
+  ['worker state', "INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('a', 'task-one', 1, 'succeeded', 0, NULL, 1, NULL, NULL); INSERT INTO workers VALUES ('a', 'nonce', 1, 'unknown', '/work', 1, NULL, NULL)"],
   ['outbox status', "UPDATE outbox SET status = 'unknown' WHERE idempotency_key = 'pending'"],
   ['command outcome', "INSERT INTO command_outcomes VALUES ('pending-command', 'unknown', NULL, 1, 'now')"],
-  ['evidence schema', `INSERT INTO attempts VALUES ('a', 'task-one', 1, 'succeeded', 0, NULL, 1, NULL, NULL); INSERT INTO evidence VALUES ('a', 'base', 'head', '[{"path":123}]', 'out', 'err', 'now')`],
+  ['evidence schema', `INSERT INTO attempts (id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at) VALUES ('a', 'task-one', 1, 'succeeded', 0, NULL, 1, NULL, NULL); INSERT INTO evidence VALUES ('a', 'base', 'head', '[{"path":123}]', 'out', 'err', 'now')`],
 ])('CHK-M3-07-d: rejects invalid %s', (_name, sql) => {
   const dir = fixture()
   try {

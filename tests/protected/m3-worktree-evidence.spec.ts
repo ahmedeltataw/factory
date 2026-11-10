@@ -46,7 +46,7 @@ function database(stateDir: string, attempt = 'attempt-1') {
   const db = openStore(join(stateDir, 'state.sqlite'))
   db.prepare('INSERT INTO projects VALUES (?, ?, ?)').run('p', 'project', '2026-01-01')
   db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?)').run('c', 'p', 'task.create', '{}', '2026-01-01')
-  db.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)').run('task-1', 'p', 'c', 'task', 'ready', '2026-01-01', '2026-01-01')
+  db.prepare('INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run('task-1', 'p', 'c', 'task', 'ready', '2026-01-01', '2026-01-01')
   db.prepare('INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation) VALUES (?, ?, ?, ?, ?)').run(attempt, 'task-1', 1, 'succeeded', 1)
   return db
 }

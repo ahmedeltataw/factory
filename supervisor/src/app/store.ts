@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 const ASCII_WHITESPACE = 'char(32, 9, 10, 13, 12, 11)'
 const MIGRATIONS: Readonly<Record<number, string | readonly string[]>> = {
   1: 'CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL)',
@@ -43,6 +43,14 @@ const MIGRATIONS: Readonly<Record<number, string | readonly string[]>> = {
     `CREATE TRIGGER command_outcomes_no_delete BEFORE DELETE ON command_outcomes BEGIN SELECT RAISE(ABORT, 'command_outcomes are append-only'); END`,
     `CREATE TRIGGER evidence_no_update BEFORE UPDATE ON evidence BEGIN SELECT RAISE(ABORT, 'evidence is immutable'); END`,
     `CREATE TRIGGER evidence_no_delete BEFORE DELETE ON evidence BEGIN SELECT RAISE(ABORT, 'evidence is immutable'); END`,
+  ],
+  6: [
+    `ALTER TABLE tasks ADD COLUMN scope_json TEXT NOT NULL DEFAULT '["."]' CHECK (json_valid(scope_json))`,
+    `ALTER TABLE tasks ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 10)`,
+    `ALTER TABLE tasks ADD COLUMN timeout_ms INTEGER CHECK (timeout_ms IS NULL OR timeout_ms BETWEEN 1000 AND 86400000)`,
+    `ALTER TABLE tasks ADD COLUMN attempt_base INTEGER NOT NULL DEFAULT 0 CHECK (attempt_base >= 0)`,
+    `ALTER TABLE tasks ADD COLUMN not_before_ms INTEGER NOT NULL DEFAULT 0 CHECK (not_before_ms >= 0)`,
+    `ALTER TABLE attempts ADD COLUMN deadline_ms INTEGER CHECK (deadline_ms IS NULL OR deadline_ms >= 0)`,
   ],
 }
 
