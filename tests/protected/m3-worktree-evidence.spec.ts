@@ -192,7 +192,8 @@ describe('M3-03 worktree and evidence', () => {
         expect(file?.sha256).toBe(hash(content.replace(/\r\n/g, '\n')))
       }), { numRuns: 20 })
     } finally { db.close() }
-  }, 30000)
+  // Windows: 13.4s alone; parallel process-heavy M3-04/M3-06 tests push this beyond 30s.
+  }, 120000)
 
   it('CHK-M3-03-e: failures leave no commit or evidence; reuse removes stale dirty files', async () => {
     const f = fixture(); const path = await ensureWorktree(f, 'task-1'); const db = database(f.stateDir)
