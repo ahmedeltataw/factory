@@ -14,8 +14,8 @@ describe('M4-02 scope contract', () => {
       ok: true, scope: ['A/b', 'B', 'a', 'a-b', 'ab', 'z'],
     })
     expect(parseScope(['z', '.', 'a/b'])).toEqual({ ok: true, scope: ['.'] })
-    expect(parseScope(['a/.gitignore', 'a/...', 'é/😀'])).toEqual({
-      ok: true, scope: ['a/...', 'a/.gitignore', 'é/😀'],
+    expect(parseScope(['a/.gitignore', 'a/..b', 'a b/c'])).toEqual({
+      ok: true, scope: ['a b/c', 'a/..b', 'a/.gitignore'],
     })
   })
 
@@ -24,6 +24,10 @@ describe('M4-02 scope contract', () => {
     ['33 entries', Array.from({ length: 33 }, (_, i) => `p${i}`)],
     ['non-string', ['src', 1]], ['empty entry', ['']], ['201 units', ['x'.repeat(201)]],
     ['lone high surrogate', ['\ud800']], ['lone low surrogate', ['\udc00']],
+    ['non-ASCII accented character', ['é/file']], ['emoji', ['😀']],
+    ['short-name alias', ['LONGDI~1']], ['trailing dot', ['README.md.']],
+    ['segment trailing space', ['a /b']], ['entry trailing space', ['a/b ']],
+    ['.git trailing space', ['.git ']], ['leading space', [' a']],
     ['control U+0000', ['a\u0000b']], ['control U+001F', ['a\u001fb']],
     ['control U+007F', ['a\u007fb']], ['backslash', ['a\\b']], ['colon', ['a:b']],
     ['asterisk', ['a*b']], ['question mark', ['a?b']], ['opening bracket', ['a[b']],
