@@ -11,6 +11,23 @@ function toAsciiLower(s: string): string {
   return out
 }
 
+function isReservedDeviceName(base: string): boolean {
+  const low = toAsciiLower(base)
+  if (low === 'con' || low === 'prn' || low === 'aux' || low === 'nul') {
+    return true
+  }
+  if (low.length === 4) {
+    const prefix = low.slice(0, 3)
+    if (prefix === 'com' || prefix === 'lpt') {
+      const digit = low.charAt(3)
+      if (digit >= '1' && digit <= '9') {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 export function parseScope(input: unknown): { ok: true; scope: string[] } | { ok: false; reason: string } {
   if (!Array.isArray(input)) {
     return { ok: false, reason: 'scope must be an array' }
@@ -77,6 +94,11 @@ export function parseScope(input: unknown): { ok: true; scope: string[] } | { ok
         }
         if (seg.endsWith('.')) {
           return { ok: false, reason: 'scope entry segment must not end with dot' }
+        }
+        const dotIdx = seg.indexOf('.')
+        const base = dotIdx === -1 ? seg : seg.slice(0, dotIdx)
+        if (isReservedDeviceName(base)) {
+          return { ok: false, reason: 'scope entry must not contain Windows reserved device names' }
         }
         if (toAsciiLower(seg) === '.git') {
           return { ok: false, reason: 'scope entry must not contain .git segments' }

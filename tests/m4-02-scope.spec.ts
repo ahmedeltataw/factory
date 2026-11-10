@@ -138,6 +138,89 @@ describe('M4-02 focused scope unit tests', () => {
       expect(parseScope(['a/.GIT/b'])).toEqual({ ok: false, reason: 'scope entry must not contain .git segments' })
     })
 
+    it('rejects Windows reserved device names (CON, PRN, AUX, NUL, COM1..COM9, LPT1..LPT9) on their own or with extension', () => {
+      // Standalone base names (case-insensitive)
+      for (const name of ['CON', 'con', 'Con', 'PRN', 'prn', 'Prn', 'AUX', 'aux', 'Aux', 'NUL', 'nul', 'Nul']) {
+        expect(parseScope([name])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      }
+
+      // COM1..COM9 and LPT1..LPT9 standalone
+      for (let i = 1; i <= 9; i++) {
+        expect(parseScope([`COM${i}`])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+        expect(parseScope([`com${i}`])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+        expect(parseScope([`LPT${i}`])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+        expect(parseScope([`lpt${i}`])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      }
+
+      // With dot and extension (the part before the first dot equals a device name)
+      expect(parseScope(['con.txt'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['CON.d'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['prn.log'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['aux.tar.gz'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['nul.txt'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['NUL.dat'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['COM1.log'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['com1.txt'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['COM9.tar.gz'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['LPT1.out'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['LPT9.x'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['lpt9.x'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+
+      // In subdirectories
+      expect(parseScope(['a/COM1.log'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['src/LPT9.x'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['sub/dir/aux.tar.gz'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['dir/con'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['x/y/nul'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+      expect(parseScope(['x/y/prn'])).toEqual({ ok: false, reason: 'scope entry must not contain Windows reserved device names' })
+    })
+
+    it('accepts non-reserved names and boundary cases (COM0, COM10, LPT0, LPT10, CONSOLE, etc.)', () => {
+      // Non-reserved words
+      expect(parseScope(['CONSOLE'])).toEqual({ ok: true, scope: ['CONSOLE'] })
+      expect(parseScope(['console'])).toEqual({ ok: true, scope: ['console'] })
+      expect(parseScope(['Console'])).toEqual({ ok: true, scope: ['Console'] })
+      expect(parseScope(['LPT'])).toEqual({ ok: true, scope: ['LPT'] })
+      expect(parseScope(['lpt'])).toEqual({ ok: true, scope: ['lpt'] })
+      expect(parseScope(['COM'])).toEqual({ ok: true, scope: ['COM'] })
+      expect(parseScope(['com'])).toEqual({ ok: true, scope: ['com'] })
+      expect(parseScope(['nulx.txt'])).toEqual({ ok: true, scope: ['nulx.txt'] })
+      expect(parseScope(['auxiliary'])).toEqual({ ok: true, scope: ['auxiliary'] })
+      expect(parseScope(['auxiliary/x'])).toEqual({ ok: true, scope: ['auxiliary/x'] })
+
+      // Boundary values for COM and LPT numbers: 0 and 10 are valid
+      expect(parseScope(['COM0'])).toEqual({ ok: true, scope: ['COM0'] })
+      expect(parseScope(['com0'])).toEqual({ ok: true, scope: ['com0'] })
+      expect(parseScope(['a/com0'])).toEqual({ ok: true, scope: ['a/com0'] })
+      expect(parseScope(['COM0.txt'])).toEqual({ ok: true, scope: ['COM0.txt'] })
+
+      expect(parseScope(['COM10'])).toEqual({ ok: true, scope: ['COM10'] })
+      expect(parseScope(['com10'])).toEqual({ ok: true, scope: ['com10'] })
+      expect(parseScope(['a/com10'])).toEqual({ ok: true, scope: ['a/com10'] })
+      expect(parseScope(['COM10.txt'])).toEqual({ ok: true, scope: ['COM10.txt'] })
+
+      expect(parseScope(['LPT0'])).toEqual({ ok: true, scope: ['LPT0'] })
+      expect(parseScope(['lpt0'])).toEqual({ ok: true, scope: ['lpt0'] })
+      expect(parseScope(['a/lpt0'])).toEqual({ ok: true, scope: ['a/lpt0'] })
+      expect(parseScope(['LPT0.txt'])).toEqual({ ok: true, scope: ['LPT0.txt'] })
+
+      expect(parseScope(['LPT10'])).toEqual({ ok: true, scope: ['LPT10'] })
+      expect(parseScope(['lpt10'])).toEqual({ ok: true, scope: ['lpt10'] })
+      expect(parseScope(['a/lpt10'])).toEqual({ ok: true, scope: ['a/lpt10'] })
+      expect(parseScope(['LPT10.txt'])).toEqual({ ok: true, scope: ['LPT10.txt'] })
+
+      // Non-digits after COM/LPT prefix
+      expect(parseScope(['coma'])).toEqual({ ok: true, scope: ['coma'] })
+      expect(parseScope(['comx'])).toEqual({ ok: true, scope: ['comx'] })
+      expect(parseScope(['lpta'])).toEqual({ ok: true, scope: ['lpta'] })
+      expect(parseScope(['lptx'])).toEqual({ ok: true, scope: ['lptx'] })
+
+      // Different prefixes with 1-9
+      expect(parseScope(['foo1'])).toEqual({ ok: true, scope: ['foo1'] })
+      expect(parseScope(['bar1'])).toEqual({ ok: true, scope: ['bar1'] })
+      expect(parseScope(['abc9'])).toEqual({ ok: true, scope: ['abc9'] })
+    })
+
     it('accepts segments with embedded dots like a/..b and a/.gitignore', () => {
       expect(parseScope(['a/..b'])).toEqual({ ok: true, scope: ['a/..b'] })
       expect(parseScope(['..b'])).toEqual({ ok: true, scope: ['..b'] })
