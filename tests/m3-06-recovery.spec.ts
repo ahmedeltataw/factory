@@ -175,3 +175,134 @@ it('rechecks late identities for killed dropped attempts only within the window'
     expect(db.prepare("SELECT status FROM tasks WHERE id='x'").get()?.status).toBe('dropped')
   } finally { handle.release(1400); db.close() }
 })
+
+it.each(['dropped', 'failed'])('supersedes a start for a %s task or attempt', async (caseName) => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-supersede-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x', caseName === 'dropped' ? 'dropped' : 'progress')
+  if (caseName === 'failed') db.prepare("UPDATE attempts SET status='failed' WHERE id='ax'").run()
+  effect(db, 'attempt.start', 'ax')
+  try {
+    await runTick(db, handle, loopDeps(dir), 1100)
+    expect(db.prepare("SELECT status,last_error FROM outbox WHERE id='attempt.start:ax'").get()).toMatchObject({ status: 'done', last_error: 'superseded' })
+    expect(db.prepare("SELECT COUNT(*) AS n FROM workers").get()?.n).toBe(0)
+  } finally { handle.release(1200); db.close() }
+})
+
+it('waits for a pending worktree before starting an attempt', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-prereq-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x'); effect(db, 'attempt.start', 'ax'); effect(db, 'worktree.ensure', 'ax')
+  db.prepare("UPDATE outbox SET next_attempt_ms=9999 WHERE kind='worktree.ensure'").run()
+  try {
+    await runTick(db, handle, loopDeps(dir), 1100)
+    expect(db.prepare("SELECT status,tries,last_error FROM outbox WHERE kind='attempt.start'").get()).toMatchObject({ status: 'pending', tries: 1, last_error: 'worktree is not ready' })
+    expect(db.prepare("SELECT status FROM attempts WHERE id='ax'").get()?.status).toBe('pending')
+  } finally { handle.release(1200); db.close() }
+})
+
+it('starts a worker using the configured state directory and records it as running', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-start-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x'); effect(db, 'attempt.start', 'ax')
+  db.prepare("UPDATE outbox SET payload_json=? WHERE kind='attempt.start'").run(JSON.stringify({ attemptId: 'ax', taskId: 'x' }))
+  const calls: unknown[] = []
+  try {
+    await runTick(db, handle, { ...loopDeps('wrong'), config: { stateDir: dir, repoPath: 'repo', baseRef: 'main' }, spawnWorker: (args) => { calls.push(args); return { pid: 42, nonce: 'n' } }, isAlive: () => true }, 1100)
+    expect(calls).toEqual([expect.objectContaining({ attemptId: 'ax', taskId: 'x', runDir: join(dir, 'runs', 'ax'), cwd: join(dir, 'worktrees', 'x') })])
+    expect(db.prepare("SELECT status FROM attempts WHERE id='ax'").get()?.status).toBe('running')
+    expect(db.prepare("SELECT state,heartbeat_ms FROM workers WHERE attempt_id='ax'").get()).toMatchObject({ state: 'running', heartbeat_ms: 1100 })
+  } finally { handle.release(1200); db.close() }
+})
+
+it.each([
+  ['killed', 'killed', null], ['not-running', 'lost', null], ['kill-failed', 'running', 'specific failure'], ['kill-failed', 'running', null],
+] as const)('records kill result %s with detail %s', async (result, state, detail) => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-kill-result-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x', 'dropped'); effect(db, 'attempt.kill', 'ax'); effect(db, 'attempt.start', 'ax')
+  db.prepare("UPDATE outbox SET next_attempt_ms=9999 WHERE kind='attempt.start'").run()
+  db.prepare("INSERT INTO workers (attempt_id,nonce,pid,state,worktree_path) VALUES ('ax','n',42,'running','w')").run()
+  const calls: unknown[] = []
+  try {
+    await runTick(db, handle, { ...loopDeps(dir), wrapReconcileWorkers: <T>() => undefined as T, killTree: async (pid, nonce) => { calls.push([pid, nonce]); return { result, ...(detail === null ? {} : { detail }) } } }, 1100)
+    expect(calls).toEqual([[42, 'n']])
+    expect(db.prepare("SELECT state FROM workers WHERE attempt_id='ax'").get()?.state).toBe(state)
+    if (result === 'kill-failed') {
+      expect(db.prepare("SELECT status,last_error FROM outbox WHERE kind='attempt.kill'").get()).toMatchObject({ status: 'pending', last_error: detail ?? 'kill failed' })
+    } else {
+      expect(db.prepare("SELECT status,last_error FROM outbox WHERE kind='attempt.start'").get()).toMatchObject({ status: 'done', last_error: 'superseded' })
+      expect(db.prepare("SELECT status FROM attempts WHERE id='ax'").get()?.status).toBe('killed')
+    }
+  } finally { handle.release(1200); db.close() }
+})
+
+it('marks a vanished worker lost and interrupts its attempt', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-vanished-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x'); db.prepare("INSERT INTO workers (attempt_id,nonce,pid,state,worktree_path) VALUES ('ax','n',42,'running','w')").run()
+  try {
+    await runTick(db, handle, loopDeps(dir), 1100)
+    expect(db.prepare("SELECT state FROM workers WHERE attempt_id='ax'").get()?.state).toBe('lost')
+    expect(db.prepare("SELECT status,error_class FROM attempts WHERE id='ax'").get()).toMatchObject({ status: 'interrupted', error_class: 'lost' })
+    expect(db.prepare("SELECT status FROM tasks WHERE id='x'").get()?.status).toBe('ready')
+  } finally { handle.release(1200); db.close() }
+})
+
+it('marks a successful task done when evidence already exists', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-evidence-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x'); db.prepare("UPDATE attempts SET status='succeeded' WHERE id='ax'").run()
+  db.prepare("INSERT INTO evidence VALUES ('ax','base','head','[]','out','err','t')").run()
+  try {
+    await runTick(db, handle, loopDeps(dir), 1100)
+    expect(db.prepare("SELECT status FROM tasks WHERE id='x'").get()?.status).toBe('done')
+  } finally { handle.release(1200); db.close() }
+})
+
+it('rejects empty nonces and invalid JSON records', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-invalid-')); roots.push(dir)
+  writeFileSync(join(dir, 'worker.json'), '{"pid":42,"nonce":""}')
+  expect(readWorker(dir)).toBeUndefined()
+  writeFileSync(join(dir, 'worker.json'), '{')
+  writeFileSync(join(dir, 'result.json'), '{')
+  expect(readWorker(dir)).toBeUndefined()
+  expect(readCompletion(dir)).toBeUndefined()
+})
+
+it('uses the database directory and project configuration for a start without explicit stateDir', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-default-dir-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x'); effect(db, 'attempt.start', 'ax')
+  db.prepare("UPDATE outbox SET payload_json=? WHERE kind='attempt.start'").run(JSON.stringify({ attemptId: 'ax', taskId: 'x' }))
+  const calls: unknown[] = []
+  try {
+    const { stateDir: _stateDir, ...deps } = loopDeps(dir)
+    await runTick(db, handle, { ...deps, spawnWorker: (args) => { calls.push(args); return { pid: 42, nonce: 'n' } }, isAlive: () => true }, 1100)
+    expect(calls).toEqual([expect.objectContaining({ runDir: join(dir, 'runs', 'ax'), cwd: join(dir, 'worktrees', 'x') })])
+    expect(db.prepare("SELECT status FROM attempts WHERE id='ax'").get()?.status).toBe('running')
+  } finally { handle.release(1200); db.close() }
+})
+
+it.each(['specific failure', undefined])('reports recovery kill failure detail %s', async (detail) => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-reconcile-fail-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const old = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x'); const run = join(dir, 'runs', 'ax'); mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'worker.json'), '{"pid":42,"nonce":"n"}')
+  old.release(1000); const handle = acquireSupervisor(db, dir, { nowMs: 1100, staleAfterMs: 100 })
+  try {
+    await expect(reconcileWorkers(db, handle, { stateDir: dir, killTree: async () => ({ result: 'kill-failed', detail }) }, 1200)).rejects.toThrow(`worker kill failed: ${detail ?? ''}`)
+    expect(db.prepare("SELECT status FROM attempts WHERE id='ax'").get()?.status).toBe('pending')
+  } finally { handle.release(1300); db.close() }
+})
+
+it('records a failed completion without scheduling evidence', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm306-exit-')); roots.push(dir)
+  const db = openStore(join(dir, 'state.sqlite')); const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 100 })
+  seed(db, 'x')
+  try {
+    finishAttempt(db, handle, { id: 'ax', task_id: 'x', worktree_path: null }, dir, 2, 1100)
+    expect(db.prepare("SELECT status,exit_code FROM attempts WHERE id='ax'").get()).toMatchObject({ status: 'failed', exit_code: 2 })
+    expect(db.prepare("SELECT status FROM tasks WHERE id='x'").get()?.status).toBe('failed')
+    expect(db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE kind='evidence.commit'").get()?.n).toBe(0)
+  } finally { handle.release(1200); db.close() }
+})

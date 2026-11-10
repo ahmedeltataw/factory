@@ -45,6 +45,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -117,6 +118,14 @@ function git(cwd: string, ...args: string[]): string {
 
 function normalizePath(p: string): string {
   const normalized = resolve(p.replace(/\\/g, '/'))
+  if (existsSync(normalized)) {
+    try {
+      const canonical = resolve(realpathSync.native(normalized))
+      return process.platform === 'win32' ? canonical.toLowerCase() : canonical
+    } catch {
+      // fall back to current behaviour only when canonicalization fails
+    }
+  }
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 

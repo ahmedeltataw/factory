@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M3-06",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "0ecc1a3af806cc2114855f0dfb47f48ddfd48ac6",
+  "checks": [
+    {
+      "id": "CHK-M3-06-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 553/553 tests, build 0, typecheck 0 after stub type fix; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (6 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve; added mutation tests approved). Mutation recovery.ts 87.19%, supervisor-loop.ts 80.77% (>= 80); attempt-after-spawn fault path recorded as process-only exception."
+    },
+    {
+      "id": "CHK-M3-06-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 553/553 tests, build 0, typecheck 0 after stub type fix; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (6 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve; added mutation tests approved). Mutation recovery.ts 87.19%, supervisor-loop.ts 80.77% (>= 80); attempt-after-spawn fault path recorded as process-only exception."
+    },
+    {
+      "id": "CHK-M3-06-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 553/553 tests, build 0, typecheck 0 after stub type fix; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (6 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve; added mutation tests approved). Mutation recovery.ts 87.19%, supervisor-loop.ts 80.77% (>= 80); attempt-after-spawn fault path recorded as process-only exception."
+    },
+    {
+      "id": "CHK-M3-06-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 553/553 tests, build 0, typecheck 0 after stub type fix; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (6 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve; added mutation tests approved). Mutation recovery.ts 87.19%, supervisor-loop.ts 80.77% (>= 80); attempt-after-spawn fault path recorded as process-only exception."
+    },
+    {
+      "id": "CHK-M3-06-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 553/553 tests, build 0, typecheck 0 after stub type fix; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (6 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve; added mutation tests approved). Mutation recovery.ts 87.19%, supervisor-loop.ts 80.77% (>= 80); attempt-after-spawn fault path recorded as process-only exception."
+    },
+    {
+      "id": "CHK-M3-06-f",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 553/553 tests, build 0, typecheck 0 after stub type fix; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (6 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve; added mutation tests approved). Mutation recovery.ts 87.19%, supervisor-loop.ts 80.77% (>= 80); attempt-after-spawn fault path recorded as process-only exception."
+    }
+  ],
+  "ended_at": "2026-11-10T12:41:31.013Z"
+}

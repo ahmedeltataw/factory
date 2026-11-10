@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M3-07",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "d4f3b4c41104de936d58c5673a8a0443dc88126a",
+  "checks": [
+    {
+      "id": "CHK-M3-07-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 511/511 tests twice at merge, build 0; re-run on M3-06 head 553/553; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (3 rounds; approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve after outbox payload and pending-command fixes)."
+    },
+    {
+      "id": "CHK-M3-07-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 511/511 tests twice at merge, build 0; re-run on M3-06 head 553/553; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (3 rounds; approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve after outbox payload and pending-command fixes)."
+    },
+    {
+      "id": "CHK-M3-07-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 511/511 tests twice at merge, build 0; re-run on M3-06 head 553/553; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (3 rounds; approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve after outbox payload and pending-command fixes)."
+    },
+    {
+      "id": "CHK-M3-07-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 511/511 tests twice at merge, build 0; re-run on M3-06 head 553/553; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (3 rounds; approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve after outbox payload and pending-command fixes)."
+    },
+    {
+      "id": "CHK-M3-07-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 511/511 tests twice at merge, build 0; re-run on M3-06 head 553/553; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (3 rounds; approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve after outbox payload and pending-command fixes)."
+    }
+  ],
+  "ended_at": "2026-11-10T12:41:47.198Z"
+}

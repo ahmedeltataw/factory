@@ -10,6 +10,22 @@ export interface EnsureWorktreeConfig {
 
 const ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
+function canonicalPath(path: string): string {
+  let existing = resolve(path)
+  const missing: string[] = []
+  while (!existsSync(existing)) {
+    try { lstatSync(existing); break } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    const parent = dirname(existing)
+    if (parent === existing) break
+    missing.unshift(existing.slice(parent.length + (parent.endsWith(sep) ? 0 : 1)))
+    existing = parent
+  }
+  const canonical = resolve(realpathSync.native(existing), ...missing)
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical
+}
+
 /**
  * Ensures a worktree exists for a given task on branch `factory/task/<taskId>`
  * branching from `baseRef`.
@@ -30,13 +46,13 @@ export async function ensureWorktree(
   // 2. Physical stateDir containment check for worktrees root
   const stateDir = resolve(config.stateDir)
   mkdirSync(stateDir, { recursive: true })
-  const realStateDir = realpathSync(stateDir)
+  const realStateDir = canonicalPath(stateDir)
 
   const worktreesDir = resolve(stateDir, 'worktrees')
 
   // Check if worktreesDir exists as a symlink/junction escaping stateDir
   if (existsSync(worktreesDir)) {
-    const realWorktrees = realpathSync(worktreesDir)
+    const realWorktrees = canonicalPath(worktreesDir)
     const relWorktrees = relative(realStateDir, realWorktrees)
     if (
       !relWorktrees ||
@@ -49,7 +65,7 @@ export async function ensureWorktree(
   }
 
   mkdirSync(worktreesDir, { recursive: true })
-  const realWorktreesDir = realpathSync(worktreesDir)
+  const realWorktreesDir = canonicalPath(worktreesDir)
   const relWorktrees = relative(realStateDir, realWorktreesDir)
   if (
     !relWorktrees ||
@@ -72,38 +88,21 @@ export async function ensureWorktree(
     throw new Error(`worktree: invalid taskId "${taskId}" escapes worktrees directory`)
   }
 
-  // Physical containment: if target exists, resolve its realpath; otherwise check its existing parent
-  if (existsSync(targetPath)) {
-    const realTargetPath = realpathSync(targetPath)
-    const relPhysical = relative(realWorktreesDir, realTargetPath)
-    if (
-      !relPhysical ||
-      relPhysical.startsWith('..') ||
-      isAbsolute(relPhysical) ||
-      relPhysical.split(sep).includes('..')
-    ) {
-      throw new Error(`worktree: physical containment violation for target "${targetPath}"`)
-    }
-  } else {
-    const parentDir = dirname(targetPath)
-    if (existsSync(parentDir)) {
-      const realParent = realpathSync(parentDir)
-      const relParent = relative(realWorktreesDir, realParent)
-      if (
-        relParent.startsWith('..') ||
-        isAbsolute(relParent) ||
-        relParent.split(sep).includes('..')
-      ) {
-        throw new Error(`worktree: physical containment violation for parent "${parentDir}"`)
-      }
-    }
+  // Resolve the nearest existing parent when the target has not been created yet.
+  const realTargetPath = canonicalPath(targetPath)
+  const relPhysical = relative(realWorktreesDir, realTargetPath)
+  if (
+    !relPhysical ||
+    relPhysical.startsWith('..') ||
+    isAbsolute(relPhysical) ||
+    relPhysical.split(sep).includes('..')
+  ) {
+    throw new Error(`worktree: physical containment violation for target "${targetPath}"`)
   }
 
   const branch = `factory/task/${taskId}`
 
   if (existsSync(targetPath)) {
-    const realTargetPath = realpathSync(targetPath)
-
     // Verify git branch
     let currentBranch: string
     try {
@@ -134,7 +133,7 @@ export async function ensureWorktree(
       throw new Error(`worktree: failed to get git show-toplevel for "${targetPath}": ${error}`)
     }
 
-    if (realpathSync(topLevel) !== realTargetPath) {
+    if (canonicalPath(topLevel) !== realTargetPath) {
       throw new Error(
         `worktree: show-toplevel "${topLevel}" does not match target path "${targetPath}"`,
       )
@@ -165,7 +164,7 @@ export async function ensureWorktree(
     }
     const repoCommonDir = resolve(config.repoPath, repoCommonDirRaw)
 
-    if (realpathSync(targetCommonDir) !== realpathSync(repoCommonDir)) {
+    if (canonicalPath(targetCommonDir) !== canonicalPath(repoCommonDir)) {
       throw new Error(
         `worktree: common dir "${targetCommonDir}" does not belong to configured repo "${config.repoPath}"`,
       )
