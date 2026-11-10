@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M3-02",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "79f4e26062db3205bbb454a93b8874e5219c56c0",
+  "checks": [
+    {
+      "id": "CHK-M3-02-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 430/430 tests (two consecutive full runs after timeout fixes), build 0, forbidden-imports OK; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; Lead froze command apply semantics and CLI output); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M3-02-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 430/430 tests (two consecutive full runs after timeout fixes), build 0, forbidden-imports OK; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; Lead froze command apply semantics and CLI output); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M3-02-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 430/430 tests (two consecutive full runs after timeout fixes), build 0, forbidden-imports OK; Stryker (Lead): apply-commands.ts 85.06%, commands.ts 83.95%, combined 84.52%; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; Lead froze command apply semantics and CLI output); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M3-02-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 430/430 tests (two consecutive full runs after timeout fixes), build 0, forbidden-imports OK; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; Lead froze command apply semantics and CLI output); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M3-02-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 430/430 tests (two consecutive full runs after timeout fixes), build 0, forbidden-imports OK; Stryker (Lead): apply-commands.ts 85.06%, commands.ts 83.95%, combined 84.52%; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; Lead froze command apply semantics and CLI output); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings"
+    },
+    {
+      "id": "CHK-M3-02-f",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 430/430 tests (two consecutive full runs after timeout fixes), build 0, forbidden-imports OK; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; Lead froze command apply semantics and CLI output); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings"
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}

@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { readStatus, formatStatus, type Status } from '../app/status.ts'
 
 import { DEFAULT_STALE_AFTER_MS } from '../app/supervisor-lease.ts'
@@ -79,4 +83,52 @@ function run(argv: readonly string[]): number {
   return 0
 }
 
-process.exitCode = run(process.argv.slice(2))
+async function runTaskOrInit(argv: readonly string[]): Promise<number> {
+  const isInit = argv[0] === 'init'
+  const action = argv[1]
+  const start = isInit ? 1 : 2
+  if (!isInit && (argv[0] !== 'task' || (action !== 'create' && action !== 'kill'))) return run(argv)
+  const allowed = isInit ? ['--state-dir', '--repo'] : ['--state-dir', action === 'create' ? '--title' : '--task', '--command-id']
+  const values: Record<string, string> = {}
+  for (let i = start; i < argv.length; i++) {
+    const key = argv[i]!
+    const value = argv[++i]
+    if (!allowed.includes(key) || values[key] !== undefined || value === undefined || value.startsWith('-') || !value.trim() || !value.isWellFormed()) {
+      process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory --state-dir <path>\n')
+      return 2
+    }
+    values[key] = value
+  }
+  const required = isInit ? ['--state-dir', '--repo'] : ['--state-dir', action === 'create' ? '--title' : '--task']
+  if (required.some((key) => values[key] === undefined) || (values['--command-id'] !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(values['--command-id']))) {
+    process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory --state-dir <path>\n')
+    return 2
+  }
+  try {
+    if (isInit) {
+      const { init } = await import('../app/init.ts')
+      init(values['--state-dir']!, values['--repo']!)
+      process.stdout.write('\u062a\u0645 \u0627\u0644\u062a\u0647\u064a\u0626\u0629\n')
+    } else {
+      const path = join(values['--state-dir']!, 'state.sqlite')
+      if (!existsSync(path)) throw new Error('missing database')
+      const db = new DatabaseSync(path)
+      try {
+        db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000')
+        const project = db.prepare('SELECT project_id FROM project_config').get() as { project_id: string } | undefined
+        if (!project) throw new Error('missing project')
+        const id = values['--command-id'] ?? randomUUID()
+        const existing = db.prepare('SELECT created_at FROM commands WHERE id = ?').get(id) as { created_at: string } | undefined
+        const { appendCommand } = await import('../app/commands.ts')
+        const result = appendCommand(db, { id, projectId: project.project_id, kind: `task.${action}`, payloadJson: JSON.stringify(action === 'create' ? { title: values['--title'] } : { taskId: values['--task'] }), createdAt: existing?.created_at ?? new Date().toISOString() })
+        process.stdout.write(`${result} ${id}\n\u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0623\u0645\u0631\n`)
+      } finally { db.close() }
+    }
+    return 0
+  } catch (error) {
+    process.stderr.write(`\u062a\u0639\u0630\u0631 \u062a\u0646\u0641\u064a\u0630 \u0627\u0644\u0623\u0645\u0631: ${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
+  }
+}
+
+process.exitCode = await runTaskOrInit(process.argv.slice(2))
