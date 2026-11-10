@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M3-01",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "ae387f0f82852262ed58b04dc4cb4cf80656e250",
+  "checks": [
+    {
+      "id": "CHK-M3-01-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 358/358 tests, build 0, forbidden-imports OK; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (5 rounds, approve; Lead froze SQL execution conventions in round 4); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings; version-5 test edits sol approve"
+    },
+    {
+      "id": "CHK-M3-01-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 358/358 tests, build 0, forbidden-imports OK; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (5 rounds, approve; Lead froze SQL execution conventions in round 4); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings; version-5 test edits sol approve"
+    },
+    {
+      "id": "CHK-M3-01-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 358/358 tests, build 0, forbidden-imports OK; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (5 rounds, approve; Lead froze SQL execution conventions in round 4); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings; version-5 test edits sol approve"
+    },
+    {
+      "id": "CHK-M3-01-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 358/358 tests, build 0, forbidden-imports OK; Stryker (Lead): store.ts 89.71%, fence.ts 100%, combined 91.25% (property test included); protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (5 rounds, approve; Lead froze SQL execution conventions in round 4); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings; version-5 test edits sol approve"
+    },
+    {
+      "id": "CHK-M3-01-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 358/358 tests, build 0, forbidden-imports OK; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (5 rounds, approve; Lead froze SQL execution conventions in round 4); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high: approve, no findings; version-5 test edits sol approve"
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}

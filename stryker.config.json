@@ -1,9 +1,19 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "mutate": ["supervisor/src/app/store.ts", "supervisor/src/app/commands.ts", "supervisor/src/app/supervisor-lease.ts"],
+  "mutate": [
+    "supervisor/src/app/store.ts",
+    "supervisor/src/app/commands.ts",
+    "supervisor/src/app/supervisor-lease.ts",
+    "supervisor/src/app/fence.ts"
+  ],
   "testRunner": "vitest",
-  "plugins": ["@stryker-mutator/vitest-runner"],
-  "reporters": ["clear-text", "json"],
+  "plugins": [
+    "@stryker-mutator/vitest-runner"
+  ],
+  "reporters": [
+    "clear-text",
+    "json"
+  ],
   "concurrency": 1,
   "thresholds": {
     "high": 80,
