@@ -1,13 +1,13 @@
 ﻿# M3 report: single-task slice and recovery
 
-Status: M3-09 open | 2026-11-10  
+Status: closed | 2026-11-10  
 Branch: `m3-integration`; report based on head `a70cfd0bd3206911a37e3d5649d66342c4537ca0`.
 
 ## Result
 
 M3 implements the single-task slice: schema v5 and lease fencing, idempotent commands, worktrees and attempt evidence, process-tree handling, an outbox, Supervisor recovery, and status. M3-08 adds the acceptance script and fake-executor build entry.
 
-The M3-01 through M3-08 cards and the fix/CI cards have passing recorded checks. The local strict traceability check passes for 25 cards; M3-09 is not yet a traced card heading. Recorded results are tied to their evidence heads, not a fresh full-suite run on this head. M3-09 remains open pending CI and owner acceptance.
+The M3-01 through M3-08 cards and the fix/CI cards have passing recorded checks. The local strict traceability check passes for 25 cards; M3-09 is not yet a traced card heading. Recorded results are tied to their evidence heads, not a fresh full-suite run on this head. M3-09 closed after CI and owner acceptance.
 
 ## Cards
 
@@ -24,7 +24,7 @@ The M3-01 through M3-08 cards and the fix/CI cards have passing recorded checks.
 | M3-07 status | gemini-3.8-flash-high | gpt-6.1-sol | Approved after payload and pending-command fixes; 511 tests at merge. |
 | M3-CI workflow | gpt-6.1-terra | gemini-4-argon-high | Evidence records passing dispatch, matrix and PR base-scope checks. |
 | M3-08 acceptance | gemini-3.8-flash-high rounds 1-12; gpt-6.1-terra from round 13 | gpt-6.1-sol rounds 1-4; gemini-4-argon rounds 5-6 | Approved; development run 15 with `-SkipBaseline` passed all 14 executed steps, removed its run directory and left zero processes. |
-| M3-09 close | Lead and owner | — | Open; see below. |
+| M3-09 close | Lead and owner | — | Closed: CI green, owner acceptance M3 PASS and M2 PASS. |
 
 Card results come from `.factory/evidence/<card>/1.json`; M3-04-mut's result is recorded under M3-04-fix. Antigravity 1.5.5 denied commands in edit runs, prompting the M3-08 builder switch documented in `M3.md`.
 
@@ -48,6 +48,6 @@ Card results come from `.factory/evidence/<card>/1.json`; M3-04-mut's result is 
 ## Open items
 
 - CI on head a70cfd0 (run 42886551175): verify green on all four cells (Ubuntu and Windows, Node 24 and 26), traceability included; full mutation job pending.
-- Owner Ahmed must run `acceptance/M3.ps1` without `-SkipBaseline` and `acceptance/M2.ps1`. M3-08's development run does not establish full acceptance; the M3 specification also calls for fresh-clone replay on both OSes.
-- Complete M3-09 review and evidence, then merge to `main` when the milestone gates are met.
+- Owner acceptance 2026-11-10 on Windows, source m3-integration: `acceptance/M3.ps1` printed `M3: PASS` and `acceptance/M2.ps1` printed `M2: PASS`. Linux is covered by CI (Ubuntu, Node 24 and 26).
+- CI run 42886551175: all four verify cells and the full mutation job passed.
 - M3-06 records an `attempt-after-spawn` process-only mutation exception. Deliberate scope limits remain: attempt timeouts, Windows Job Objects, `status --watch`, and real provider executors.
