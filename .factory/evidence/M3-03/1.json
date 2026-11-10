@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M3-03",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "269621aae764f15fea80348f3495c926eebfc7c9",
+  "checks": [
+    {
+      "id": "CHK-M3-03-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 375/375 tests, build 0, forbidden-imports OK; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds, approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds: symlink/junction containment, grandchild lifecycle, NUL-delimited paths, log validation before commit; approve). No mutation: not a core module (policy section 1)"
+    },
+    {
+      "id": "CHK-M3-03-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 375/375 tests, build 0, forbidden-imports OK; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds, approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds: symlink/junction containment, grandchild lifecycle, NUL-delimited paths, log validation before commit; approve). No mutation: not a core module (policy section 1)"
+    },
+    {
+      "id": "CHK-M3-03-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 375/375 tests, build 0, forbidden-imports OK; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds, approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds: symlink/junction containment, grandchild lifecycle, NUL-delimited paths, log validation before commit; approve). No mutation: not a core module (policy section 1)"
+    },
+    {
+      "id": "CHK-M3-03-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 375/375 tests, build 0, forbidden-imports OK; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds, approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds: symlink/junction containment, grandchild lifecycle, NUL-delimited paths, log validation before commit; approve). No mutation: not a core module (policy section 1)"
+    },
+    {
+      "id": "CHK-M3-03-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 375/375 tests, build 0, forbidden-imports OK; protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds, approve); implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds: symlink/junction containment, grandchild lifecycle, NUL-delimited paths, log validation before commit; approve). No mutation: not a core module (policy section 1)"
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}
