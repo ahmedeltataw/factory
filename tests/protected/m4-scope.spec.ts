@@ -19,12 +19,20 @@ describe('M4-02 scope contract', () => {
     })
   })
 
+  it.each(['CONSOLE', 'COM10', 'nulx.txt', 'a/com0', 'LPT', 'auxiliary/x'])('CHK-M4-02-a accepts non-reserved name %s', (entry) => {
+    expect(parseScope([entry])).toEqual({ ok: true, scope: [entry] })
+  })
+
   it.each<[string, unknown]>([
     ['not an array', 'src'], ['zero entries', []],
     ['33 entries', Array.from({ length: 33 }, (_, i) => `p${i}`)],
     ['non-string', ['src', 1]], ['empty entry', ['']], ['201 units', ['x'.repeat(201)]],
     ['lone high surrogate', ['\ud800']], ['lone low surrogate', ['\udc00']],
     ['non-ASCII accented character', ['é/file']], ['emoji', ['😀']],
+    ['reserved NUL', ['NUL']], ['reserved nul.txt', ['nul.txt']],
+    ['reserved Con', ['Con']], ['reserved aux.tar.gz', ['aux.tar.gz']],
+    ['reserved nested COM1.log', ['a/COM1.log']], ['reserved lpt9', ['lpt9']],
+    ['reserved PRN', ['PRN']],
     ['short-name alias', ['LONGDI~1']], ['trailing dot', ['README.md.']],
     ['segment trailing space', ['a /b']], ['entry trailing space', ['a/b ']],
     ['.git trailing space', ['.git ']], ['leading space', [' a']],
