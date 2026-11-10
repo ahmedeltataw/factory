@@ -1,7 +1,8 @@
 ﻿# M3 acceptance (L5). Run in PowerShell:  powershell -ExecutionPolicy Bypass -File acceptance\M3.ps1
 # كل خطوة بتطبع PASS أو FAIL. النتيجة المطلوبة: كل الخطوات PASS.
 param(
-  [string]$Source = 'https://github.com/ahmedeltataw/factory.git'
+  [string]$Source = 'https://github.com/ahmedeltataw/factory.git',
+  [switch]$SkipBaseline
 )
 
 $origConsoleEncoding = $null
@@ -222,8 +223,13 @@ function Invoke-FactoryStatus([string]$sDir) {
   return ($stdout | ConvertFrom-Json)
 }
 
-function Step($n, $label, [scriptblock]$cmd) {
+function Step($n, $label, [scriptblock]$cmd = $null, [switch]$Skip) {
   Write-Host "`n[$n] $label" -ForegroundColor Cyan
+  if ($Skip) {
+    Write-Host 'SKIP' -ForegroundColor Yellow
+    $script:results += [pscustomobject]@{ Step = $n; Check = $label; Result = 'SKIP' }
+    return $true
+  }
   $script:stepOk = $false
   try {
     $out = & $cmd
@@ -241,6 +247,10 @@ function Step($n, $label, [scriptblock]$cmd) {
     $script:overallFailed = $true
   }
   return $ok
+}
+
+function Skip-Step($n, $label) {
+  Step $n $label -Skip | Out-Null
 }
 
 try {
@@ -487,17 +497,27 @@ try {
   # 3) Install with frozen lockfile
   if (-not (Step 3 'Install with frozen lockfile' { & $pnpm install --frozen-lockfile })) { throw 'Step 3 failed' }
   # 4) Typecheck
-  if (-not (Step 4 'Typecheck' { & $pnpm typecheck })) { throw 'Step 4 failed' }
+  if ($SkipBaseline) {
+    Skip-Step 4 'Typecheck'
+  } elseif (-not (Step 4 'Typecheck' { & $pnpm typecheck })) { throw 'Step 4 failed' }
   # 5) All tests
-  if (-not (Step 5 'All tests' { & $pnpm test })) { throw 'Step 5 failed' }
+  if ($SkipBaseline) {
+    Skip-Step 5 'All tests'
+  } elseif (-not (Step 5 'All tests' { & $pnpm test })) { throw 'Step 5 failed' }
   # 6) Build
   if (-not (Step 6 'Build' { & $pnpm build })) { throw 'Step 6 failed' }
   # 7) Manifest check
-  if (-not (Step 7 'Manifest: ported files match dsh' { node scripts/check-manifest.mjs })) { throw 'Step 7 failed' }
+  if ($SkipBaseline) {
+    Skip-Step 7 'Manifest: ported files match dsh'
+  } elseif (-not (Step 7 'Manifest: ported files match dsh' { node scripts/check-manifest.mjs })) { throw 'Step 7 failed' }
   # 8) No forbidden imports
-  if (-not (Step 8 'No forbidden imports' { node scripts/check-forbidden-imports.mjs })) { throw 'Step 8 failed' }
+  if ($SkipBaseline) {
+    Skip-Step 8 'No forbidden imports'
+  } elseif (-not (Step 8 'No forbidden imports' { node scripts/check-forbidden-imports.mjs })) { throw 'Step 8 failed' }
   # 9) Traceability check
-  if (-not (Step 9 'Every DoD check has passing evidence' { node scripts/check-traceability.mjs --all --require-passing })) { throw 'Step 9 failed' }
+  if ($SkipBaseline) {
+    Skip-Step 9 'Every DoD check has passing evidence'
+  } elseif (-not (Step 9 'Every DoD check has passing evidence' { node scripts/check-traceability.mjs --all --require-passing })) { throw 'Step 9 failed' }
 
   # 10) Init factory project with fresh git repository
   if (-not (Step 10 'Init factory project with fresh git repository' {
@@ -1366,10 +1386,14 @@ try {
   try {
     Write-Host "`n===== M3 acceptance =====" -ForegroundColor Yellow
     $results | Format-Table -AutoSize
-    if ($script:overallFailed -or ($results.Result -contains 'FAIL') -or ($results.Count -lt 19)) {
-      if ($script:failureReason -and -not $script:failureReason.StartsWith('Step ')) {
-        Write-Host "Failure details: $script:failureReason" -ForegroundColor Red
-      }
+    $failed = $SkipBaseline -or $script:overallFailed -or ($results.Result -contains 'FAIL') -or ($results.Count -lt 19)
+    if ($failed -and $script:failureReason -and -not $script:failureReason.StartsWith('Step ')) {
+      Write-Host "Failure details: $script:failureReason" -ForegroundColor Red
+    }
+    if ($SkipBaseline) {
+      Write-Host 'Baseline skipped: dev run, not an acceptance result' -ForegroundColor Yellow
+    }
+    if ($failed) {
       Write-Host 'M3: FAIL' -ForegroundColor Red
       exit 1
     } else {
@@ -1377,6 +1401,9 @@ try {
       exit 0
     }
   } catch {
+    if ($SkipBaseline) {
+      Write-Host 'Baseline skipped: dev run, not an acceptance result' -ForegroundColor Yellow
+    }
     Write-Host 'M3: FAIL' -ForegroundColor Red
     exit 1
   }
