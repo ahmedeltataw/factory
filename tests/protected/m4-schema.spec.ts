@@ -610,11 +610,18 @@ describe('M4-01 Schema v6 contract', () => {
               id: 'task-one',
               title: 'Example task',
               status: 'ready',
+              scope: ['.'],
+              maxAttempts: 3,
+              timeoutMs: null,
+              notBeforeMs: 0,
+              blockedBy: [],
               attempts: [
                 {
                   no: 1,
                   status: 'succeeded',
                   exitCode: 0,
+                  errorClass: null,
+                  deadlineMs: null,
                   worker: { pid: 12345, state: 'exited', heartbeatMs: 42 },
                   evidence: { headSha: 'head-sha', files: [{ path: 'src/a.ts', sha256: 'abc123' }] },
                 },
@@ -622,13 +629,15 @@ describe('M4-01 Schema v6 contract', () => {
                   no: 2,
                   status: 'running',
                   exitCode: null,
+                  errorClass: null,
+                  deadlineMs: null,
                   worker: null,
                   evidence: null,
                 },
               ],
             },
           ],
-          outbox: { pending: 1, done: 2, failed: 3 },
+          outbox: { pending: 1, done: 2, failed: 3, failedRows: [{ key: 'failed-1', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-2', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-3', kind: 'extra', tries: 0, lastError: null }] },
         }
 
         // Read status directly and assert complete M3 status object including lease shape
