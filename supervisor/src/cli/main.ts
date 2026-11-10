@@ -12,12 +12,15 @@ interface ParsedArgs {
   readonly stateDir: string
   readonly json: boolean
   readonly staleAfterMs: number
+  readonly watch: boolean
+  readonly intervalMs: number
+  readonly count?: number
 }
 
 class ArgumentError extends Error {}
 
 function usage(message: string): never {
-  throw new ArgumentError(`خطأ في الوسائط: ${message}\nالاستخدام: factory status --state-dir <مسار الحالة> [--json] [--stale-after-ms <عدد صحيح موجب>]`)
+  throw new ArgumentError(`خطأ في الوسائط: ${message}\nالاستخدام: factory status --state-dir <مسار الحالة> [--json] [--stale-after-ms <عدد صحيح موجب>] [--watch [--interval-ms <200..60000>] [--count <عدد صحيح موجب>]]`)
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
@@ -25,6 +28,10 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let stateDir: string | undefined
   let json = false
   let staleAfterMs: number | undefined
+  let watch = false
+  let intervalMs: number | undefined
+  let count: number | undefined
+
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === undefined) usage('وسيطة غير متوقعة')
@@ -43,6 +50,31 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     } else if (arg === '--json') {
       if (json) usage('الخيار --json مكرر')
       json = true
+    } else if (arg === '--watch') {
+      if (watch) usage('الخيار --watch مكرر')
+      watch = true
+    } else if (arg === '--interval-ms') {
+      if (intervalMs !== undefined) usage('الخيار --interval-ms مكرر')
+      const value = argv[++i]
+      if (value === undefined || !/^[0-9]+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+        usage('قيمة غير صالحة للخيار --interval-ms')
+      }
+      const n = Number(value)
+      if (n < 200 || n > 60000) {
+        usage('قيمة غير صالحة للخيار --interval-ms')
+      }
+      intervalMs = n
+    } else if (arg === '--count') {
+      if (count !== undefined) usage('الخيار --count مكرر')
+      const value = argv[++i]
+      if (value === undefined || !/^[0-9]+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+        usage('قيمة غير صالحة للخيار --count')
+      }
+      const n = Number(value)
+      if (n < 1) {
+        usage('قيمة غير صالحة للخيار --count')
+      }
+      count = n
     } else if (arg.startsWith('-')) {
       usage(`الخيار غير معروف: ${arg}`)
     } else {
@@ -50,10 +82,20 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     }
   }
   if (stateDir === undefined) usage('الخيار --state-dir مطلوب')
-  return { stateDir, json, staleAfterMs: staleAfterMs ?? DEFAULT_STALE_AFTER_MS }
+  if (intervalMs !== undefined && !watch) usage('الخيار --interval-ms يتطلب الخيار --watch')
+  if (count !== undefined && !watch) usage('الخيار --count يتطلب الخيار --watch')
+
+  return {
+    stateDir,
+    json,
+    staleAfterMs: staleAfterMs ?? DEFAULT_STALE_AFTER_MS,
+    watch,
+    intervalMs: intervalMs ?? 2000,
+    count,
+  }
 }
 
-function run(argv: readonly string[]): number {
+async function run(argv: readonly string[]): Promise<number> {
   let parsed: ParsedArgs
   try {
     parsed = parseArgs(argv)
@@ -66,21 +108,63 @@ function run(argv: readonly string[]): number {
     return 2
   }
 
-  let status: Status
-  try {
-    status = readStatus(parsed.stateDir, { nowMs: Date.now(), staleAfterMs: parsed.staleAfterMs })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    const label = message.includes('unsupported schema version')
-      ? 'إصدار مخطط قاعدة البيانات غير مدعوم'
-      : /unable to open database|cannot open|no such file/i.test(message)
-        ? 'قاعدة البيانات مفقودة أو تعذر فتحها'
-        : 'بيانات قاعدة البيانات غير صالحة أو تعذرت قراءتها'
-    process.stderr.write(`${label}\nالتفاصيل: ${message}\n`)
-    return 1
+  const printSnapshot = (): number => {
+    let status: Status
+    try {
+      status = readStatus(parsed.stateDir, { nowMs: Date.now(), staleAfterMs: parsed.staleAfterMs })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const label = message.includes('unsupported schema version')
+        ? 'إصدار مخطط قاعدة البيانات غير مدعوم'
+        : /unable to open database|cannot open|no such file/i.test(message)
+          ? 'قاعدة البيانات مفقودة أو تعذر فتحها'
+          : 'بيانات قاعدة البيانات غير صالحة أو تعذرت قراءتها'
+      process.stderr.write(`${label}\nالتفاصيل: ${message}\n`)
+      return 1
+    }
+
+    process.stdout.write(`${parsed.json ? JSON.stringify(status) : formatStatus(status)}\n`)
+    return 0
   }
 
-  process.stdout.write(`${parsed.json ? JSON.stringify(status) : formatStatus(status)}\n`)
+  if (!parsed.watch) {
+    return printSnapshot()
+  }
+
+  let snapshots = 0
+  let interrupted = false
+  const onSignal = () => { interrupted = true }
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
+  try {
+    while (!interrupted) {
+      const code = printSnapshot()
+      if (code !== 0) return code
+      snapshots++
+      if (parsed.count !== undefined && snapshots >= parsed.count) {
+        break
+      }
+      await new Promise<void>((resolve) => {
+        let check: NodeJS.Timeout | undefined
+        const timer = setTimeout(() => {
+          if (check !== undefined) clearInterval(check)
+          resolve()
+        }, parsed.intervalMs)
+        check = setInterval(() => {
+          if (interrupted) {
+            clearTimeout(timer)
+            clearInterval(check)
+            resolve()
+          }
+        }, 50)
+        check.unref()
+      })
+    }
+  } finally {
+    process.removeListener('SIGINT', onSignal)
+    process.removeListener('SIGTERM', onSignal)
+  }
+
   return 0
 }
 
@@ -88,7 +172,7 @@ async function runTaskOrInit(argv: readonly string[]): Promise<number> {
   const isInit = argv[0] === 'init'
   const action = argv[1]
   const start = isInit ? 1 : 2
-  if (!isInit && (argv[0] !== 'task' || (action !== 'create' && action !== 'kill' && action !== 'retry'))) return run(argv)
+  if (!isInit && (argv[0] !== 'task' || (action !== 'create' && action !== 'kill' && action !== 'retry'))) return await run(argv)
   const allowed = isInit ? ['--state-dir', '--repo'] : ['--state-dir', action === 'create' ? '--title' : '--task', '--command-id', ...(action === 'create' ? ['--scope', '--max-attempts', '--timeout-ms'] : [])]
   const values: Record<string, string> = {}
   const scopes: string[] = []

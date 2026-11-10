@@ -124,6 +124,14 @@ describe('M3-07 Status Reader and Formatter', () => {
         pending: 1,
         done: 1,
         failed: 1,
+        failedRows: [
+          {
+            key: 'key-3',
+            kind: 'evidence.commit',
+            tries: 3,
+            lastError: 'boom',
+          },
+        ],
       })
 
       // Validate tasks
@@ -133,6 +141,11 @@ describe('M3-07 Status Reader and Formatter', () => {
           id: 't-1',
           title: 'Task 1',
           status: 'progress',
+          scope: ['.'],
+          maxAttempts: 3,
+          timeoutMs: null,
+          notBeforeMs: 0,
+          blockedBy: [],
           attempts: [
             {
               no: 1,
@@ -147,6 +160,8 @@ describe('M3-07 Status Reader and Formatter', () => {
                 headSha: 'head-sha-123',
                 files: [{ path: 'src/main.ts', sha256: 'beefcafe1234' }],
               },
+              errorClass: null,
+              deadlineMs: null,
             },
           ],
         },

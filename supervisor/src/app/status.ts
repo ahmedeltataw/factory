@@ -10,8 +10,9 @@ import {
   type AttemptStatus,
   type WorkerState,
 } from './domain.ts'
+import { parseScope, scopesOverlap } from '../core/scope.ts'
 
-/** Storage schema version this status reader supports: the M3 storage schema (v5). */
+/** Storage schema version this status reader supports: the M4 storage schema (v6). */
 const SCHEMA_VERSION = 6
 
 export type LeaseState = 'active' | 'released'
@@ -33,10 +34,18 @@ export interface CommandsSummary {
   readonly pending: number
 }
 
+export interface OutboxFailedRow {
+  readonly key: string
+  readonly kind: string
+  readonly tries: number
+  readonly lastError: string | null
+}
+
 export interface OutboxSummary {
   readonly pending: number
   readonly done: number
   readonly failed: number
+  readonly failedRows: readonly OutboxFailedRow[]
 }
 
 export interface TaskAttemptWorker {
@@ -61,6 +70,8 @@ export interface TaskAttempt {
   readonly exitCode: number | null
   readonly worker: TaskAttemptWorker | null
   readonly evidence: TaskAttemptEvidence | null
+  readonly errorClass: string | null
+  readonly deadlineMs: number | null
 }
 
 export interface TaskStatusItem {
@@ -68,6 +79,11 @@ export interface TaskStatusItem {
   readonly title: string
   readonly status: TaskStatus
   readonly attempts: readonly TaskAttempt[]
+  readonly scope: readonly string[]
+  readonly maxAttempts: number
+  readonly timeoutMs: number | null
+  readonly notBeforeMs: number
+  readonly blockedBy: readonly string[]
 }
 
 export interface Status {
@@ -230,10 +246,17 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
       let outboxPending = 0
       let outboxDone = 0
       let outboxFailed = 0
+      const failedRows: OutboxFailedRow[] = []
       if (tableNames.has('outbox')) {
-        const outboxRows = db.prepare('SELECT status, payload_json FROM outbox').all() as Array<{
-          readonly status: unknown
+        const outboxRows = db.prepare('SELECT id, idempotency_key, kind, payload_json, status, tries, next_attempt_ms, last_error FROM outbox').all() as Array<{
+          readonly id: unknown
+          readonly idempotency_key: unknown
+          readonly kind: unknown
           readonly payload_json: unknown
+          readonly status: unknown
+          readonly tries: unknown
+          readonly next_attempt_ms: unknown
+          readonly last_error: unknown
         }>
         for (const row of outboxRows) {
           if (!OutboxStatusSchema.safeParse(row.status).success) {
@@ -249,13 +272,16 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
           }
           if (row.status === 'pending') outboxPending++
           else if (row.status === 'done') outboxDone++
-          else if (row.status === 'failed') outboxFailed++
+          else if (row.status === 'failed') {
+            outboxFailed++
+            failedRows.push({
+              key: String(row.idempotency_key),
+              kind: String(row.kind),
+              tries: Number(row.tries),
+              lastError: row.last_error === null || row.last_error === undefined ? null : String(row.last_error),
+            })
+          }
         }
-      }
-      const outbox: OutboxSummary = {
-        pending: outboxPending,
-        done: outboxDone,
-        failed: outboxFailed,
       }
 
       const workersByAttemptId = new Map<string, TaskAttemptWorker>()
@@ -350,15 +376,28 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
         }
       }
 
+      const outbox: OutboxSummary = {
+        pending: outboxPending,
+        done: outboxDone,
+        failed: outboxFailed,
+        failedRows,
+      }
+
       const attemptsByTaskId = new Map<string, TaskAttempt[]>()
       if (tableNames.has('attempts')) {
-        const attemptRows = db.prepare('SELECT id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at FROM attempts ORDER BY attempt_no ASC').all() as Array<{
-          readonly id: unknown
-          readonly task_id: unknown
-          readonly attempt_no: unknown
-          readonly status: unknown
-          readonly exit_code: unknown
-        }>
+        const attemptRows = db
+          .prepare(
+            'SELECT id, task_id, attempt_no, status, exit_code, error_class, deadline_ms FROM attempts ORDER BY attempt_no ASC',
+          )
+          .all() as Array<{
+            readonly id: unknown
+            readonly task_id: unknown
+            readonly attempt_no: unknown
+            readonly status: unknown
+            readonly exit_code: unknown
+            readonly error_class: unknown
+            readonly deadline_ms: unknown
+          }>
         for (const a of attemptRows) {
           if (typeof a.id !== 'string' || a.id.trim().length === 0) {
             throw new Error('status: invalid attempt id')
@@ -375,12 +414,23 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
           if (a.exit_code !== null && !Number.isSafeInteger(a.exit_code as number)) {
             throw new Error('status: invalid attempt exit_code')
           }
+          if (a.error_class !== null && typeof a.error_class !== 'string') {
+            throw new Error('status: invalid attempt error_class')
+          }
+          if (
+            a.deadline_ms !== null &&
+            (!Number.isSafeInteger(a.deadline_ms as number) || (a.deadline_ms as number) < 0)
+          ) {
+            throw new Error('status: invalid attempt deadline_ms')
+          }
           const attemptItem: TaskAttempt = {
             no: a.attempt_no,
             status: a.status as AttemptStatus,
             exitCode: a.exit_code === null ? null : Number(a.exit_code),
             worker: workersByAttemptId.get(a.id) ?? null,
             evidence: evidenceByAttemptId.get(a.id) ?? null,
+            errorClass: a.error_class === null ? null : String(a.error_class),
+            deadlineMs: a.deadline_ms === null ? null : Number(a.deadline_ms),
           }
           let list = attemptsByTaskId.get(a.task_id)
           if (!list) {
@@ -393,11 +443,20 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
 
       const tasks: TaskStatusItem[] = []
       if (tableNames.has('tasks')) {
-        const taskRows = db.prepare('SELECT id, project_id, created_by_command, title, status FROM tasks ORDER BY created_at ASC, id ASC').all() as Array<{
-          readonly id: unknown
-          readonly title: unknown
-          readonly status: unknown
-        }>
+        const taskRows = db
+          .prepare(
+            'SELECT id, title, status, scope_json, max_attempts, timeout_ms, attempt_base, not_before_ms FROM tasks ORDER BY created_at ASC, id ASC',
+          )
+          .all() as Array<{
+            readonly id: unknown
+            readonly title: unknown
+            readonly status: unknown
+            readonly scope_json: unknown
+            readonly max_attempts: unknown
+            readonly timeout_ms: unknown
+            readonly attempt_base: unknown
+            readonly not_before_ms: unknown
+          }>
         for (const t of taskRows) {
           if (typeof t.id !== 'string' || t.id.trim().length === 0) {
             throw new Error('status: invalid task id')
@@ -408,12 +467,78 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
           if (!TaskStatusSchema.safeParse(t.status).success) {
             throw new Error(`status: invalid task status ${String(t.status)}`)
           }
-          tasks.push({
-            id: t.id,
-            title: t.title,
+          if (typeof t.scope_json !== 'string') {
+            throw new Error('status: invalid scope_json')
+          }
+          let parsedScopeJson: unknown
+          try {
+            parsedScopeJson = JSON.parse(t.scope_json)
+          } catch {
+            throw new Error('status: malformed scope_json')
+          }
+          const scopeRes = parseScope(parsedScopeJson)
+          if (!scopeRes.ok) {
+            throw new Error(`status: invalid scope in task ${String(t.id)}: ${scopeRes.reason}`)
+          }
+          const scope = scopeRes.scope
+
+          if (
+            !Number.isSafeInteger(t.max_attempts as number) ||
+            (t.max_attempts as number) < 1 ||
+            (t.max_attempts as number) > 10
+          ) {
+            throw new Error('status: invalid task max_attempts')
+          }
+          const maxAttempts = Number(t.max_attempts)
+
+          if (
+            t.timeout_ms !== null &&
+            (!Number.isSafeInteger(t.timeout_ms as number) ||
+              (t.timeout_ms as number) < 1000 ||
+              (t.timeout_ms as number) > 86400000)
+          ) {
+            throw new Error('status: invalid task timeout_ms')
+          }
+          const timeoutMs = t.timeout_ms === null ? null : Number(t.timeout_ms)
+
+          if (!Number.isSafeInteger(t.attempt_base as number) || (t.attempt_base as number) < 0) {
+            throw new Error('status: invalid task attempt_base')
+          }
+          const attemptBase = Number(t.attempt_base)
+
+          if (!Number.isSafeInteger(t.not_before_ms as number) || (t.not_before_ms as number) < 0) {
+            throw new Error('status: invalid task not_before_ms')
+          }
+          const notBeforeMs = Number(t.not_before_ms)
+
+          const taskItem: TaskStatusItem = {
+            id: t.id as string,
+            title: t.title as string,
             status: t.status as TaskStatus,
-            attempts: attemptsByTaskId.get(t.id) ?? [],
+            scope,
+            maxAttempts,
+            timeoutMs,
+            notBeforeMs,
+            blockedBy: [],
+            attempts: attemptsByTaskId.get(t.id as string) ?? [],
+          }
+          Object.defineProperty(taskItem, 'attemptBase', {
+            value: attemptBase,
+            enumerable: false,
+            writable: true,
+            configurable: true,
           })
+          tasks.push(taskItem)
+        }
+
+        const progressTasks = tasks.filter((t) => t.status === 'progress')
+        for (const task of tasks) {
+          if (task.status === 'ready') {
+            const blockedBy = progressTasks
+              .filter((p) => p.id !== task.id && scopesOverlap(task.scope as string[], p.scope as string[]))
+              .map((p) => p.id)
+            ;(task as { blockedBy: readonly string[] }).blockedBy = blockedBy
+          }
         }
       }
 
@@ -507,6 +632,21 @@ function workerStateLabel(state: WorkerState): string {
   }
 }
 
+function errorClassLabel(errorClass: string): string {
+  switch (errorClass) {
+    case 'transient':
+      return 'عابر'
+    case 'timeout':
+      return 'انتهاء المهلة'
+    case 'scope-violation':
+      return 'انتهاك النطاق'
+    case 'exit':
+      return 'خروج غير صفري'
+    default:
+      return errorClass
+  }
+}
+
 /**
  * Render status facts in Arabic text.
  * Stale heartbeat is described as suspect and never mistaken for a dead process.
@@ -538,16 +678,45 @@ export function formatStatus(status: Status): string {
   const outbox = (status as { readonly outbox?: OutboxSummary }).outbox
   if (outbox !== undefined && (outbox.pending > 0 || outbox.done > 0 || outbox.failed > 0)) {
     lines.push(`صندوق الصادر: قيد الانتظار: ${outbox.pending}، مُنجَزة: ${outbox.done}، فاشلة: ${outbox.failed}`)
+    if (outbox.failedRows && outbox.failedRows.length > 0) {
+      for (const row of outbox.failedRows) {
+        lines.push(
+          `صندوق الصادر (فاشل): المفتاح="${row.key}", النوع="${row.kind}", المحاولات=${row.tries}${row.lastError !== null ? `, الخطأ الأخير="${row.lastError}"` : ''}`,
+        )
+      }
+    }
   }
 
   const tasks = (status as { readonly tasks?: readonly TaskStatusItem[] }).tasks
   if (tasks !== undefined && tasks.length > 0) {
     for (const task of tasks) {
-      lines.push(`المهمة: المعرف=${task.id}, العنوان="${task.title}", الحالة=${taskStatusLabel(task.status)}`)
+      const isV6Task = task.scope !== undefined
+      let taskLine = `المهمة: المعرف=${task.id}, العنوان="${task.title}", الحالة=${taskStatusLabel(task.status)}`
+      if (isV6Task) {
+        const attemptBase = (task as { readonly attemptBase?: number }).attemptBase ?? 0
+        const attemptsUsed = task.attempts.filter(a => a.no > attemptBase).length
+        const maxAttempts = task.maxAttempts ?? 3
+        taskLine += `, النطاق=[${task.scope!.join(', ')}], ميزانية المحاولات=${attemptsUsed} / ${maxAttempts}`
+        if (task.timeoutMs !== null && task.timeoutMs !== undefined) {
+          taskLine += `, المهلة=${task.timeoutMs} ميلي ثانية`
+        }
+        if (task.notBeforeMs !== undefined && task.notBeforeMs !== null) {
+          taskLine += `, وقت عدم البدء قبل=${task.notBeforeMs} ميلي ثانية`
+        }
+      }
+      lines.push(taskLine)
+      if (isV6Task && task.blockedBy && task.blockedBy.length > 0) {
+        lines.push(`المهمة محظورة بواسطة: ${task.blockedBy.join(', ')}`)
+      }
       for (const attempt of task.attempts) {
-        lines.push(
-          `المحاولة #${attempt.no}: الحالة=${attemptStatusLabel(attempt.status)}${attempt.exitCode !== null ? `, رمز الخروج=${attempt.exitCode}` : ''}`,
-        )
+        let attemptLine = `المحاولة #${attempt.no}: الحالة=${attemptStatusLabel(attempt.status)}${attempt.exitCode !== null ? `, رمز الخروج=${attempt.exitCode}` : ''}`
+        if (attempt.errorClass) {
+          attemptLine += `, فئة الخطأ=${errorClassLabel(attempt.errorClass)}`
+        }
+        if (attempt.deadlineMs !== null && attempt.deadlineMs !== undefined) {
+          attemptLine += `, الموعد النهائي=${attempt.deadlineMs} ميلي ثانية`
+        }
+        lines.push(attemptLine)
         if (attempt.worker) {
           const isSuspect = Boolean((attempt.worker as { readonly isSuspect?: boolean }).isSuspect)
           const suspectTag = isSuspect ? ' (مشبوه)' : ''
