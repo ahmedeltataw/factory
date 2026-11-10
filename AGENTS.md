@@ -83,7 +83,7 @@ codex exec -s workspace-write -m gpt-6.1-terra --skip-git-repo-check \
   -o <out.md> - < <brief.md>
 ```
 
-Antigravity (builder: `--model gemini-3.8-flash-high --sandbox`; reviewer: `--model gemini-4-argon-high --read-only`):
+Antigravity (builder: `--model gemini-3.8-flash-high`, no `--sandbox` on agy 1.5.5; reviewer: `--model gemini-4-argon-high --read-only`):
 ```
 node "C:/Users/DownTown/.claude/skills/agy-delegate/scripts/relay.mjs" --brief <brief.md> --cd <worktree> --model <model> --sandbox
 ```
@@ -93,6 +93,7 @@ Antigravity limits (verified 2026-11-10):
 - Headless commands are allowed only when they match `userSettings.globalPermissionGrants.allow` in `~/.gemini/config/config.json` character for character. Any other command is auto-denied and the run ends with no output.
 - Allowed today: `pnpm typecheck|build|test`, `pnpm exec vitest run <files>`, `pnpm exec tsc --noEmit`, `git status|diff|log`, and `powershell.exe -NoProfile -ExecutionPolicy Bypass -File acceptance/M<n>.ps1 -SkipBaseline -Source <path>`.
 - Write those exact strings into the brief. No `cd`, no `.\`, no `$` (agy's shell expands it).
+- agy 1.5.5: with `--sandbox` every command is denied, even one that matches a rule. Run Gemini builders without `--sandbox`; the allow-list is the gate. Read-only reviews cannot run git (no access to ~/.gitconfig): put the diff in a file in the workspace for them.
 - New allow-rules are added by the owner, not by an agent.
 
 Every brief states: the card and spec section, the allowed paths, the exact commands the agent may run, the rules files that apply (inlined for Antigravity), and the report contract.
