@@ -365,29 +365,43 @@ function Stop-AllAcceptanceProcesses {
   }
 }
 
-function Normalize-Path([string]$path) {
-  if ([string]::IsNullOrWhiteSpace($path)) { return '' }
+function Normalize-Paths([string[]]$paths) {
+  $helperPath = Join-Path $helpersDir 'canonicalize-paths.mjs'
+  $helperCode = @'
+import fs from 'node:fs';
+
+const paths = JSON.parse(process.env.FACTORY_PATHS_JSON);
+const canonical = paths.map((path) => {
   try {
-    $resolved = [System.IO.Path]::GetFullPath($path)
-    if (Test-Path -LiteralPath $resolved -PathType Container) {
-      $fso = New-Object -ComObject Scripting.FileSystemObject
-      $resolved = $fso.GetFolder($resolved).Path
-    } elseif (Test-Path -LiteralPath $resolved -PathType Leaf) {
-      $fso = New-Object -ComObject Scripting.FileSystemObject
-      $resolved = $fso.GetFile($resolved).Path
-    } else {
-      try {
-        $parent = [System.IO.Path]::GetDirectoryName($resolved)
-        $leaf = [System.IO.Path]::GetFileName($resolved)
-        if (-not [string]::IsNullOrWhiteSpace($parent) -and (Test-Path -LiteralPath $parent -PathType Container)) {
-          $fso = New-Object -ComObject Scripting.FileSystemObject
-          $resolved = [System.IO.Path]::Combine($fso.GetFolder($parent).Path, $leaf)
-        }
-      } catch {}
+    return fs.realpathSync.native(path);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return path;
+    throw error;
+  }
+});
+process.stdout.write(JSON.stringify(canonical));
+'@
+  [System.IO.File]::WriteAllText($helperPath, $helperCode, (New-Object System.Text.UTF8Encoding $false))
+  $previousPathsJson = $env:FACTORY_PATHS_JSON
+  try {
+    $env:FACTORY_PATHS_JSON = ConvertTo-Json -InputObject @($paths) -Compress
+    $helperErrFile = Join-Path $logsDir 'canonicalize-paths.stderr.log'
+    $rawPaths = & $script:nodeExe $helperPath 2> $helperErrFile
+    $helperCodeExit = $LASTEXITCODE
+    if ($helperCodeExit -ne 0) {
+      throw "Path canonicalization failed with code ${helperCodeExit}: $(Get-Content -LiteralPath $helperErrFile -Raw)"
     }
-    return $resolved.Replace('\', '/').TrimEnd('/').ToLowerInvariant()
-  } catch {
-    return $path.Replace('\', '/').TrimEnd('/').ToLowerInvariant()
+    try {
+      $canonicalPaths = @($rawPaths | ConvertFrom-Json)
+    } catch {
+      throw "Invalid path canonicalization JSON: $rawPaths"
+    }
+    if ($canonicalPaths.Count -ne $paths.Count) {
+      throw "Path canonicalization returned $($canonicalPaths.Count) paths; expected $($paths.Count): $rawPaths"
+    }
+    return @($canonicalPaths | ForEach-Object { $_.Replace('\', '/').TrimEnd('/').ToLowerInvariant() })
+  } finally {
+    $env:FACTORY_PATHS_JSON = $previousPathsJson
   }
 }
 
@@ -414,8 +428,10 @@ function Cleanup-TaskWorktrees {
           throw "'git worktree list --porcelain' failed with code ${wtListCode}: $($wtListRaw -join ' ')"
         }
 
-        $normD = Normalize-Path $d.FullName
-        $normalizedActiveWorktrees = @($wtListRaw | Where-Object { $_ -match '^worktree\s+(.+)$' } | ForEach-Object { Normalize-Path $Matches[1].Trim() })
+        $activeWorktrees = @($wtListRaw | Where-Object { $_ -match '^worktree\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() })
+        $normalizedPaths = @(Normalize-Paths (@($d.FullName) + $activeWorktrees))
+        $normD = $normalizedPaths[0]
+        $normalizedActiveWorktrees = @($normalizedPaths | Select-Object -Skip 1)
         if ($normalizedActiveWorktrees -contains $normD) {
           throw "Worktree removal failed for '$($d.FullName)' with code ${code}: $($out -join ' ')"
         }
