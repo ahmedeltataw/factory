@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M3-05",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "e2bebb76c199401f527a027914e627703788c3e4",
+  "checks": [
+    {
+      "id": "CHK-M3-05-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 457/457 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve). Mutation outbox.ts 85.83% (>= 80)."
+    },
+    {
+      "id": "CHK-M3-05-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 457/457 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve). Mutation outbox.ts 85.83% (>= 80)."
+    },
+    {
+      "id": "CHK-M3-05-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 457/457 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve). Mutation outbox.ts 85.83% (>= 80)."
+    },
+    {
+      "id": "CHK-M3-05-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 457/457 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve). Mutation outbox.ts 85.83% (>= 80)."
+    },
+    {
+      "id": "CHK-M3-05-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 457/457 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve). Mutation outbox.ts 85.83% (>= 80)."
+    },
+    {
+      "id": "CHK-M3-05-f",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: 457/457 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (4 rounds; approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (approve). Mutation outbox.ts 85.83% (>= 80)."
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}

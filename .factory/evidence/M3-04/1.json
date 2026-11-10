@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M3-04",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "c833ee9d7eee63893dfe9e26ae7f8269565b99d6",
+  "checks": [
+    {
+      "id": "CHK-M3-04-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 456/456 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (4 rounds: self-kill and blank-nonce guards, built executor path, Linux zombie/permission handling, PowerShell OEM encoding bug found by Lead -> UTF-16 base64 CIM enumeration failing closed; approve). Mutation process-tree.ts 75.00% total, 89.08% of covered; 53 no-coverage mutants are the Linux /proc and POSIX SIGKILL OS-call branches, untestable on Windows: recorded exception per card (88.5% excluding them). Fake executor not yet shipped in lib/ (lead build-config item, M3-08)."
+    },
+    {
+      "id": "CHK-M3-04-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 456/456 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (4 rounds: self-kill and blank-nonce guards, built executor path, Linux zombie/permission handling, PowerShell OEM encoding bug found by Lead -> UTF-16 base64 CIM enumeration failing closed; approve). Mutation process-tree.ts 75.00% total, 89.08% of covered; 53 no-coverage mutants are the Linux /proc and POSIX SIGKILL OS-call branches, untestable on Windows: recorded exception per card (88.5% excluding them). Fake executor not yet shipped in lib/ (lead build-config item, M3-08)."
+    },
+    {
+      "id": "CHK-M3-04-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 456/456 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (4 rounds: self-kill and blank-nonce guards, built executor path, Linux zombie/permission handling, PowerShell OEM encoding bug found by Lead -> UTF-16 base64 CIM enumeration failing closed; approve). Mutation process-tree.ts 75.00% total, 89.08% of covered; 53 no-coverage mutants are the Linux /proc and POSIX SIGKILL OS-call branches, untestable on Windows: recorded exception per card (88.5% excluding them). Fake executor not yet shipped in lib/ (lead build-config item, M3-08)."
+    },
+    {
+      "id": "CHK-M3-04-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 456/456 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (4 rounds: self-kill and blank-nonce guards, built executor path, Linux zombie/permission handling, PowerShell OEM encoding bug found by Lead -> UTF-16 base64 CIM enumeration failing closed; approve). Mutation process-tree.ts 75.00% total, 89.08% of covered; 53 no-coverage mutants are the Linux /proc and POSIX SIGKILL OS-call branches, untestable on Windows: recorded exception per card (88.5% excluding them). Fake executor not yet shipped in lib/ (lead build-config item, M3-08)."
+    },
+    {
+      "id": "CHK-M3-04-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26.13.0: typecheck 0, 456/456 tests, build 0; protected tests by gemini-3.8-flash-high, reviewed by gpt-6.1-sol (approve); implementation gpt-6.1-terra, reviewed by gemini-4-argon-high (4 rounds: self-kill and blank-nonce guards, built executor path, Linux zombie/permission handling, PowerShell OEM encoding bug found by Lead -> UTF-16 base64 CIM enumeration failing closed; approve). Mutation process-tree.ts 75.00% total, 89.08% of covered; 53 no-coverage mutants are the Linux /proc and POSIX SIGKILL OS-call branches, untestable on Windows: recorded exception per card (88.5% excluding them). Fake executor not yet shipped in lib/ (lead build-config item, M3-08)."
+    }
+  ],
+  "ended_at": "2026-11-10T00:00:00+00:00"
+}
