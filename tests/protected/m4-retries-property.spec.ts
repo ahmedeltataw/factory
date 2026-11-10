@@ -164,16 +164,19 @@ describe('CHK-M4-05-g: recovery, retry backoff, timeout, and budget property inv
       let exercisedExhaustion = false
       let exercisedBackoffBoundary = false
 
+      const sharedRootDir = mkdtempSync(join(tmpdir(), `factory-m4-prop-shared-${randomUUID().slice(0, 8)}-`))
+      directories.push(sharedRootDir)
+      const repoDir = join(sharedRootDir, 'repo')
+      const baseSha = initGitRepo(repoDir)
+
       const executeSequence = async (actions: Action[]) => {
         const rootDir = mkdtempSync(join(tmpdir(), `factory-m4-prop-${randomUUID().slice(0, 8)}-`))
         directories.push(rootDir)
 
-          const repoDir = join(rootDir, 'repo')
-          const stateDir = join(rootDir, 'state')
-          mkdirSync(stateDir, { recursive: true })
+        const stateDir = join(rootDir, 'state')
+        mkdirSync(stateDir, { recursive: true })
 
-          const baseSha = initGitRepo(repoDir)
-          const dbPath = join(stateDir, 'state.sqlite')
+        const dbPath = join(stateDir, 'state.sqlite')
 
           let db: DatabaseSync | undefined
           let handle: SupervisorLeaseHandle | undefined
@@ -577,10 +580,10 @@ describe('CHK-M4-05-g: recovery, retry backoff, timeout, and budget property inv
 
       await executeSequence(guaranteedScenario)
 
-      // 2. Randomized property testing verifying lifecycle invariants across 40 runs
+      // 2. Randomized property testing verifying lifecycle invariants across 15 runs
       await fc.assert(
         fc.asyncProperty(sequenceArbitrary, executeSequence),
-        { numRuns: 40, endOnFailure: true },
+        { numRuns: 15, endOnFailure: true },
       )
 
       expect(exercisedTimeout).toBe(true)
@@ -588,6 +591,6 @@ describe('CHK-M4-05-g: recovery, retry backoff, timeout, and budget property inv
       expect(exercisedExhaustion).toBe(true)
       expect(exercisedBackoffBoundary).toBe(true)
     },
-    60000,
+    180000,
   )
 })

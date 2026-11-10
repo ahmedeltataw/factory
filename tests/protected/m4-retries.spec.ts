@@ -1171,21 +1171,26 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
               createdAt: new Date(nowMs).toISOString(),
             })
 
+            let spawnCountB = 0
+            const spawnedNoncesB = new Set<string>()
             const loopDepsB: LoopDeps = {
               config: { stateDir, repoPath: repoDir, baseRef: baseSha },
               stateDir,
               killTree: async (pid, nonce) => {
-                if (pid === 9002 && nonce === 'nonce-b') {
+                if (pid === 9002 && spawnedNoncesB.has(nonce)) {
                   return { result: 'identity-mismatch', detail: 'simulated identity mismatch' }
                 }
                 return { result: 'not-running' }
               },
-              isAlive: () => true,
+              isAlive: (pid, nonce) => pid === 9002 && spawnedNoncesB.has(nonce),
               readResult: () => undefined,
-              spawnWorker: async ({ runDir }) => {
+              spawnWorker: async ({ runDir, attemptId }) => {
+                spawnCountB++
+                const nonce = `nonce-b-${attemptId}`
+                spawnedNoncesB.add(nonce)
                 mkdirSync(runDir, { recursive: true })
-                writeFileSync(join(runDir, 'worker.json'), JSON.stringify({ pid: 9002, nonce: 'nonce-b', grandchildPid: 9102 }), 'utf8')
-                return { pid: 9002, nonce: 'nonce-b' }
+                writeFileSync(join(runDir, 'worker.json'), JSON.stringify({ pid: 9002, nonce, grandchildPid: 9102 }), 'utf8')
+                return { pid: 9002, nonce }
               },
             }
 

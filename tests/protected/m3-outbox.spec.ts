@@ -509,7 +509,7 @@ describe('M3-05 outbox contract', () => {
         const r = db.prepare('SELECT status, tries FROM outbox WHERE idempotency_key = ?').get('exhaust-key') as OutboxRow
         expect(r.status).toBe('pending')
         expect(r.tries).toBe(i)
-        currentTime += BACKOFF_MS
+        currentTime += BACKOFF_MS * 2 ** (i - 1)
       }
 
       // Final attempt that reaches MAX_TRIES
