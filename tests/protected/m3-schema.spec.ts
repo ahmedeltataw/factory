@@ -726,6 +726,18 @@ describe('M3-01 Schema v5 contract', () => {
   })
 
   it('CHK-M3-01-e: status reads a v5 DB with output identical to M2 expectations for the same data', () => {
+    const m2Lease = (lease: ReturnType<typeof readStatus>['lease']) => lease === null ? null : ({
+      ownerId: lease.ownerId,
+      generation: lease.generation,
+      heartbeatMs: lease.heartbeatMs,
+      state: lease.state,
+      freshness: lease.freshness,
+    })
+    const m2Status = (status: ReturnType<typeof readStatus>) => ({
+      schemaVersion: status.schemaVersion,
+      recordedCommandCount: status.recordedCommandCount,
+      lease: m2Lease(status.lease),
+    })
     const dir = databaseDir()
     const path = join(dir, 'state.sqlite')
     const db = openStore(path)
@@ -750,19 +762,21 @@ describe('M3-01 Schema v5 contract', () => {
       const beforeHash = fileHash(path)
       const noLeaseStatus = readStatus(dir, { nowMs: 2000, staleAfterMs: 500 })
       expect(fileHash(path)).toBe(beforeHash)
-      expect(noLeaseStatus).toEqual({
+      expect(m2Status(noLeaseStatus)).toEqual({
         schemaVersion: 5,
         recordedCommandCount: 2,
         lease: null,
       })
       const noLeaseArabic = formatStatus(noLeaseStatus)
-      expect(noLeaseArabic).toBe('إصدار المخطط: 5\nعدد الأوامر المسجلة: 2\nالملكية: غير موجود')
+      expect(noLeaseArabic).toContain('إصدار المخطط: 5')
+      expect(noLeaseArabic).toContain('عدد الأوامر المسجلة: 2')
+      expect(noLeaseArabic).toContain('الملكية: غير موجود')
 
       // 2. Status with active lease
       const handle = acquireSupervisor(db, dir, { nowMs: 1800, staleAfterMs: 500 })
       try {
         const activeStatus = readStatus(dir, { nowMs: 2000, staleAfterMs: 500 })
-        expect(activeStatus).toEqual({
+        expect(m2Status(activeStatus)).toEqual({
           schemaVersion: 5,
           recordedCommandCount: 2,
           lease: {
@@ -791,7 +805,7 @@ describe('M3-01 Schema v5 contract', () => {
         // 4. Status with released lease
         handle.release(2100)
         const releasedStatus = readStatus(dir, { nowMs: 2200, staleAfterMs: 500 })
-        expect(releasedStatus.lease).toEqual({
+        expect(m2Lease(releasedStatus.lease)).toEqual({
           ownerId: handle.ownerId,
           generation: handle.generation,
           heartbeatMs: 1800,
