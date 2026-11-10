@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M4-07",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "769ba46ebdaaa7c26e9fe13c64ccf143eb8a2150",
+  "checks": [
+    {
+      "id": "CHK-M4-07-a",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 756/756 tests after rebase onto M4-03, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve), plus a Lead-amended round making M4 status fields always present. Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (round 1 found a data-dependent output-shape heuristic and payload scan; removed; approve). No mutation: status is not a core module (policy section 1)."
+    },
+    {
+      "id": "CHK-M4-07-b",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 756/756 tests after rebase onto M4-03, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve), plus a Lead-amended round making M4 status fields always present. Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (round 1 found a data-dependent output-shape heuristic and payload scan; removed; approve). No mutation: status is not a core module (policy section 1)."
+    },
+    {
+      "id": "CHK-M4-07-c",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 756/756 tests after rebase onto M4-03, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve), plus a Lead-amended round making M4 status fields always present. Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (round 1 found a data-dependent output-shape heuristic and payload scan; removed; approve). No mutation: status is not a core module (policy section 1)."
+    },
+    {
+      "id": "CHK-M4-07-d",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 756/756 tests after rebase onto M4-03, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve), plus a Lead-amended round making M4 status fields always present. Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (round 1 found a data-dependent output-shape heuristic and payload scan; removed; approve). No mutation: status is not a core module (policy section 1)."
+    },
+    {
+      "id": "CHK-M4-07-e",
+      "command": "pnpm typecheck && pnpm test && pnpm build",
+      "result": "pass",
+      "output": "Lead, Windows Node 26: 756/756 tests after rebase onto M4-03, typecheck and build 0. Protected tests by gpt-6.1-terra, reviewed by gemini-4-argon-high (2 rounds; approve), plus a Lead-amended round making M4 status fields always present. Implementation gemini-3.8-flash-high, reviewed by gpt-6.1-sol (round 1 found a data-dependent output-shape heuristic and payload scan; removed; approve). No mutation: status is not a core module (policy section 1)."
+    }
+  ],
+  "ended_at": "2026-11-10T23:58:47.186Z"
+}
