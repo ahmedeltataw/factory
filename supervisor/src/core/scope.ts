@@ -37,10 +37,16 @@ export function parseScope(input: unknown): { ok: true; scope: string[] } | { ok
     }
     for (let i = 0; i < entry.length; i++) {
       const code = entry.charCodeAt(i)
-      if ((code >= 0 && code <= 0x1f) || code === 0x7f) {
+      if (code < 0x20 || code === 0x7f) {
         return { ok: false, reason: 'scope entry must not contain control characters' }
       }
+      if (code >= 0x80) {
+        return { ok: false, reason: 'scope entry must contain printable ASCII only' }
+      }
       const ch = entry.charAt(i)
+      if (ch === '~') {
+        return { ok: false, reason: 'scope entry must not contain ~' }
+      }
       if (ch === '\\' || ch === ':' || ch === '*' || ch === '?' || ch === '[' || ch === ']') {
         return { ok: false, reason: 'scope entry must not contain forbidden characters' }
       }
@@ -62,6 +68,15 @@ export function parseScope(input: unknown): { ok: true; scope: string[] } | { ok
         }
         if (seg === '..') {
           return { ok: false, reason: 'scope entry must not contain dot-dot segments' }
+        }
+        if (seg.startsWith(' ')) {
+          return { ok: false, reason: 'scope entry segment must not start with space' }
+        }
+        if (seg.endsWith(' ')) {
+          return { ok: false, reason: 'scope entry segment must not end with space' }
+        }
+        if (seg.endsWith('.')) {
+          return { ok: false, reason: 'scope entry segment must not end with dot' }
         }
         if (toAsciiLower(seg) === '.git') {
           return { ok: false, reason: 'scope entry must not contain .git segments' }
