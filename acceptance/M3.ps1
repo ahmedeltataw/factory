@@ -64,26 +64,66 @@ function Remove-AcceptanceTempDir([string]$dir) {
   try {
     $timeoutSec = 10
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $lastCleanupError = $null
     while ((Test-Path -LiteralPath $dir) -and $sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+      $roboOutLog = Join-Path $expectedShared ("robocopy-out-" + [guid]::NewGuid().ToString('N') + ".log")
+      $roboErrLog = Join-Path $expectedShared ("robocopy-err-" + [guid]::NewGuid().ToString('N') + ".log")
+      $roboProc = $null
       try {
         if (-not (Test-Path -LiteralPath $empty)) {
           New-Item -ItemType Directory -Path $empty -Force | Out-Null
         }
-        $robocopyOut = & robocopy $empty $dir /MIR /NFL /NDL /NJH /NJS /NP 2>&1
-        $robocopyExit = $LASTEXITCODE
-        if ($robocopyExit -ge 8) {
-          throw "robocopy failed with exit code $robocopyExit"
+        $remainingMs = [Math]::Max(100, [int](($timeoutSec - $sw.Elapsed.TotalSeconds) * 1000))
+        $roboProc = Start-Process -FilePath 'robocopy' `
+          -ArgumentList "`"$empty`" `"$dir`" /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /NP" `
+          -RedirectStandardOutput $roboOutLog `
+          -RedirectStandardError $roboErrLog `
+          -PassThru `
+          -NoNewWindow
+        $null = $roboProc.Handle
+        $script:startedProcesses.Add($roboProc)
+
+        $exited = $roboProc.WaitForExit($remainingMs)
+        if (-not $exited) {
+          try {
+            if (-not $roboProc.HasExited) {
+              $roboProc.Kill()
+            }
+            [void]$roboProc.WaitForExit(1000)
+          } catch {}
+          throw "robocopy timed out after ${remainingMs}ms"
+        }
+
+        $robocopyExit = $roboProc.ExitCode
+        if ($null -eq $robocopyExit -or $robocopyExit -lt 0 -or $robocopyExit -gt 7) {
+          $roboErr = if (Test-Path -LiteralPath $roboErrLog) { (Get-Content -LiteralPath $roboErrLog -Raw) } else { '' }
+          throw "robocopy failed with exit code ${robocopyExit}: $roboErr"
         }
         $global:LASTEXITCODE = 0
         Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
       } catch {
+        $lastCleanupError = $_.Exception.Message
         Start-Sleep -Milliseconds 200
+      } finally {
+        if ($null -ne $roboProc -and -not $roboProc.HasExited) {
+          try {
+            $roboProc.Kill()
+            [void]$roboProc.WaitForExit(1000)
+          } catch {}
+        }
+        if (Test-Path -LiteralPath $roboOutLog) {
+          Remove-Item -LiteralPath $roboOutLog -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $roboErrLog) {
+          Remove-Item -LiteralPath $roboErrLog -Force -ErrorAction SilentlyContinue
+        }
       }
     }
     [void]$sw.Stop()
 
     if (Test-Path -LiteralPath $dir) {
-      throw "Cleanup error: failed to remove temporary directory within timeout: $dir"
+      $detail = if ($lastCleanupError) { " (last error: $lastCleanupError)" } else { '' }
+      throw "Cleanup error: failed to remove temporary directory within timeout: ${dir}${detail}"
     }
     if (Test-Path -LiteralPath $empty) {
       Remove-Item -LiteralPath $empty -Force -ErrorAction SilentlyContinue
@@ -328,7 +368,24 @@ function Stop-AllAcceptanceProcesses {
 function Normalize-Path([string]$path) {
   if ([string]::IsNullOrWhiteSpace($path)) { return '' }
   try {
-    return [System.IO.Path]::GetFullPath($path).Replace('\', '/').TrimEnd('/').ToLowerInvariant()
+    $resolved = [System.IO.Path]::GetFullPath($path)
+    if (Test-Path -LiteralPath $resolved -PathType Container) {
+      $fso = New-Object -ComObject Scripting.FileSystemObject
+      $resolved = $fso.GetFolder($resolved).Path
+    } elseif (Test-Path -LiteralPath $resolved -PathType Leaf) {
+      $fso = New-Object -ComObject Scripting.FileSystemObject
+      $resolved = $fso.GetFile($resolved).Path
+    } else {
+      try {
+        $parent = [System.IO.Path]::GetDirectoryName($resolved)
+        $leaf = [System.IO.Path]::GetFileName($resolved)
+        if (-not [string]::IsNullOrWhiteSpace($parent) -and (Test-Path -LiteralPath $parent -PathType Container)) {
+          $fso = New-Object -ComObject Scripting.FileSystemObject
+          $resolved = [System.IO.Path]::Combine($fso.GetFolder($parent).Path, $leaf)
+        }
+      } catch {}
+    }
+    return $resolved.Replace('\', '/').TrimEnd('/').ToLowerInvariant()
   } catch {
     return $path.Replace('\', '/').TrimEnd('/').ToLowerInvariant()
   }
@@ -391,23 +448,36 @@ function Invoke-FactoryStatus([string]$sDir) {
   $script:startedProcesses.Add($proc)
   Register-TrackedPid $proc.Id
 
-  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-  $stderrTask = $proc.StandardError.ReadToEndAsync()
+  $outTask = $proc.StandardOutput.ReadToEndAsync()
+  $errTask = $proc.StandardError.ReadToEndAsync()
 
   $timeoutMs = 10000
-  $exited = $proc.WaitForExit($timeoutMs)
-  if (-not $exited) {
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  $remainingMs = $timeoutMs
+  $exited = $proc.WaitForExit($remainingMs)
+  $remainingMs = [Math]::Max(0, [int]($timeoutMs - $sw.ElapsedMilliseconds))
+  $drained = $false
+  if ($exited -and $remainingMs -gt 0) {
     try {
-      $proc.Kill()
+      $drained = [System.Threading.Tasks.Task]::WaitAll(@($outTask, $errTask), $remainingMs)
+    } catch {
+      $drained = $false
+    }
+  }
+  [void]$sw.Stop()
+
+  if (-not $exited -or -not $drained -or -not $outTask.IsCompleted -or -not $errTask.IsCompleted) {
+    try {
+      if (-not $proc.HasExited) {
+        $proc.Kill()
+      }
       [void]$proc.WaitForExit(2000)
     } catch {}
-    throw "factory status timed out after ${timeoutMs}ms"
+    throw "factory status timed out after ${timeoutMs}ms (exited: $exited, drained: $drained)"
   }
 
-  [void]$stdoutTask.Wait(3000)
-  [void]$stderrTask.Wait(3000)
-  $stdout = $stdoutTask.Result
-  $stderr = $stderrTask.Result
+  $stdout = $outTask.Result
+  $stderr = $errTask.Result
   $code = $proc.ExitCode
   if ($code -ne 0) {
     throw "factory status failed with exit code ${code}: $stderr"
