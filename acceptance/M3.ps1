@@ -16,6 +16,7 @@ $results = @()
 $script:stepOk = $false
 $script:startedProcesses = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 $script:ownedPids = [System.Collections.Generic.List[int]]::new()
+$script:trackedProcessRecords = [System.Collections.Generic.List[object]]::new()
 $script:trackedWorkerNonces = [System.Collections.Generic.List[string]]::new()
 $script:baseSha = $null
 $script:taskId1 = $null
@@ -73,50 +74,94 @@ function Remove-AcceptanceTempDir([string]$dir) {
   }
 }
 
+function Register-TrackedPid([int]$pId, [string]$nonce = $null) {
+  if ($pId -le 0 -or $pId -eq $PID) { return }
+  try {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $pId" -Property ProcessId, Name, CommandLine, CreationDate -ErrorAction Stop
+  } catch {
+    $proc = $null
+  }
+  if ($null -ne $proc) {
+    foreach ($rec in $script:trackedProcessRecords) {
+      if ($rec.ProcessId -eq $pId -and $rec.CreationDate -eq $proc.CreationDate) {
+        if (-not [string]::IsNullOrWhiteSpace($nonce) -and [string]::IsNullOrWhiteSpace($rec.Nonce)) {
+          $rec.Nonce = $nonce
+        }
+        return
+      }
+    }
+    $record = [pscustomobject]@{
+      ProcessId    = $pId
+      CreationDate = $proc.CreationDate
+      CommandLine  = $proc.CommandLine
+      Nonce        = $nonce
+    }
+    $script:trackedProcessRecords.Add($record)
+  } elseif (-not [string]::IsNullOrWhiteSpace($nonce)) {
+    foreach ($rec in $script:trackedProcessRecords) {
+      if ($rec.ProcessId -eq $pId -and [string]::IsNullOrWhiteSpace($rec.Nonce)) {
+        $rec.Nonce = $nonce
+      }
+    }
+  }
+  if (-not $script:ownedPids.Contains($pId)) {
+    $script:ownedPids.Add($pId)
+  }
+}
+
+function Test-CommandLineMatchesRun([string]$cmd, [string]$specificNonce = $null) {
+  if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
+
+  if (-not [string]::IsNullOrWhiteSpace($acceptanceBase)) {
+    if ($cmd.IndexOf($acceptanceBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    $fwdBase = $acceptanceBase.Replace('\', '/')
+    if ($cmd.IndexOf($fwdBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    try {
+      $fullBase = [System.IO.Path]::GetFullPath($acceptanceBase)
+      if ($cmd.IndexOf($fullBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+      $fwdFull = $fullBase.Replace('\', '/')
+      if ($cmd.IndexOf($fwdFull, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    } catch {}
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($acceptanceNonce)) {
+    if ($cmd.IndexOf($acceptanceNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($specificNonce)) {
+    if ($cmd.IndexOf($specificNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+  }
+
+  foreach ($wn in $script:trackedWorkerNonces) {
+    if (-not [string]::IsNullOrWhiteSpace($wn) -and $cmd.IndexOf($wn, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Test-TrackedPidIdentityValid($rec) {
+  if ($null -eq $rec -or $rec.ProcessId -le 0 -or $rec.ProcessId -eq $PID) { return $false }
+  $pId = $rec.ProcessId
+  $curr = Get-CimInstance Win32_Process -Filter "ProcessId = $pId" -Property ProcessId, Name, CommandLine, CreationDate -ErrorAction Stop
+  if ($null -eq $curr) {
+    return $false
+  }
+  $dateMatch = ($curr.CreationDate -eq $rec.CreationDate) -or ([Math]::Abs(($curr.CreationDate - $rec.CreationDate).TotalMilliseconds) -lt 1000)
+  if (-not $dateMatch) {
+    return $false
+  }
+  return (Test-CommandLineMatchesRun $curr.CommandLine $rec.Nonce)
+}
+
 function Test-ProcessMatchesRun($proc) {
   if ($null -eq $proc -or $proc.ProcessId -eq $PID) { return $false }
   $pName = $proc.Name
   if ([string]::IsNullOrWhiteSpace($pName) -or ($pName -ne 'node.exe' -and $pName -notlike 'node*.exe')) {
     return $false
   }
-  $cmd = $proc.CommandLine
-  if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
-
-  # Command line contains this run's directory
-  if (-not [string]::IsNullOrWhiteSpace($acceptanceBase)) {
-    if ($cmd.IndexOf($acceptanceBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-      return $true
-    }
-    $fwdBase = $acceptanceBase.Replace('\', '/')
-    if ($cmd.IndexOf($fwdBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-      return $true
-    }
-    try {
-      $fullBase = [System.IO.Path]::GetFullPath($acceptanceBase)
-      if ($cmd.IndexOf($fullBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-        return $true
-      }
-      $fwdFull = $fullBase.Replace('\', '/')
-      if ($cmd.IndexOf($fwdFull, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-        return $true
-      }
-    } catch {}
-  }
-
-  # OR any tracked nonce
-  if (-not [string]::IsNullOrWhiteSpace($acceptanceNonce)) {
-    if ($cmd.IndexOf($acceptanceNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-      return $true
-    }
-  }
-
-  foreach ($workerNonce in $script:trackedWorkerNonces) {
-    if (-not [string]::IsNullOrWhiteSpace($workerNonce) -and $cmd.IndexOf($workerNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-      return $true
-    }
-  }
-
-  return $false
+  return (Test-CommandLineMatchesRun $proc.CommandLine)
 }
 
 function Stop-AllAcceptanceProcesses {
@@ -131,21 +176,28 @@ function Stop-AllAcceptanceProcesses {
     } catch {}
   }
 
-  # 2. Stop all known owned worker and grandchild PIDs
-  foreach ($pId in $script:ownedPids) {
-    if ($pId -gt 0 -and $pId -ne $PID) {
-      try {
-        $p = Get-Process -Id $pId -ErrorAction SilentlyContinue
-        if ($null -ne $p -and -not $p.HasExited) {
-          Stop-Process -Id $pId -Force -ErrorAction SilentlyContinue
-        }
-      } catch {}
+  # 2. Stop all known owned worker and grandchild PIDs after validating current identity
+  foreach ($rec in $script:trackedProcessRecords) {
+    if ($null -eq $rec -or $rec.ProcessId -le 0 -or $rec.ProcessId -eq $PID) { continue }
+    try {
+      if (Test-TrackedPidIdentityValid $rec) {
+        Stop-Process -Id $rec.ProcessId -Force -ErrorAction SilentlyContinue
+      }
+    } catch {
+      $script:hasSurvivors = $true
+      $script:overallFailed = $true
+      throw "Process identity check failed during termination: $($_.Exception.Message)"
     }
   }
 
   # 3. Sweep: kill every node.exe whose command line contains this run's directory OR any tracked nonce
   try {
-    $allProcs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction SilentlyContinue)
+    $allProcs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction Stop)
+    if ($allProcs.Count -eq 0) {
+      $script:hasSurvivors = $true
+      $script:overallFailed = $true
+      throw "Process enumeration returned 0 processes; enumeration failed"
+    }
     foreach ($p in $allProcs) {
       if (Test-ProcessMatchesRun $p) {
         try {
@@ -153,7 +205,11 @@ function Stop-AllAcceptanceProcesses {
         } catch {}
       }
     }
-  } catch {}
+  } catch {
+    $script:hasSurvivors = $true
+    $script:overallFailed = $true
+    throw "Process sweep enumeration failed: $($_.Exception.Message)"
+  }
 
   # 4. Bounded wait for all candidate processes to be gone
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -161,18 +217,38 @@ function Stop-AllAcceptanceProcesses {
   while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
     $anyAlive = $false
     foreach ($proc in $script:startedProcesses) {
-      if ($null -ne $proc -and -not $proc.HasExited) { $anyAlive = $true; break }
-    }
-    if (-not $anyAlive) {
-      foreach ($pId in $script:ownedPids) {
-        $p = Get-Process -Id $pId -ErrorAction SilentlyContinue
-        if ($null -ne $p -and -not $p.HasExited) { $anyAlive = $true; break }
+      if ($null -ne $proc) {
+        try {
+          if (-not $proc.HasExited) { $anyAlive = $true; break }
+        } catch {}
       }
     }
     if (-not $anyAlive) {
-      $procs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction SilentlyContinue)
-      foreach ($p in $procs) {
-        if (Test-ProcessMatchesRun $p) { $anyAlive = $true; break }
+      foreach ($rec in $script:trackedProcessRecords) {
+        try {
+          if (Test-TrackedPidIdentityValid $rec) { $anyAlive = $true; break }
+        } catch {
+          $script:hasSurvivors = $true
+          $script:overallFailed = $true
+          throw "Process identity check failed during wait: $($_.Exception.Message)"
+        }
+      }
+    }
+    if (-not $anyAlive) {
+      try {
+        $procs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction Stop)
+        if ($procs.Count -eq 0) {
+          $script:hasSurvivors = $true
+          $script:overallFailed = $true
+          throw "Process enumeration returned 0 processes during wait"
+        }
+        foreach ($p in $procs) {
+          if (Test-ProcessMatchesRun $p) { $anyAlive = $true; break }
+        }
+      } catch {
+        $script:hasSurvivors = $true
+        $script:overallFailed = $true
+        throw "Process wait enumeration failed: $($_.Exception.Message)"
       }
     }
     if (-not $anyAlive) { break }
@@ -191,17 +267,33 @@ function Stop-AllAcceptanceProcesses {
       } catch [System.InvalidOperationException] {}
     }
   }
-  foreach ($pId in $script:ownedPids) {
-    $p = Get-Process -Id $pId -ErrorAction SilentlyContinue
-    if ($null -ne $p -and -not $p.HasExited) {
-      $survivorDetails.Add("Owned worker/grandchild PID $pId still running")
+  foreach ($rec in $script:trackedProcessRecords) {
+    try {
+      if (Test-TrackedPidIdentityValid $rec) {
+        $survivorDetails.Add("Tracked worker/grandchild PID $($rec.ProcessId) still running (CreationDate: $($rec.CreationDate))")
+      }
+    } catch {
+      $script:hasSurvivors = $true
+      $script:overallFailed = $true
+      throw "Process identity check failed during survivor verification: $($_.Exception.Message)"
     }
   }
-  $remainingProcs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction SilentlyContinue)
-  foreach ($p in $remainingProcs) {
-    if (Test-ProcessMatchesRun $p) {
-      $survivorDetails.Add("Node process PID $($p.ProcessId) matching run dir or nonce still running: $($p.CommandLine)")
+  try {
+    $remainingProcs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction Stop)
+    if ($remainingProcs.Count -eq 0) {
+      $script:hasSurvivors = $true
+      $script:overallFailed = $true
+      throw "Process enumeration returned 0 processes during survivor check; enumeration failed"
     }
+    foreach ($p in $remainingProcs) {
+      if (Test-ProcessMatchesRun $p) {
+        $survivorDetails.Add("Node process PID $($p.ProcessId) matching run dir or nonce still running: $($p.CommandLine)")
+      }
+    }
+  } catch {
+    $script:hasSurvivors = $true
+    $script:overallFailed = $true
+    throw "Process survivor check enumeration failed: $($_.Exception.Message)"
   }
 
   if ($survivorDetails.Count -gt 0) {
@@ -209,6 +301,15 @@ function Stop-AllAcceptanceProcesses {
     $script:overallFailed = $true
     $errMessage = "Process cleanup failed - surviving processes detected:`n" + ($survivorDetails -join "`n")
     throw $errMessage
+  }
+}
+
+function Normalize-Path([string]$path) {
+  if ([string]::IsNullOrWhiteSpace($path)) { return '' }
+  try {
+    return [System.IO.Path]::GetFullPath($path).Replace('\', '/').TrimEnd('/').ToLowerInvariant()
+  } catch {
+    return $path.Replace('\', '/').TrimEnd('/').ToLowerInvariant()
   }
 }
 
@@ -220,13 +321,24 @@ function Cleanup-TaskWorktrees {
     $dirs = @(Get-ChildItem -LiteralPath $wtBase -Directory -ErrorAction SilentlyContinue)
     foreach ($d in $dirs) {
       if (-not (Test-Path -LiteralPath $d.FullName)) { continue }
-      $out = & git -C $tempRepo worktree remove --force $d.FullName 2>&1
+      $out = & git -C $tempRepo worktree remove --force "$($d.FullName)" 2>&1
       $code = $LASTEXITCODE
       if ($code -ne 0) {
-        & git -C $tempRepo worktree prune 2>&1 | Out-Null
-        $wtList = (& git -C $tempRepo worktree list --porcelain 2>&1) -join "`n"
-        $escapedWt = [regex]::Escape($d.FullName)
-        if ($wtList -match "(?m)^worktree\s+${escapedWt}\s*$") {
+        $pruneFallbackOut = & git -C $tempRepo worktree prune 2>&1
+        $pruneFallbackCode = $LASTEXITCODE
+        if ($pruneFallbackCode -ne 0) {
+          throw "Fallback 'git worktree prune' failed with code ${pruneFallbackCode}: $($pruneFallbackOut -join ' ')"
+        }
+
+        $wtListRaw = & git -C $tempRepo worktree list --porcelain 2>&1
+        $wtListCode = $LASTEXITCODE
+        if ($wtListCode -ne 0) {
+          throw "'git worktree list --porcelain' failed with code ${wtListCode}: $($wtListRaw -join ' ')"
+        }
+
+        $normD = Normalize-Path $d.FullName
+        $normalizedActiveWorktrees = @($wtListRaw | Where-Object { $_ -match '^worktree\s+(.+)$' } | ForEach-Object { Normalize-Path $Matches[1].Trim() })
+        if ($normalizedActiveWorktrees -contains $normD) {
           throw "Worktree removal failed for '$($d.FullName)' with code ${code}: $($out -join ' ')"
         }
       }
@@ -254,9 +366,27 @@ function Invoke-FactoryStatus([string]$sDir) {
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $proc = [System.Diagnostics.Process]::Start($psi)
-  $stdout = $proc.StandardOutput.ReadToEnd()
-  $stderr = $proc.StandardError.ReadToEnd()
-  [void]$proc.WaitForExit(10000)
+  $null = $proc.Handle
+  $script:startedProcesses.Add($proc)
+  Register-TrackedPid $proc.Id
+
+  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+  $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+  $timeoutMs = 10000
+  $exited = $proc.WaitForExit($timeoutMs)
+  if (-not $exited) {
+    try {
+      $proc.Kill()
+      [void]$proc.WaitForExit(2000)
+    } catch {}
+    throw "factory status timed out after ${timeoutMs}ms"
+  }
+
+  [void]$stdoutTask.Wait(3000)
+  [void]$stderrTask.Wait(3000)
+  $stdout = $stdoutTask.Result
+  $stderr = $stderrTask.Result
   $code = $proc.ExitCode
   if ($code -ne 0) {
     throw "factory status failed with exit code ${code}: $stderr"
@@ -662,6 +792,7 @@ try {
       -NoNewWindow
     $null = $sup1.Handle
     $script:startedProcesses.Add($sup1)
+    Register-TrackedPid $sup1.Id
     $script:sup1Process = $sup1
     $script:sup1Pid = $sup1.Id
     Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue
@@ -684,7 +815,7 @@ try {
             $att = @($task.attempts)[0]
             if ($att.status -eq 'running' -and $null -ne $att.worker -and $att.worker.state -eq 'running' -and $att.worker.pid -gt 0) {
               $script:worker1Pid = $att.worker.pid
-              $script:ownedPids.Add($att.worker.pid)
+              Register-TrackedPid $att.worker.pid
               $workerRunning = $true
               break
             }
@@ -714,9 +845,10 @@ try {
             $wJson = $rawContent | ConvertFrom-Json
             if ($null -ne $wJson -and $wJson.pid -eq $script:worker1Pid -and $null -ne $wJson.grandchildPid -and $wJson.grandchildPid -gt 0 -and -not [string]::IsNullOrWhiteSpace($wJson.nonce)) {
               $script:worker1GrandchildPid = [int]$wJson.grandchildPid
-              $script:ownedPids.Add($script:worker1GrandchildPid)
               $script:worker1Nonce = $wJson.nonce
               $script:trackedWorkerNonces.Add($wJson.nonce)
+              Register-TrackedPid $script:worker1Pid $wJson.nonce
+              Register-TrackedPid $script:worker1GrandchildPid $wJson.nonce
               $foundJson = $true
               break
             }
@@ -818,6 +950,7 @@ try {
       -NoNewWindow
     $null = $supRestart.Handle
     $script:startedProcesses.Add($supRestart)
+    Register-TrackedPid $supRestart.Id
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while (-not $supRestart.HasExited -and $sw.Elapsed.TotalSeconds -lt 60) {
@@ -943,6 +1076,7 @@ try {
       -NoNewWindow
     $null = $supPre.Handle
     $script:startedProcesses.Add($supPre)
+    Register-TrackedPid $supPre.Id
     Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue
 
     # Poll status until worker is running
@@ -968,7 +1102,7 @@ try {
               if ($null -ne $att.id) {
                 $script:attemptId2 = $att.id
               }
-              $script:ownedPids.Add($att.worker.pid)
+              Register-TrackedPid $att.worker.pid
               $running = $true
               break
             }
@@ -1002,9 +1136,10 @@ try {
             $lastObservedWorker = "PID=$($wj.pid), Grandchild=$($wj.grandchildPid), Nonce=$($wj.nonce), Dir=$($wf.DirectoryName)"
             if ($wj.pid -eq $script:worker2Pid -and $null -ne $wj.grandchildPid -and $wj.grandchildPid -gt 0 -and -not [string]::IsNullOrWhiteSpace($wj.nonce)) {
               $script:worker2GrandchildPid = [int]$wj.grandchildPid
-              $script:ownedPids.Add($script:worker2GrandchildPid)
               $script:worker2Nonce = $wj.nonce
               $script:trackedWorkerNonces.Add($wj.nonce)
+              Register-TrackedPid $script:worker2Pid $wj.nonce
+              Register-TrackedPid $script:worker2GrandchildPid $wj.nonce
               $worker2RunDir = $wf.DirectoryName
               $script:attemptId2 = $wf.Directory.Name
               break
@@ -1118,6 +1253,7 @@ try {
       -NoNewWindow
     $null = $supFault.Handle
     $script:startedProcesses.Add($supFault)
+    Register-TrackedPid $supFault.Id
     Remove-Item env:FACTORY_FAULT -ErrorAction SilentlyContinue
 
     $timeoutSec = 30
@@ -1181,20 +1317,30 @@ try {
     # 2. Evidence row exists in database, but outbox status is still pending (crash occurred before status=done)
     $env:FACTORY_STATE_DIR = $stateDir
     $env:FACTORY_TASK_ID = $tId
-    $rawBoundary = & $script:nodeExe "$checkCrashBoundaryScript" 2>&1
+    $boundaryErrFile = Join-Path $logsDir 'boundary.err.log'
+    $rawBoundary = & $script:nodeExe "$checkCrashBoundaryScript" 2> $boundaryErrFile
     $codeBoundary = $LASTEXITCODE
     Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $boundaryErrFile) {
+      $errContent = Get-Content -LiteralPath $boundaryErrFile
+      foreach ($l in $errContent) { Write-Host "BOUNDARY ERR: $l" -ForegroundColor Yellow }
+    }
     foreach ($l in $rawBoundary) { Write-Host "BOUNDARY: $l" }
     if ($codeBoundary -ne 0) {
-      Write-Host "Crash boundary database state check failed" -ForegroundColor Red
+      Write-Host "Crash boundary database state check failed with code ${codeBoundary}" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
     }
 
+    $boundaryJsonText = ($rawBoundary -join "`n").Trim()
     $boundaryJson = $null
     try {
-      $boundaryJson = ($rawBoundary -join "`n") | ConvertFrom-Json
-    } catch {}
+      $boundaryJson = $boundaryJsonText | ConvertFrom-Json
+    } catch {
+      Write-Host "Crash boundary JSON parse failed: $($_.Exception.Message)`nRaw stdout: $boundaryJsonText" -ForegroundColor Red
+      $global:LASTEXITCODE = 1
+      return
+    }
 
     $boundaryHeadSha = if ($null -ne $boundaryJson) { $boundaryJson.headSha } else { $null }
     $boundaryOutboxStatus = if ($null -ne $boundaryJson) { $boundaryJson.outboxStatus } else { $null }
@@ -1239,6 +1385,7 @@ try {
       -NoNewWindow
     $null = $supRestart2.Handle
     $script:startedProcesses.Add($supRestart2)
+    Register-TrackedPid $supRestart2.Id
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while (-not $supRestart2.HasExited -and $sw.Elapsed.TotalSeconds -lt 60) {
@@ -1326,6 +1473,7 @@ try {
       -NoNewWindow
     $null = $sup3.Handle
     $script:startedProcesses.Add($sup3)
+    Register-TrackedPid $sup3.Id
     Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue
 
     $timeoutSec = 30
@@ -1344,7 +1492,7 @@ try {
             $att = @($task3.attempts)[0]
             if ($att.status -eq 'running' -and $null -ne $att.worker -and $att.worker.state -eq 'running' -and $att.worker.pid -gt 0) {
               $script:worker3Pid = $att.worker.pid
-              $script:ownedPids.Add($att.worker.pid)
+              Register-TrackedPid $att.worker.pid
               $running = $true
               break
             }
@@ -1374,8 +1522,9 @@ try {
             $wj = $rawContent | ConvertFrom-Json
             if ($null -ne $wj -and $wj.pid -eq $script:worker3Pid -and $null -ne $wj.grandchildPid -and $wj.grandchildPid -gt 0 -and -not [string]::IsNullOrWhiteSpace($wj.nonce)) {
               $script:worker3GrandchildPid = [int]$wj.grandchildPid
-              $script:ownedPids.Add($script:worker3GrandchildPid)
               $script:trackedWorkerNonces.Add($wj.nonce)
+              Register-TrackedPid $script:worker3Pid $wj.nonce
+              Register-TrackedPid $script:worker3GrandchildPid $wj.nonce
               $foundWorker3 = $true
               break
             }
@@ -1479,6 +1628,7 @@ try {
       -NoNewWindow
     $null = $supFinal.Handle
     $script:startedProcesses.Add($supFinal)
+    Register-TrackedPid $supFinal.Id
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while (-not $supFinal.HasExited -and $sw.Elapsed.TotalSeconds -lt 30) {
