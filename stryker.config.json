@@ -5,7 +5,8 @@
     "supervisor/src/app/commands.ts",
     "supervisor/src/app/supervisor-lease.ts",
     "supervisor/src/app/fence.ts",
-    "supervisor/src/app/apply-commands.ts"
+    "supervisor/src/app/apply-commands.ts",
+    "supervisor/src/app/outbox.ts"
   ],
   "testRunner": "vitest",
   "plugins": [
