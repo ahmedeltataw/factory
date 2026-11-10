@@ -841,55 +841,64 @@ try {
     $pGrand = Get-Process -Id $script:worker1GrandchildPid -ErrorAction SilentlyContinue
     $execGone = ($null -eq $pExec -or $pExec.HasExited)
     $grandGone = ($null -eq $pGrand -or $pGrand.HasExited)
-    Write-Host "Executor gone: $execGone; Grandchild gone: $grandGone"
+    Write-Host "Executor gone: $execGone (PID=$($script:worker1Pid)); Grandchild gone: $grandGone (PID=$($script:worker1GrandchildPid))"
 
     $parsed = Invoke-FactoryStatus $stateDir
-    $task = @(@($parsed.tasks) | Where-Object { $_.id -eq $script:taskId1 })[0]
-    $taskDone = ($null -ne $task) -and ($task.status -eq 'done')
-    Write-Host "Task 1 done: $taskDone (status=$($task.status))"
+    $tasks = if ($null -ne $parsed -and $null -ne $parsed.tasks) { @($parsed.tasks) } else { @() }
+    $task = @($tasks | Where-Object { $_.id -eq $script:taskId1 })[0]
+    $taskStatus = if ($null -ne $task) { $task.status } else { 'missing' }
+    $taskDone = ($null -ne $task) -and ($taskStatus -eq 'done')
+    Write-Host "Task 1 done: $taskDone (status=$taskStatus, expected=done)"
 
+    $attempts = if ($null -ne $task -and $null -ne $task.attempts) { @($task.attempts) } else { @() }
     $attemptsValid = $false
-    if ($null -ne $task -and @($task.attempts).Count -eq 2) {
-      $a1 = @($task.attempts)[0]
-      $a2 = @($task.attempts)[1]
+    if ($attempts.Count -eq 2) {
+      $a1 = $attempts[0]
+      $a2 = $attempts[1]
       if ($a1.no -eq 1 -and $a1.status -eq 'interrupted' -and $a2.no -eq 2 -and $a2.status -eq 'succeeded') {
         $attemptsValid = $true
       }
     }
-    Write-Host "Attempts interrupted + succeeded: $attemptsValid (count=$(if ($null -ne $task) { @($task.attempts).Count } else { 0 }))"
+    $attemptsSummary = ($attempts | ForEach-Object { "#$($_.no):$($_.status)" }) -join ', '
+    Write-Host "Attempts interrupted + succeeded: $attemptsValid (count=$($attempts.Count), expected=2, attempts=[$attemptsSummary])"
 
-    # Require exactly one evidence row across both attempts (attempt 1 has none, attempt 2 has one)
-    $evidenceAttempts = if ($null -ne $task) { @(@($task.attempts) | Where-Object { $null -ne $_.evidence }) } else { @() }
-    $singleEvidenceRow = ($evidenceAttempts.Count -eq 1) -and ($null -eq @($task.attempts)[0].evidence) -and ($null -ne @($task.attempts)[1].evidence)
-    Write-Host "Exactly one evidence row across attempts: $singleEvidenceRow"
+    # Count attempts whose evidence is not $null (wrap arrays with @() - ConvertFrom-Json unwraps single-element arrays), take headSha from that one
+    $withEvidence = @($attempts | Where-Object { $null -ne $_.evidence })
+    $evidenceCount = $withEvidence.Count
+    $singleEvidenceRow = ($evidenceCount -eq 1)
+    Write-Host "Exactly one evidence row across attempts: $singleEvidenceRow (count=$evidenceCount, expected=1)"
+
+    $evidence = if ($singleEvidenceRow) { $withEvidence[0].evidence } else { $null }
+    $evidenceHeadSha = if ($null -ne $evidence) { $evidence.headSha } else { $null }
+    $evidenceFiles = if ($null -ne $evidence -and $null -ne $evidence.files) { @($evidence.files) } else { @() }
 
     $evidenceValid = $false
-    if ($attemptsValid -and $singleEvidenceRow) {
-      $evidence = @($task.attempts)[1].evidence
-      if ($null -ne $evidence -and -not [string]::IsNullOrWhiteSpace($evidence.headSha)) {
-        $env:FACTORY_WT_DIR = Join-Path $stateDir "worktrees\$($script:taskId1)"
-        $env:FACTORY_HEAD_SHA = $evidence.headSha
-        $env:FACTORY_FILES_JSON = ($evidence.files | ConvertTo-Json -Compress)
-        $rawVerify = & $script:nodeExe "$verifyEvidenceScript" 2>&1
-        $verifyCode = $LASTEXITCODE
-        Remove-Item env:FACTORY_WT_DIR, env:FACTORY_HEAD_SHA, env:FACTORY_FILES_JSON -ErrorAction SilentlyContinue
-        foreach ($l in $rawVerify) { Write-Host "VERIFY: $l" }
-        $evidenceValid = ($verifyCode -eq 0)
-      }
+    if ($singleEvidenceRow -and $null -ne $evidence -and -not [string]::IsNullOrWhiteSpace($evidenceHeadSha)) {
+      $env:FACTORY_WT_DIR = Join-Path $stateDir "worktrees\$($script:taskId1)"
+      $env:FACTORY_HEAD_SHA = $evidenceHeadSha
+      $env:FACTORY_FILES_JSON = ($evidenceFiles | ConvertTo-Json -Compress)
+      $rawVerify = & $script:nodeExe "$verifyEvidenceScript" 2>&1
+      $verifyCode = $LASTEXITCODE
+      Remove-Item env:FACTORY_WT_DIR, env:FACTORY_HEAD_SHA, env:FACTORY_FILES_JSON -ErrorAction SilentlyContinue
+      foreach ($l in $rawVerify) { Write-Host "VERIFY: $l" }
+      $evidenceValid = ($verifyCode -eq 0)
     }
-    Write-Host "Evidence verified: $evidenceValid"
+    Write-Host "Evidence verified: $evidenceValid (headSha=$evidenceHeadSha, filesCount=$($evidenceFiles.Count))"
 
     # Verify task branch factory/task/<id> exists, matches evidence headSha, and has exactly 1 commit above base
     $branchRef = "refs/heads/factory/task/$($script:taskId1)"
-    $branchSha = (& git -C $tempRepo rev-parse --verify $branchRef 2>&1).Trim()
+    $branchShaRaw = & git -C $tempRepo rev-parse --verify $branchRef 2>&1
     $branchShaCode = $LASTEXITCODE
+    $branchSha = ($branchShaRaw -join '').Trim()
     $branchExists = ($branchShaCode -eq 0) -and ($branchSha -match '^[0-9a-f]{40}$')
-    $branchShaMatches = ($branchExists -and $singleEvidenceRow -and ($branchSha -eq $task.attempts[1].evidence.headSha))
 
-    $branchCommitCount = (& git -C $tempRepo rev-list --count $branchRef "^$($script:baseSha)" 2>&1).Trim()
+    $branchShaMatches = ($branchExists -and $singleEvidenceRow -and ($branchSha -eq $evidenceHeadSha))
+
+    $branchCommitRaw = & git -C $tempRepo rev-list --count $branchRef "^$($script:baseSha)" 2>&1
     $branchCommitCode = $LASTEXITCODE
+    $branchCommitCount = ($branchCommitRaw -join '').Trim()
     $branchCommitValid = ($branchCommitCode -eq 0) -and ($branchCommitCount -eq '1')
-    Write-Host "Task branch exists: $branchExists; SHA matches evidence: $branchShaMatches; Commits above base on branch: $branchCommitCount"
+    Write-Host "Task branch exists: $branchExists (ref=$branchRef); SHA matches evidence: $branchShaMatches (branchSha=$branchSha, evidenceHeadSha=$evidenceHeadSha); Commits above base on branch: $branchCommitCount (expected=1)"
 
     if ($execGone -and $grandGone -and $taskDone -and $attemptsValid -and $singleEvidenceRow -and $evidenceValid -and $branchShaMatches -and $branchCommitValid) {
       $global:LASTEXITCODE = 0
@@ -1082,8 +1091,9 @@ try {
     # CRASH BOUNDARY ASSERTIONS:
     # 1. Commit on task branch factory/task/<id> ALREADY exists at the crash boundary
     $branchRef = "refs/heads/factory/task/$tId"
-    $fSha = (& git -C $tempRepo rev-parse --verify $branchRef 2>&1).Trim()
+    $fShaRaw = & git -C $tempRepo rev-parse --verify $branchRef 2>&1
     $fShaCode = $LASTEXITCODE
+    $fSha = ($fShaRaw -join '').Trim()
     if ($fShaCode -ne 0 -or -not ($fSha -match '^[0-9a-f]{40}$')) {
       Write-Host "Commit on task branch does not exist at crash boundary" -ForegroundColor Red
       $global:LASTEXITCODE = 1
@@ -1093,16 +1103,24 @@ try {
     Write-Host "Crash boundary commit exists on branch: $fSha"
 
     # Commit must contain the attempt trailer
-    $commitMsg = (& git -C $tempRepo log -1 --format=%B $fSha 2>&1) -join "`n"
-    if (-not ($commitMsg -match "Factory-Attempt:\s*$($script:attemptId2)")) {
+    $commitMsgRaw = & git -C $tempRepo log -1 --format=%B $fSha 2>&1
+    $commitMsgCode = $LASTEXITCODE
+    $commitMsg = $commitMsgRaw -join "`n"
+    $hasTrailer = ($commitMsgCode -eq 0) -and ($commitMsg -match "Factory-Attempt:\s*$($script:attemptId2)")
+    Write-Host "Commit message at crash boundary contains attempt trailer: $hasTrailer"
+    if (-not $hasTrailer) {
       Write-Host "Commit message at crash boundary does not contain attempt trailer" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
     }
 
     # Exactly 1 commit above base on task branch
-    $commitCountBefore = (& git -C $tempRepo rev-list --count $branchRef "^$($script:baseSha)" 2>&1).Trim()
-    if ($commitCountBefore -ne '1') {
+    $commitCountBeforeRaw = & git -C $tempRepo rev-list --count $branchRef "^$($script:baseSha)" 2>&1
+    $commitCountBeforeCode = $LASTEXITCODE
+    $commitCountBefore = ($commitCountBeforeRaw -join '').Trim()
+    $commitCountBeforeValid = ($commitCountBeforeCode -eq 0) -and ($commitCountBefore -eq '1')
+    Write-Host "Crash boundary commit count: $commitCountBefore (expected=1)"
+    if (-not $commitCountBeforeValid) {
       Write-Host "Expected 1 commit above base at crash boundary, found $commitCountBefore" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
@@ -1117,6 +1135,23 @@ try {
     foreach ($l in $rawBoundary) { Write-Host "BOUNDARY: $l" }
     if ($codeBoundary -ne 0) {
       Write-Host "Crash boundary database state check failed" -ForegroundColor Red
+      $global:LASTEXITCODE = 1
+      return
+    }
+
+    $boundaryJson = $null
+    try {
+      $boundaryJson = ($rawBoundary -join "`n") | ConvertFrom-Json
+    } catch {}
+
+    $boundaryHeadSha = if ($null -ne $boundaryJson) { $boundaryJson.headSha } else { $null }
+    $boundaryOutboxStatus = if ($null -ne $boundaryJson) { $boundaryJson.outboxStatus } else { $null }
+    $boundaryShaMatches = ($null -ne $boundaryHeadSha -and $boundaryHeadSha -eq $fSha)
+    $boundaryOutboxPending = ($boundaryOutboxStatus -eq 'pending')
+    Write-Host "Crash boundary evidence: SHA matches branch: $boundaryShaMatches (headSha=$boundaryHeadSha, branchSha=$fSha); Outbox status: $boundaryOutboxPending (status=$boundaryOutboxStatus, expected=pending)"
+
+    if (-not $boundaryShaMatches -or -not $boundaryOutboxPending) {
+      Write-Host "Crash boundary state mismatch" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
     }
@@ -1159,6 +1194,7 @@ try {
     }
     [void]$sw.Stop()
 
+    Write-Host "Restarted supervisor exited: $($supRestart2.HasExited); ExitCode: $($supRestart2.ExitCode)"
     if (-not $supRestart2.HasExited -or $supRestart2.ExitCode -ne 0) {
       Write-Host "Recovery supervisor failed to exit 0" -ForegroundColor Red
       $global:LASTEXITCODE = 1
@@ -1166,23 +1202,41 @@ try {
     }
 
     $parsed2 = Invoke-FactoryStatus $stateDir
-    $task2 = @(@($parsed2.tasks) | Where-Object { $_.id -eq $script:taskId2 })[0]
-    $task2Done = ($null -ne $task2 -and $task2.status -eq 'done')
+    $tasks2 = if ($null -ne $parsed2 -and $null -ne $parsed2.tasks) { @($parsed2.tasks) } else { @() }
+    $task2 = @($tasks2 | Where-Object { $_.id -eq $script:taskId2 })[0]
+    $task2Status = if ($null -ne $task2) { $task2.status } else { 'missing' }
+    $task2Done = ($null -ne $task2) -and ($task2Status -eq 'done')
+    Write-Host "Task 2 done: $task2Done (status=$task2Status, expected=done)"
 
-    $evidenceCount = if ($null -ne $task2) { @(@($task2.attempts) | Where-Object { $null -ne $_.evidence }).Count } else { 0 }
-    Write-Host "Task 2 done: $task2Done; evidence rows: $evidenceCount"
+    # Count attempts whose evidence is not $null (wrap arrays with @() - ConvertFrom-Json unwraps single-element arrays), take headSha from that one
+    $attempts2 = if ($null -ne $task2 -and $null -ne $task2.attempts) { @($task2.attempts) } else { @() }
+    $withEvidence2 = @($attempts2 | Where-Object { $null -ne $_.evidence })
+    $evidenceCount2 = $withEvidence2.Count
+    $singleEvidenceRow2 = ($evidenceCount2 -eq 1)
+    Write-Host "Task 2 exactly one evidence row: $singleEvidenceRow2 (count=$evidenceCount2, expected=1)"
+
+    $evidence2 = if ($singleEvidenceRow2) { $withEvidence2[0].evidence } else { $null }
+    $evidenceHeadSha2 = if ($null -ne $evidence2) { $evidence2.headSha } else { $null }
+    $evidenceFiles2 = if ($null -ne $evidence2 -and $null -ne $evidence2.files) { @($evidence2.files) } else { @() }
 
     # Branch factory/task/<id> must exist with UNCHANGED head SHA from the crash boundary
     $branchRef = "refs/heads/factory/task/$tId"
-    $recoveredSha = (& git -C $tempRepo rev-parse --verify $branchRef 2>&1).Trim()
+    $recoveredShaRaw = & git -C $tempRepo rev-parse --verify $branchRef 2>&1
     $recoveredShaCode = $LASTEXITCODE
-    $shaUnchanged = ($recoveredShaCode -eq 0) -and ($recoveredSha -eq $script:faultCommitSha)
+    $recoveredSha = ($recoveredShaRaw -join '').Trim()
+    $branchExists2 = ($recoveredShaCode -eq 0) -and ($recoveredSha -match '^[0-9a-f]{40}$')
 
-    $commitCountAfter = (& git -C $tempRepo rev-list --count $branchRef "^$($script:baseSha)" 2>&1).Trim()
-    $commitCountValid = ($commitCountAfter -eq '1')
-    Write-Host "Task 2 commits above base: $commitCountAfter (SHA unchanged: $shaUnchanged)"
+    $shaMatchesEvidence2 = ($branchExists2 -and $singleEvidenceRow2 -and ($recoveredSha -eq $evidenceHeadSha2))
+    $shaUnchanged = ($branchExists2 -and ($recoveredSha -eq $script:faultCommitSha))
 
-    if ($task2Done -and $evidenceCount -eq 1 -and $shaUnchanged -and $commitCountValid) {
+    $commitCountRaw = & git -C $tempRepo rev-list --count $branchRef "^$($script:baseSha)" 2>&1
+    $commitCountCode = $LASTEXITCODE
+    $commitCountAfter = ($commitCountRaw -join '').Trim()
+    $commitCountValid = ($commitCountCode -eq 0) -and ($commitCountAfter -eq '1')
+
+    Write-Host "Task 2 branch exists: $branchExists2 (ref=$branchRef); SHA matches evidence: $shaMatchesEvidence2 (branchSha=$recoveredSha, evidenceHeadSha=$evidenceHeadSha2); SHA unchanged from crash boundary: $shaUnchanged (branchSha=$recoveredSha, crashBoundarySha=$($script:faultCommitSha)); Commits above base on branch: $commitCountAfter (expected=1)"
+
+    if ($task2Done -and $singleEvidenceRow2 -and $branchExists2 -and $shaMatchesEvidence2 -and $shaUnchanged -and $commitCountValid) {
       $global:LASTEXITCODE = 0
     } else {
       $global:LASTEXITCODE = 1
