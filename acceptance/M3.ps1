@@ -6,9 +6,12 @@ param(
 )
 
 $origConsoleEncoding = $null
+$origInputEncoding = $null
 $origOutputEncoding = $null
 $script:overallFailed = $false
 $script:failureReason = $null
+$script:hasSurvivors = $false
+$script:nodeExe = $null
 $results = @()
 $script:stepOk = $false
 $script:startedProcesses = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
@@ -28,6 +31,7 @@ $script:worker2Nonce = $null
 $script:worker3Pid = $null
 $script:worker3GrandchildPid = $null
 $script:sup1Process = $null
+$script:sup1Pid = $null
 
 $acceptanceNonce = [guid]::NewGuid().ToString('N')
 $sharedBase = Join-Path $env:TEMP 'factory-m3-acceptance'
@@ -69,6 +73,52 @@ function Remove-AcceptanceTempDir([string]$dir) {
   }
 }
 
+function Test-ProcessMatchesRun($proc) {
+  if ($null -eq $proc -or $proc.ProcessId -eq $PID) { return $false }
+  $pName = $proc.Name
+  if ([string]::IsNullOrWhiteSpace($pName) -or ($pName -ne 'node.exe' -and $pName -notlike 'node*.exe')) {
+    return $false
+  }
+  $cmd = $proc.CommandLine
+  if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
+
+  # Command line contains this run's directory
+  if (-not [string]::IsNullOrWhiteSpace($acceptanceBase)) {
+    if ($cmd.IndexOf($acceptanceBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return $true
+    }
+    $fwdBase = $acceptanceBase.Replace('\', '/')
+    if ($cmd.IndexOf($fwdBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return $true
+    }
+    try {
+      $fullBase = [System.IO.Path]::GetFullPath($acceptanceBase)
+      if ($cmd.IndexOf($fullBase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        return $true
+      }
+      $fwdFull = $fullBase.Replace('\', '/')
+      if ($cmd.IndexOf($fwdFull, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        return $true
+      }
+    } catch {}
+  }
+
+  # OR any tracked nonce
+  if (-not [string]::IsNullOrWhiteSpace($acceptanceNonce)) {
+    if ($cmd.IndexOf($acceptanceNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return $true
+    }
+  }
+
+  foreach ($workerNonce in $script:trackedWorkerNonces) {
+    if (-not [string]::IsNullOrWhiteSpace($workerNonce) -and $cmd.IndexOf($workerNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
 function Stop-AllAcceptanceProcesses {
   # 1. Stop all explicitly tracked processes started via Start-Process
   foreach ($proc in $script:startedProcesses) {
@@ -93,28 +143,11 @@ function Stop-AllAcceptanceProcesses {
     }
   }
 
-  # 3. Stop any remaining processes whose command line contains our acceptance nonce or worker nonces
+  # 3. Sweep: kill every node.exe whose command line contains this run's directory OR any tracked nonce
   try {
-    $allProcs = @(Get-CimInstance Win32_Process -Property ProcessId, CommandLine -ErrorAction SilentlyContinue)
+    $allProcs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction SilentlyContinue)
     foreach ($p in $allProcs) {
-      if ($null -eq $p -or $p.ProcessId -eq $PID) { continue }
-      $cmd = $p.CommandLine
-      if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
-
-      $isOurs = $false
-      if ($cmd.IndexOf($acceptanceNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-        $isOurs = $true
-      }
-      if (-not $isOurs) {
-        foreach ($workerNonce in $script:trackedWorkerNonces) {
-          if (-not [string]::IsNullOrWhiteSpace($workerNonce) -and $cmd.IndexOf($workerNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-            $isOurs = $true
-            break
-          }
-        }
-      }
-
-      if ($isOurs) {
+      if (Test-ProcessMatchesRun $p) {
         try {
           Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
         } catch {}
@@ -124,7 +157,8 @@ function Stop-AllAcceptanceProcesses {
 
   # 4. Bounded wait for all candidate processes to be gone
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  while ($sw.Elapsed.TotalSeconds -lt 5) {
+  $timeoutSec = 10
+  while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
     $anyAlive = $false
     foreach ($proc in $script:startedProcesses) {
       if ($null -ne $proc -and -not $proc.HasExited) { $anyAlive = $true; break }
@@ -135,17 +169,24 @@ function Stop-AllAcceptanceProcesses {
         if ($null -ne $p -and -not $p.HasExited) { $anyAlive = $true; break }
       }
     }
+    if (-not $anyAlive) {
+      $procs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction SilentlyContinue)
+      foreach ($p in $procs) {
+        if (Test-ProcessMatchesRun $p) { $anyAlive = $true; break }
+      }
+    }
     if (-not $anyAlive) { break }
     Start-Sleep -Milliseconds 150
   }
   [void]$sw.Stop()
 
-  # 5. Survivor checks for all owned processes
+  # 5. Survivor checks: assert none survive
+  $survivorDetails = [System.Collections.Generic.List[string]]::new()
   foreach ($proc in $script:startedProcesses) {
     if ($null -ne $proc) {
       try {
         if (-not $proc.HasExited) {
-          throw "Process cleanup error: started process PID $($proc.Id) could not be confirmed terminated"
+          $survivorDetails.Add("Started process PID $($proc.Id) still running")
         }
       } catch [System.InvalidOperationException] {}
     }
@@ -153,22 +194,21 @@ function Stop-AllAcceptanceProcesses {
   foreach ($pId in $script:ownedPids) {
     $p = Get-Process -Id $pId -ErrorAction SilentlyContinue
     if ($null -ne $p -and -not $p.HasExited) {
-      throw "Process cleanup error: worker PID $pId could not be confirmed terminated"
+      $survivorDetails.Add("Owned worker/grandchild PID $pId still running")
     }
   }
-  $remainingProcs = @(Get-CimInstance Win32_Process -Property ProcessId, CommandLine -ErrorAction SilentlyContinue)
+  $remainingProcs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction SilentlyContinue)
   foreach ($p in $remainingProcs) {
-    if ($null -eq $p -or $p.ProcessId -eq $PID) { continue }
-    $cmd = $p.CommandLine
-    if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
-    if ($cmd.IndexOf($acceptanceNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-      throw "Process cleanup error: surviving process PID $($p.ProcessId) matching acceptance nonce $acceptanceNonce"
+    if (Test-ProcessMatchesRun $p) {
+      $survivorDetails.Add("Node process PID $($p.ProcessId) matching run dir or nonce still running: $($p.CommandLine)")
     }
-    foreach ($workerNonce in $script:trackedWorkerNonces) {
-      if (-not [string]::IsNullOrWhiteSpace($workerNonce) -and $cmd.IndexOf($workerNonce, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-        throw "Process cleanup error: surviving process PID $($p.ProcessId) matching worker nonce $workerNonce"
-      }
-    }
+  }
+
+  if ($survivorDetails.Count -gt 0) {
+    $script:hasSurvivors = $true
+    $script:overallFailed = $true
+    $errMessage = "Process cleanup failed - surviving processes detected:`n" + ($survivorDetails -join "`n")
+    throw $errMessage
   }
 }
 
@@ -200,7 +240,7 @@ function Cleanup-TaskWorktrees {
 
 function Invoke-FactoryStatus([string]$sDir) {
   $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = 'node'
+  $psi.FileName = if ($script:nodeExe) { $script:nodeExe } else { 'node' }
   $cliPath = if ($dest -and (Test-Path -LiteralPath (Join-Path $dest 'lib\factory.mjs'))) {
     Join-Path $dest 'lib\factory.mjs'
   } else {
@@ -220,7 +260,11 @@ function Invoke-FactoryStatus([string]$sDir) {
   if ($code -ne 0) {
     throw "factory status failed with exit code ${code}: $stderr"
   }
-  return ($stdout | ConvertFrom-Json)
+  try {
+    return ($stdout | ConvertFrom-Json)
+  } catch {
+    throw "factory status JSON parse failed: $($_.Exception.Message)`nRaw stdout: $stdout`nRaw stderr: $stderr"
+  }
 }
 
 function Step($n, $label, [scriptblock]$cmd = $null, [switch]$Skip) {
@@ -255,9 +299,23 @@ function Skip-Step($n, $label) {
 
 try {
   $origConsoleEncoding = [Console]::OutputEncoding
+  $origInputEncoding = [Console]::InputEncoding
   $origOutputEncoding = $OutputEncoding
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  [Console]::InputEncoding = [System.Text.Encoding]::UTF8
   $OutputEncoding = [System.Text.Encoding]::UTF8
+
+  # Resolve the real node binary once early
+  $rawNodeExe = & node -p "process.execPath"
+  $nodeResCode = $LASTEXITCODE
+  if ($nodeResCode -ne 0) {
+    throw "Failed to resolve node executable via 'node -p process.execPath' with code ${nodeResCode}"
+  }
+  $resolvedNode = ($rawNodeExe -join '').Trim()
+  if ([string]::IsNullOrWhiteSpace($resolvedNode) -or -not (Test-Path -LiteralPath $resolvedNode)) {
+    throw "Resolved node executable does not exist or is invalid: '$resolvedNode'"
+  }
+  $script:nodeExe = $resolvedNode
 
   $ErrorActionPreference = 'Stop'
 
@@ -481,7 +539,7 @@ try {
 
   # 1) Node version: 24 or 26
   if (-not (Step 1 'Node version is 24 or 26' {
-    $v = node -v
+    $v = & $script:nodeExe -v
     $code = $LASTEXITCODE
     Write-Host "Node version: $v"
     if ($code -eq 0 -and $v -match '^v(24|26)\.') { $global:LASTEXITCODE = 0 } else { $global:LASTEXITCODE = 1 }
@@ -509,15 +567,15 @@ try {
   # 7) Manifest check
   if ($SkipBaseline) {
     Skip-Step 7 'Manifest: ported files match dsh'
-  } elseif (-not (Step 7 'Manifest: ported files match dsh' { node scripts/check-manifest.mjs })) { throw 'Step 7 failed' }
+  } elseif (-not (Step 7 'Manifest: ported files match dsh' { & $script:nodeExe scripts/check-manifest.mjs })) { throw 'Step 7 failed' }
   # 8) No forbidden imports
   if ($SkipBaseline) {
     Skip-Step 8 'No forbidden imports'
-  } elseif (-not (Step 8 'No forbidden imports' { node scripts/check-forbidden-imports.mjs })) { throw 'Step 8 failed' }
+  } elseif (-not (Step 8 'No forbidden imports' { & $script:nodeExe scripts/check-forbidden-imports.mjs })) { throw 'Step 8 failed' }
   # 9) Traceability check
   if ($SkipBaseline) {
     Skip-Step 9 'Every DoD check has passing evidence'
-  } elseif (-not (Step 9 'Every DoD check has passing evidence' { node scripts/check-traceability.mjs --all --require-passing })) { throw 'Step 9 failed' }
+  } elseif (-not (Step 9 'Every DoD check has passing evidence' { & $script:nodeExe scripts/check-traceability.mjs --all --require-passing })) { throw 'Step 9 failed' }
 
   # 10) Init factory project with fresh git repository
   if (-not (Step 10 'Init factory project with fresh git repository' {
@@ -536,7 +594,9 @@ try {
     $outCommit = & git -C $tempRepo commit --allow-empty -m "Initial commit" -q 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git commit failed: $($outCommit -join ' ')" }
 
-    $baseSha = (& git -C $tempRepo rev-parse HEAD).Trim()
+    $baseShaRaw = & git -C $tempRepo rev-parse HEAD
+    if ($LASTEXITCODE -ne 0) { throw "git rev-parse HEAD failed" }
+    $baseSha = ($baseShaRaw -join '').Trim()
     $script:baseSha = $baseSha
     Write-Host "Demo repository initialized at $tempRepo with baseSha $baseSha"
 
@@ -544,7 +604,7 @@ try {
       New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
     }
 
-    $raw = node lib/factory.mjs init --state-dir "$stateDir" --repo "$tempRepo" 2>&1
+    $raw = & $script:nodeExe lib/factory.mjs init --state-dir "$stateDir" --repo "$tempRepo" 2>&1
     $code = $LASTEXITCODE
     $res = $raw | ForEach-Object { "$_" }
     foreach ($line in $res) { Write-Host $line }
@@ -562,13 +622,13 @@ try {
     $ErrorActionPreference = 'Continue'
     $tId = $script:taskId1
 
-    $raw1 = node lib/factory.mjs task create --state-dir "$stateDir" --title "M3 Demo Task 1" --command-id $tId 2>&1
+    $raw1 = & $script:nodeExe lib/factory.mjs task create --state-dir "$stateDir" --title "M3 Demo Task 1" --command-id $tId 2>&1
     $code1 = $LASTEXITCODE
     $res1 = $raw1 | ForEach-Object { "$_" }
     foreach ($line in $res1) { Write-Host $line }
     $createdValid = ($code1 -eq 0) -and ($res1.Count -ge 1) -and ($res1[0] -match "^created $tId$")
 
-    $raw2 = node lib/factory.mjs task create --state-dir "$stateDir" --title "M3 Demo Task 1" --command-id $tId 2>&1
+    $raw2 = & $script:nodeExe lib/factory.mjs task create --state-dir "$stateDir" --title "M3 Demo Task 1" --command-id $tId 2>&1
     $code2 = $LASTEXITCODE
     $res2 = $raw2 | ForEach-Object { "$_" }
     foreach ($line in $res2) { Write-Host $line }
@@ -592,7 +652,7 @@ try {
     $sup1Err = Join-Path $logsDir 'sup1.err.log'
 
     $env:FAKE_SLEEP_MS = '60000'
-    $sup1 = Start-Process -FilePath 'node' `
+    $sup1 = Start-Process -FilePath $script:nodeExe `
       -ArgumentList "lib/factory.mjs start --state-dir `"$stateDir`" --stale-after-ms 2000 --heartbeat-ms 500" `
       -RedirectStandardOutput $sup1Out `
       -RedirectStandardError $sup1Err `
@@ -601,6 +661,7 @@ try {
     $null = $sup1.Handle
     $script:startedProcesses.Add($sup1)
     $script:sup1Process = $sup1
+    $script:sup1Pid = $sup1.Id
     Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue
 
     $timeoutSec = 30
@@ -615,10 +676,10 @@ try {
 
       try {
         $parsed = Invoke-FactoryStatus $stateDir
-        if ($null -ne $parsed.tasks -and $parsed.tasks.Count -ge 1) {
-          $task = @($parsed.tasks | Where-Object { $_.id -eq $script:taskId1 })[0]
-          if ($null -ne $task -and $task.status -eq 'progress' -and $task.attempts.Count -ge 1) {
-            $att = $task.attempts[0]
+        if ($null -ne $parsed.tasks -and @($parsed.tasks).Count -ge 1) {
+          $task = @(@($parsed.tasks) | Where-Object { $_.id -eq $script:taskId1 })[0]
+          if ($null -ne $task -and $task.status -eq 'progress' -and @($task.attempts).Count -ge 1) {
+            $att = @($task.attempts)[0]
             if ($att.status -eq 'running' -and $null -ne $att.worker -and $att.worker.state -eq 'running' -and $att.worker.pid -gt 0) {
               $script:worker1Pid = $att.worker.pid
               $script:ownedPids.Add($att.worker.pid)
@@ -676,14 +737,33 @@ try {
   # 13) Stop the Supervisor only and assert the executor pid from worker.json is alive
   if (-not (Step 13 'Stop supervisor and assert orphaned executor and grandchild are alive' {
     $ErrorActionPreference = 'Continue'
+    $supPid = if ($null -ne $script:sup1Process) { $script:sup1Process.Id } else { $script:sup1Pid }
+    if ($null -eq $supPid -or $supPid -le 0) {
+      Write-Host "Supervisor PID not recorded" -ForegroundColor Red
+      $global:LASTEXITCODE = 1
+      return
+    }
+
     if ($null -ne $script:sup1Process -and -not $script:sup1Process.HasExited) {
       $script:sup1Process.Kill()
       [void]$script:sup1Process.WaitForExit(5000)
     }
 
-    $supDead = $script:sup1Process.HasExited
+    # Bounded wait to confirm the real supervisor PID is dead
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $supDead = $false
+    while ($sw.Elapsed.TotalSeconds -lt 5) {
+      $pSup = Get-Process -Id $supPid -ErrorAction SilentlyContinue
+      if (($null -eq $pSup -or $pSup.HasExited) -and ($null -eq $script:sup1Process -or $script:sup1Process.HasExited)) {
+        $supDead = $true
+        break
+      }
+      Start-Sleep -Milliseconds 100
+    }
+    [void]$sw.Stop()
+
     if (-not $supDead) {
-      Write-Host "Supervisor process failed to stop" -ForegroundColor Red
+      Write-Host "Real Supervisor PID $supPid failed to stop" -ForegroundColor Red
       $global:LASTEXITCODE = 1
       return
     }
@@ -694,7 +774,7 @@ try {
     $grandchildProc = Get-Process -Id $script:worker1GrandchildPid -ErrorAction SilentlyContinue
     $grandchildAlive = ($null -ne $grandchildProc) -and (-not $grandchildProc.HasExited)
 
-    Write-Host "Supervisor dead: $supDead; Executor alive: $executorAlive; Grandchild alive: $grandchildAlive"
+    Write-Host "Supervisor PID $supPid dead: $supDead; Executor alive: $executorAlive; Grandchild alive: $grandchildAlive"
     if ($supDead -and $executorAlive -and $grandchildAlive) {
       $global:LASTEXITCODE = 0
     } else {
@@ -728,7 +808,7 @@ try {
     $supRestartOut = Join-Path $logsDir 'sup-restart1.out.log'
     $supRestartErr = Join-Path $logsDir 'sup-restart1.err.log'
 
-    $supRestart = Start-Process -FilePath 'node' `
+    $supRestart = Start-Process -FilePath $script:nodeExe `
       -ArgumentList "lib/factory.mjs start --state-dir `"$stateDir`" --takeover $takeover --exit-when-idle --stale-after-ms 2000 --heartbeat-ms 500" `
       -RedirectStandardOutput $supRestartOut `
       -RedirectStandardError $supRestartErr `
@@ -764,33 +844,33 @@ try {
     Write-Host "Executor gone: $execGone; Grandchild gone: $grandGone"
 
     $parsed = Invoke-FactoryStatus $stateDir
-    $task = @($parsed.tasks | Where-Object { $_.id -eq $script:taskId1 })[0]
+    $task = @(@($parsed.tasks) | Where-Object { $_.id -eq $script:taskId1 })[0]
     $taskDone = ($null -ne $task) -and ($task.status -eq 'done')
     Write-Host "Task 1 done: $taskDone (status=$($task.status))"
 
     $attemptsValid = $false
-    if ($null -ne $task -and $task.attempts.Count -eq 2) {
-      $a1 = $task.attempts[0]
-      $a2 = $task.attempts[1]
+    if ($null -ne $task -and @($task.attempts).Count -eq 2) {
+      $a1 = @($task.attempts)[0]
+      $a2 = @($task.attempts)[1]
       if ($a1.no -eq 1 -and $a1.status -eq 'interrupted' -and $a2.no -eq 2 -and $a2.status -eq 'succeeded') {
         $attemptsValid = $true
       }
     }
-    Write-Host "Attempts interrupted + succeeded: $attemptsValid (count=$($task.attempts.Count))"
+    Write-Host "Attempts interrupted + succeeded: $attemptsValid (count=$(if ($null -ne $task) { @($task.attempts).Count } else { 0 }))"
 
     # Require exactly one evidence row across both attempts (attempt 1 has none, attempt 2 has one)
-    $evidenceAttempts = if ($null -ne $task) { @($task.attempts | Where-Object { $null -ne $_.evidence }) } else { @() }
-    $singleEvidenceRow = ($evidenceAttempts.Count -eq 1) -and ($null -eq $task.attempts[0].evidence) -and ($null -ne $task.attempts[1].evidence)
+    $evidenceAttempts = if ($null -ne $task) { @(@($task.attempts) | Where-Object { $null -ne $_.evidence }) } else { @() }
+    $singleEvidenceRow = ($evidenceAttempts.Count -eq 1) -and ($null -eq @($task.attempts)[0].evidence) -and ($null -ne @($task.attempts)[1].evidence)
     Write-Host "Exactly one evidence row across attempts: $singleEvidenceRow"
 
     $evidenceValid = $false
     if ($attemptsValid -and $singleEvidenceRow) {
-      $evidence = $task.attempts[1].evidence
+      $evidence = @($task.attempts)[1].evidence
       if ($null -ne $evidence -and -not [string]::IsNullOrWhiteSpace($evidence.headSha)) {
         $env:FACTORY_WT_DIR = Join-Path $stateDir "worktrees\$($script:taskId1)"
         $env:FACTORY_HEAD_SHA = $evidence.headSha
         $env:FACTORY_FILES_JSON = ($evidence.files | ConvertTo-Json -Compress)
-        $rawVerify = node "$verifyEvidenceScript" 2>&1
+        $rawVerify = & $script:nodeExe "$verifyEvidenceScript" 2>&1
         $verifyCode = $LASTEXITCODE
         Remove-Item env:FACTORY_WT_DIR, env:FACTORY_HEAD_SHA, env:FACTORY_FILES_JSON -ErrorAction SilentlyContinue
         foreach ($l in $rawVerify) { Write-Host "VERIFY: $l" }
@@ -829,7 +909,7 @@ try {
     $ErrorActionPreference = 'Continue'
     $tId = $script:taskId2
 
-    $rawCreate = node lib/factory.mjs task create --state-dir "$stateDir" --title "Task 2 Fault" --command-id $tId 2>&1
+    $rawCreate = & $script:nodeExe lib/factory.mjs task create --state-dir "$stateDir" --title "Task 2 Fault" --command-id $tId 2>&1
     $codeCreate = $LASTEXITCODE
     $resCreate = $rawCreate | ForEach-Object { "$_" }
     foreach ($line in $resCreate) { Write-Host $line }
@@ -844,7 +924,7 @@ try {
     $supPreErr = Join-Path $logsDir 'sup2-pre.err.log'
 
     $env:FAKE_SLEEP_MS = '2500'
-    $supPre = Start-Process -FilePath 'node' `
+    $supPre = Start-Process -FilePath $script:nodeExe `
       -ArgumentList "lib/factory.mjs start --state-dir `"$stateDir`" --stale-after-ms 2000 --heartbeat-ms 500" `
       -RedirectStandardOutput $supPreOut `
       -RedirectStandardError $supPreErr `
@@ -862,9 +942,9 @@ try {
       if ($supPre.HasExited) { break }
       try {
         $parsed = Invoke-FactoryStatus $stateDir
-        $task2 = @($parsed.tasks | Where-Object { $_.id -eq $tId })[0]
-        if ($null -ne $task2 -and $task2.status -eq 'progress' -and $task2.attempts.Count -ge 1) {
-          $att = $task2.attempts[0]
+        $task2 = @(@($parsed.tasks) | Where-Object { $_.id -eq $tId })[0]
+        if ($null -ne $task2 -and $task2.status -eq 'progress' -and @($task2.attempts).Count -ge 1) {
+          $att = @($task2.attempts)[0]
           if ($att.status -eq 'running' -and $null -ne $att.worker -and $att.worker.state -eq 'running' -and $att.worker.pid -gt 0) {
             $script:worker2Pid = $att.worker.pid
             $script:attemptId2 = $att.id
@@ -946,7 +1026,7 @@ try {
     # Arrange pending evidence.commit in outbox with worker exited and attempt succeeded
     $env:FACTORY_STATE_DIR = $stateDir
     $env:FACTORY_TASK_ID = $tId
-    $rawArrange = node "$arrangePendingScript" 2>&1
+    $rawArrange = & $script:nodeExe "$arrangePendingScript" 2>&1
     $codeArrange = $LASTEXITCODE
     Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue
     foreach ($l in $rawArrange) { Write-Host "ARRANGE: $l" }
@@ -973,7 +1053,7 @@ try {
 
     # Start Supervisor with FACTORY_FAULT=outbox-after-effect so next effect (evidence.commit) crashes
     $env:FACTORY_FAULT = 'outbox-after-effect'
-    $supFault = Start-Process -FilePath 'node' `
+    $supFault = Start-Process -FilePath $script:nodeExe `
       -ArgumentList "lib/factory.mjs start --state-dir `"$stateDir`" --takeover $takeover --stale-after-ms 2000 --heartbeat-ms 500" `
       -RedirectStandardOutput $supFaultOut `
       -RedirectStandardError $supFaultErr `
@@ -1031,7 +1111,7 @@ try {
     # 2. Evidence row exists in database, but outbox status is still pending (crash occurred before status=done)
     $env:FACTORY_STATE_DIR = $stateDir
     $env:FACTORY_TASK_ID = $tId
-    $rawBoundary = node "$checkCrashBoundaryScript" 2>&1
+    $rawBoundary = & $script:nodeExe "$checkCrashBoundaryScript" 2>&1
     $codeBoundary = $LASTEXITCODE
     Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue
     foreach ($l in $rawBoundary) { Write-Host "BOUNDARY: $l" }
@@ -1064,7 +1144,7 @@ try {
     $supRestart2Out = Join-Path $logsDir 'sup-restart2.out.log'
     $supRestart2Err = Join-Path $logsDir 'sup-restart2.err.log'
 
-    $supRestart2 = Start-Process -FilePath 'node' `
+    $supRestart2 = Start-Process -FilePath $script:nodeExe `
       -ArgumentList "lib/factory.mjs start --state-dir `"$stateDir`" --takeover $takeover --exit-when-idle --stale-after-ms 2000 --heartbeat-ms 500" `
       -RedirectStandardOutput $supRestart2Out `
       -RedirectStandardError $supRestart2Err `
@@ -1086,10 +1166,10 @@ try {
     }
 
     $parsed2 = Invoke-FactoryStatus $stateDir
-    $task2 = @($parsed2.tasks | Where-Object { $_.id -eq $script:taskId2 })[0]
+    $task2 = @(@($parsed2.tasks) | Where-Object { $_.id -eq $script:taskId2 })[0]
     $task2Done = ($null -ne $task2 -and $task2.status -eq 'done')
 
-    $evidenceCount = if ($null -ne $task2) { @($task2.attempts | Where-Object { $null -ne $_.evidence }).Count } else { 0 }
+    $evidenceCount = if ($null -ne $task2) { @(@($task2.attempts) | Where-Object { $null -ne $_.evidence }).Count } else { 0 }
     Write-Host "Task 2 done: $task2Done; evidence rows: $evidenceCount"
 
     # Branch factory/task/<id> must exist with UNCHANGED head SHA from the crash boundary
@@ -1118,7 +1198,7 @@ try {
     $ErrorActionPreference = 'Continue'
     $tId = $script:taskId3
 
-    $rawCreate = node lib/factory.mjs task create --state-dir "$stateDir" --title "Task 3 Kill Test" --command-id $tId 2>&1
+    $rawCreate = & $script:nodeExe lib/factory.mjs task create --state-dir "$stateDir" --title "Task 3 Kill Test" --command-id $tId 2>&1
     $codeCreate = $LASTEXITCODE
     $resCreate = $rawCreate | ForEach-Object { "$_" }
     foreach ($line in $resCreate) { Write-Host $line }
@@ -1132,7 +1212,7 @@ try {
     $sup3Err = Join-Path $logsDir 'sup3.err.log'
 
     $env:FAKE_SLEEP_MS = '60000'
-    $sup3 = Start-Process -FilePath 'node' `
+    $sup3 = Start-Process -FilePath $script:nodeExe `
       -ArgumentList "lib/factory.mjs start --state-dir `"$stateDir`" --exit-when-idle --stale-after-ms 2000 --heartbeat-ms 500" `
       -RedirectStandardOutput $sup3Out `
       -RedirectStandardError $sup3Err `
@@ -1152,14 +1232,16 @@ try {
       }
       try {
         $parsed = Invoke-FactoryStatus $stateDir
-        $task3 = @($parsed.tasks | Where-Object { $_.id -eq $script:taskId3 })[0]
-        if ($null -ne $task3 -and $task3.status -eq 'progress' -and $task3.attempts.Count -ge 1) {
-          $att = $task3.attempts[0]
-          if ($att.status -eq 'running' -and $null -ne $att.worker -and $att.worker.state -eq 'running' -and $att.worker.pid -gt 0) {
-            $script:worker3Pid = $att.worker.pid
-            $script:ownedPids.Add($att.worker.pid)
-            $running = $true
-            break
+        if ($null -ne $parsed.tasks -and @($parsed.tasks).Count -ge 1) {
+          $task3 = @(@($parsed.tasks) | Where-Object { $_.id -eq $script:taskId3 })[0]
+          if ($null -ne $task3 -and $task3.status -eq 'progress' -and @($task3.attempts).Count -ge 1) {
+            $att = @($task3.attempts)[0]
+            if ($att.status -eq 'running' -and $null -ne $att.worker -and $att.worker.state -eq 'running' -and $att.worker.pid -gt 0) {
+              $script:worker3Pid = $att.worker.pid
+              $script:ownedPids.Add($att.worker.pid)
+              $running = $true
+              break
+            }
           }
         }
       } catch {}
@@ -1218,7 +1300,7 @@ try {
     }
 
     # Issue task kill
-    $killRaw = node lib/factory.mjs task kill --state-dir "$stateDir" --task $tId 2>&1
+    $killRaw = & $script:nodeExe lib/factory.mjs task kill --state-dir "$stateDir" --task $tId 2>&1
     $killCode = $LASTEXITCODE
     $killRes = $killRaw | ForEach-Object { "$_" }
     foreach ($line in $killRes) { Write-Host $line }
@@ -1267,10 +1349,10 @@ try {
     }
 
     $parsed3 = Invoke-FactoryStatus $stateDir
-    $task3After = @($parsed3.tasks | Where-Object { $_.id -eq $script:taskId3 })[0]
+    $task3After = @(@($parsed3.tasks) | Where-Object { $_.id -eq $script:taskId3 })[0]
 
-    Write-Host "Task 3 status after kill: $($task3After.status); attempt status: $($task3After.attempts[0].status)"
-    if ($task3After.status -eq 'dropped' -and $task3After.attempts[0].status -eq 'killed') {
+    Write-Host "Task 3 status after kill: $($task3After.status); attempt status: $(@($task3After.attempts)[0].status)"
+    if ($task3After.status -eq 'dropped' -and @($task3After.attempts)[0].status -eq 'killed') {
       $global:LASTEXITCODE = 0
     } else {
       $global:LASTEXITCODE = 1
@@ -1283,7 +1365,7 @@ try {
     $supFinalOut = Join-Path $logsDir 'sup-final.out.log'
     $supFinalErr = Join-Path $logsDir 'sup-final.err.log'
 
-    $supFinal = Start-Process -FilePath 'node' `
+    $supFinal = Start-Process -FilePath $script:nodeExe `
       -ArgumentList "lib/factory.mjs start --state-dir `"$stateDir`" --exit-when-idle --stale-after-ms 2000 --heartbeat-ms 500" `
       -RedirectStandardOutput $supFinalOut `
       -RedirectStandardError $supFinalErr `
@@ -1305,10 +1387,10 @@ try {
     }
 
     $parsed = Invoke-FactoryStatus $stateDir
-    $task3Final = @($parsed.tasks | Where-Object { $_.id -eq $script:taskId3 })[0]
+    $task3Final = @(@($parsed.tasks) | Where-Object { $_.id -eq $script:taskId3 })[0]
 
-    Write-Host "Task 3 final status: $($task3Final.status); attempts count: $($task3Final.attempts.Count)"
-    if ($task3Final.status -eq 'dropped' -and $task3Final.attempts.Count -eq 1 -and $task3Final.attempts[0].status -eq 'killed') {
+    Write-Host "Task 3 final status: $($task3Final.status); attempts count: $(@($task3Final.attempts).Count)"
+    if ($task3Final.status -eq 'dropped' -and @($task3Final.attempts).Count -eq 1 -and @($task3Final.attempts)[0].status -eq 'killed') {
       $global:LASTEXITCODE = 0
     } else {
       $global:LASTEXITCODE = 1
@@ -1344,7 +1426,11 @@ try {
     if ($dest -and $origLocation -and $PWD.Path.StartsWith($dest, [System.StringComparison]::OrdinalIgnoreCase)) {
       Set-Location $origLocation
     }
-    if ($acceptanceBase) { Remove-AcceptanceTempDir $acceptanceBase }
+    if ($script:hasSurvivors) {
+      Write-Host "Process survivors detected: keeping run directory for inspection: $acceptanceBase" -ForegroundColor Yellow
+    } else {
+      if ($acceptanceBase) { Remove-AcceptanceTempDir $acceptanceBase }
+    }
   } catch {
     $script:overallFailed = $true
     if ($null -eq $script:failureReason) {
@@ -1352,9 +1438,9 @@ try {
     }
   }
 
-  # Verify removal of per-run acceptance folder; failure to clean up fails acceptance
+  # Verify removal of per-run acceptance folder if no survivors; failure to clean up fails acceptance
   try {
-    if ($acceptanceBase -and (Test-Path -LiteralPath $acceptanceBase)) {
+    if (-not $script:hasSurvivors -and $acceptanceBase -and (Test-Path -LiteralPath $acceptanceBase)) {
       $script:overallFailed = $true
       if ($null -eq $script:failureReason) {
         $script:failureReason = "Acceptance directory still exists after cleanup: $acceptanceBase"
@@ -1376,6 +1462,9 @@ try {
   try {
     if ($origConsoleEncoding) {
       [Console]::OutputEncoding = $origConsoleEncoding
+    }
+    if ($origInputEncoding) {
+      [Console]::InputEncoding = $origInputEncoding
     }
     if ($origOutputEncoding) {
       $OutputEncoding = $origOutputEncoding
