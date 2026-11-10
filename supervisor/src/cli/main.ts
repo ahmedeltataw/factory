@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { readStatus, formatStatus, type Status } from '../app/status.ts'
 
 import { DEFAULT_STALE_AFTER_MS } from '../app/supervisor-lease.ts'
+import { parseScope } from '../core/scope.ts'
 
 interface ParsedArgs {
   readonly stateDir: string
@@ -87,20 +88,35 @@ async function runTaskOrInit(argv: readonly string[]): Promise<number> {
   const isInit = argv[0] === 'init'
   const action = argv[1]
   const start = isInit ? 1 : 2
-  if (!isInit && (argv[0] !== 'task' || (action !== 'create' && action !== 'kill'))) return run(argv)
-  const allowed = isInit ? ['--state-dir', '--repo'] : ['--state-dir', action === 'create' ? '--title' : '--task', '--command-id']
+  if (!isInit && (argv[0] !== 'task' || (action !== 'create' && action !== 'kill' && action !== 'retry'))) return run(argv)
+  const allowed = isInit ? ['--state-dir', '--repo'] : ['--state-dir', action === 'create' ? '--title' : '--task', '--command-id', ...(action === 'create' ? ['--scope', '--max-attempts', '--timeout-ms'] : [])]
   const values: Record<string, string> = {}
+  const scopes: string[] = []
   for (let i = start; i < argv.length; i++) {
     const key = argv[i]!
     const value = argv[++i]
-    if (!allowed.includes(key) || values[key] !== undefined || value === undefined || value.startsWith('-') || !value.trim() || !value.isWellFormed()) {
+    if (!allowed.includes(key) || (key !== '--scope' && values[key] !== undefined) || value === undefined || (key !== '--scope' && value.startsWith('-')) || !value.trim() || !value.isWellFormed()) {
       process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory --state-dir <path>\n')
       return 2
     }
-    values[key] = value
+    if (key === '--scope') scopes.push(value)
+    else values[key] = value
   }
   const required = isInit ? ['--state-dir', '--repo'] : ['--state-dir', action === 'create' ? '--title' : '--task']
   if (required.some((key) => values[key] === undefined) || (values['--command-id'] !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(values['--command-id']))) {
+    process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory --state-dir <path>\n')
+    return 2
+  }
+  const scope = parseScope(scopes.length ? scopes : ['.'])
+  const integerOption = (key: string, fallback: number | null, min: number, max: number): number | null | undefined => {
+    const value = values[key]
+    if (value === undefined) return fallback
+    const n = Number(value)
+    return /^[0-9]+$/.test(value) && Number.isSafeInteger(n) && n >= min && n <= max ? n : undefined
+  }
+  const maxAttempts = integerOption('--max-attempts', 3, 1, 10)
+  const timeoutMs = integerOption('--timeout-ms', null, 1000, 86400000)
+  if (!scope.ok || maxAttempts === undefined || timeoutMs === undefined) {
     process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory --state-dir <path>\n')
     return 2
   }
@@ -120,7 +136,7 @@ async function runTaskOrInit(argv: readonly string[]): Promise<number> {
         const id = values['--command-id'] ?? randomUUID()
         const existing = db.prepare('SELECT created_at FROM commands WHERE id = ?').get(id) as { created_at: string } | undefined
         const { appendCommand } = await import('../app/commands.ts')
-        const result = appendCommand(db, { id, projectId: project.project_id, kind: `task.${action}`, payloadJson: JSON.stringify(action === 'create' ? { title: values['--title'] } : { taskId: values['--task'] }), createdAt: existing?.created_at ?? new Date().toISOString() })
+        const result = appendCommand(db, { id, projectId: project.project_id, kind: `task.${action}`, payloadJson: JSON.stringify(action === 'create' ? { title: values['--title'], scope: scope.scope, maxAttempts, timeoutMs } : { taskId: values['--task'] }), createdAt: existing?.created_at ?? new Date().toISOString() })
         process.stdout.write(`${result} ${id}\n\u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0623\u0645\u0631\n`)
       } finally { db.close() }
     }
