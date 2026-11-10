@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { setTimeout as delay } from 'node:timers/promises'
 import { killTree, parseLinuxStat, parseWindowsProcesses, spawnWorker, treeMembers, aliveMembers } from '../supervisor/src/app/process-tree.ts'
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -15,6 +16,11 @@ vi.mock('node:child_process', async (importOriginal) => {
 vi.mock('node:fs', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs')>()
   return { ...original, readFileSync: vi.fn(original.readFileSync), readdirSync: vi.fn(original.readdirSync) }
+})
+
+vi.mock('node:timers/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:timers/promises')>()
+  return { ...original, setTimeout: vi.fn(original.setTimeout) }
 })
 
 it('waits for a zombie root to disappear before reporting POSIX success', async () => {
@@ -136,6 +142,149 @@ describe('simulated Windows kill flow', () => {
     try {
       vi.mocked(spawnSync).mockReturnValueOnce(ok(target)).mockReturnValueOnce(ok('[]')).mockReturnValueOnce({ status: 7, stderr: ' failure ' } as never)
       expect(await killTree(123, 'nonce', { killCommand: { file: 'custom', args: ['arg'] } })).toEqual({ result: 'kill-failed', detail: 'failure' })
+    } finally { platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
+  })
+})
+
+describe('in-process mutation coverage', () => {
+  const pid = 123456789
+  const nonce = randomUUID()
+  const stat = (id: number, parent = 1, created = '100', state = 'S') =>
+    `${id} (worker) ${state} ${parent} 17 ${Array(16).fill('0').join(' ')} ${created}`
+  const err = (code: string) => Object.assign(new Error(code), { code })
+  const record = (id: number, parent: number, created = '100') => ({ ProcessId: id, ParentProcessId: parent, CreationDate: created })
+  const ok = (stdout: string) => ({ status: 0, stdout, stderr: '' } as never)
+
+  it('validates each Windows record boundary and command encoding', () => {
+    for (const item of [null, [], 1, 'x', { ...record(1, 0), ProcessId: '1' },
+      { ...record(1, 0), ProcessId: 1.5 }, { ...record(1, 0), ProcessId: 4294967296 },
+      { ...record(1, 0), ParentProcessId: -1 }, { ...record(1, 0), ParentProcessId: 4294967296 }]) {
+      expect(() => parseWindowsProcesses(JSON.stringify([item]))).toThrow('Invalid process record')
+    }
+    expect(parseWindowsProcesses(JSON.stringify([record(4294967295, 4294967295)]))).toEqual([{ pid: 4294967295, parent: 4294967295, created: '100' }])
+    for (const command of ['!YQ==', 'YQ==!', 'A==', 'AAA!', 'AAAAA']) {
+      expect(() => parseWindowsProcesses(JSON.stringify([{ ...record(1, 0), CommandLine: command }]), 1)).toThrow('Invalid process command')
+    }
+  })
+
+  it('validates Linux stat identifiers, parent and numeric boundaries', () => {
+    for (const [entry, value] of [['x123', stat(123)], ['123x', stat(123)], ['123', '123 (missing'],
+      ['123', stat(124)], ['9007199254740992', stat(9007199254740992)],
+      ['123', stat(123, 9007199254740992)], ['123', stat(123).replace(' S 1 ', ' S x1 ')],
+      ['123', stat(123).replace(' S 1 ', ' S 1x ')], ['123', stat(123, 1, '1x')], ['123', stat(123, 1, 'x1')]]) {
+      expect(() => parseLinuxStat(entry!, value!)).toThrow('Invalid process stat')
+    }
+    expect(parseLinuxStat('123', `123 (worker)  S  1  17  ${Array(16).fill('0').join('  ')}  100`)).toEqual({ pid: 123, parent: 1, created: '100' })
+  })
+
+  it('finds reversed descendants with equal creation times', () => {
+    const root = { pid: 1, parent: 0, created: '100' }
+    const child = { pid: 2, parent: 1, created: '100' }
+    const grandchild = { pid: 3, parent: 2, created: '100' }
+    expect([...treeMembers([grandchild, child], new Map([['1:100', root]])).keys()]).toEqual(['1:100', '2:100', '3:100'])
+  })
+
+  it('fails closed for missing, replaced, empty or inaccessible Linux identities', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+    try {
+      const read = vi.mocked(readFileSync)
+      read.mockImplementationOnce(() => { throw err('ENOENT') })
+      expect(await killTree(pid, nonce)).toEqual({ result: 'not-running' })
+      read.mockImplementationOnce(() => { throw err('EACCES') })
+      expect(await killTree(pid, nonce)).toEqual({ result: 'kill-failed', detail: 'EACCES' })
+      read.mockReturnValueOnce(stat(pid)).mockImplementationOnce(() => { throw err('ESRCH') })
+      expect(await killTree(pid, nonce)).toEqual({ result: 'not-running' })
+      read.mockReturnValueOnce(stat(pid)).mockReturnValueOnce('')
+      expect(await killTree(pid, nonce)).toEqual({ result: 'not-running' })
+      read.mockReturnValueOnce(stat(pid)).mockReturnValueOnce(nonce).mockReturnValueOnce(stat(pid, 1, '101'))
+      expect(await killTree(pid, nonce)).toEqual({ result: 'identity-mismatch' })
+      read.mockReturnValueOnce(stat(pid)).mockReturnValueOnce(nonce).mockImplementationOnce(() => { throw err('ENOENT') })
+      expect(await killTree(pid, nonce)).toEqual({ result: 'identity-mismatch' })
+      expect(kill).not.toHaveBeenCalled()
+    } finally { platform.mockRestore(); kill.mockRestore(); vi.mocked(readFileSync).mockRestore() }
+  })
+
+  it.each(['ENOENT', 'ESRCH', 'EACCES', 'EPERM'])('ignores vanished or inaccessible Linux table entries: %s', async (code) => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    const kill = vi.spyOn(process, 'kill').mockImplementation((_id, signal) => { if (signal === 0) throw err('ESRCH'); return true })
+    try {
+      vi.mocked(readdirSync).mockReturnValueOnce(['not123', '123x', '55', String(pid)] as never).mockReturnValueOnce([] as never)
+      vi.mocked(readFileSync).mockImplementation(((path: unknown) => {
+        const name = String(path)
+        if (name.includes('/55/')) throw err(code)
+        if (name.endsWith('/cmdline')) return nonce
+        if (name === `/proc/${pid}/stat`) return stat(pid)
+        throw new Error(`unexpected ${name}`)
+      }) as unknown as typeof readFileSync)
+      expect(await killTree(pid, nonce)).toEqual({ result: 'killed' })
+      expect(kill).toHaveBeenCalledWith(-pid, 'SIGKILL')
+    } finally { platform.mockRestore(); kill.mockRestore(); vi.mocked(readFileSync).mockRestore(); vi.mocked(readdirSync).mockRestore() }
+  })
+
+  it('reports unexpected Linux table errors before killing', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+    try {
+      vi.mocked(readdirSync).mockReturnValue(['55'] as never)
+      vi.mocked(readFileSync).mockImplementation(((path: unknown) => String(path).includes('/55/') ? (() => { throw err('EIO') })() : String(path).endsWith('/cmdline') ? nonce : stat(pid)) as unknown as typeof readFileSync)
+      expect(await killTree(pid, nonce)).toEqual({ result: 'kill-failed', detail: 'EIO' })
+      expect(kill).not.toHaveBeenCalled()
+    } finally { platform.mockRestore(); kill.mockRestore(); vi.mocked(readFileSync).mockRestore(); vi.mocked(readdirSync).mockRestore() }
+  })
+
+  it('kills POSIX group then descendants in reverse order and confirms disappearance', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    const kill = vi.spyOn(process, 'kill').mockImplementation((_id, signal) => { if (signal === 0) throw err('ESRCH'); return true })
+    let listings = 0
+    try {
+      vi.mocked(delay).mockResolvedValue(undefined)
+      vi.mocked(readdirSync).mockImplementation((() => ++listings <= 2 ? [String(pid), '222', '333'] : []) as unknown as typeof readdirSync)
+      vi.mocked(readFileSync).mockImplementation(((path: unknown) => {
+        const name = String(path)
+        if (name.endsWith('/cmdline')) return nonce
+        if (name.includes('/222/')) return stat(222, pid, '101')
+        if (name.includes('/333/')) return stat(333, 222, '102')
+        return stat(pid)
+      }) as unknown as typeof readFileSync)
+      expect(await killTree(pid, nonce)).toEqual({ result: 'killed' })
+      expect(kill.mock.calls).toEqual([[-pid, 'SIGKILL'], [333, 'SIGKILL'], [222, 'SIGKILL'], [pid, 'SIGKILL'], [pid, 0]])
+      expect(delay).toHaveBeenCalledWith(100)
+    } finally { platform.mockRestore(); kill.mockRestore(); vi.mocked(delay).mockRestore(); vi.mocked(readFileSync).mockRestore(); vi.mocked(readdirSync).mockRestore() }
+  })
+
+  it('respects the deadline and reports surviving Windows identities', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    let now = 1000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      vi.mocked(delay).mockImplementation((async (ms?: number) => { now += ms ?? 0 }) as typeof delay)
+      vi.mocked(spawnSync).mockImplementation(((file: string, args: string[]) => {
+        if (file === 'taskkill') return ok('')
+        return ok(JSON.stringify(args[3]!.includes('-Filter') ? [{ ...record(pid, 1), CommandLine: Buffer.from(nonce, 'utf16le').toString('base64') }] : [record(pid, 1)]))
+      }) as unknown as typeof spawnSync)
+      expect(await killTree(pid, nonce)).toEqual({ result: 'kill-failed', detail: 'Process tree remained alive after timeout' })
+      const kills = vi.mocked(spawnSync).mock.calls.filter(([file]) => file === 'taskkill')
+      expect(kills[0]![1]).toEqual(['/T', '/F', '/PID', String(pid)])
+      expect(kills[1]![1]).toEqual(['/F', '/PID', String(pid)])
+      expect(kills[1]![2]).toEqual({ encoding: 'utf8', timeout: 5000, windowsHide: true })
+      expect(kills.at(-1)![2]).toEqual({ encoding: 'utf8', timeout: 100, windowsHide: true })
+      expect(delay).toHaveBeenCalledTimes(50)
+    } finally { platform.mockRestore(); clock.mockRestore(); vi.mocked(delay).mockRestore(); vi.mocked(spawnSync).mockRestore() }
+  })
+
+  it('passes filtered and unfiltered CIM queries and reports PowerShell failures', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    try {
+      vi.mocked(spawnSync).mockReturnValueOnce(ok(`  ${JSON.stringify([{ ...record(pid, 1), CommandLine: Buffer.from(nonce, 'utf16le').toString('base64') }])}  `))
+        .mockReturnValueOnce({ status: 1, stderr: '' } as never)
+      expect(await killTree(pid, nonce)).toEqual({ result: 'kill-failed', detail: 'PowerShell failed' })
+      const calls = vi.mocked(spawnSync).mock.calls
+      expect(calls[0]![1]![3]).toContain(`-Filter 'ProcessId = ${pid}'`)
+      expect(calls[0]![1]![3]).toContain('CommandLine')
+      expect(calls[1]![1]![3]).not.toContain('-Filter')
+      expect(calls[1]![1]![3]).toContain('ConvertTo-Json')
+      expect(calls[0]![2]).toEqual({ encoding: 'utf8', timeout: 10000, windowsHide: true })
     } finally { platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
   })
 })
