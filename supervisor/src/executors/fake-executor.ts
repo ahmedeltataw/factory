@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -205,7 +205,12 @@ process.on('SIGINT', () => { clearInterval(timer); process.exit(0); });
   const exitCode = process.env.FAKE_EXIT_CODE
     ? parseInt(process.env.FAKE_EXIT_CODE, 10)
     : 0
-  process.exit(Number.isNaN(exitCode) ? 0 : exitCode)
+  const finalExitCode = Number.isNaN(exitCode) ? 0 : exitCode
+  const resultPath = join(realRunDir, 'result.json')
+  const temporaryResultPath = join(realRunDir, `result.${process.pid}.tmp`)
+  writeFileSync(temporaryResultPath, JSON.stringify({ exitCode: finalExitCode }))
+  renameSync(temporaryResultPath, resultPath)
+  process.exit(finalExitCode)
 }
 
 await main()

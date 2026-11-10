@@ -131,4 +131,63 @@ async function runTaskOrInit(argv: readonly string[]): Promise<number> {
   }
 }
 
-process.exitCode = await runTaskOrInit(process.argv.slice(2))
+async function runStart(argv: readonly string[]): Promise<number> {
+  const values: Record<string, string> = {}
+  let idle = false
+  for (let i = 1; i < argv.length; i++) {
+    const key = argv[i]!
+    if (key === '--exit-when-idle') { if (idle) return startUsage(); idle = true; continue }
+    if (!['--state-dir', '--takeover', '--stale-after-ms', '--heartbeat-ms'].includes(key) || values[key] !== undefined) return startUsage()
+    const value = argv[++i]
+    if (!value || value.startsWith('-')) return startUsage()
+    values[key] = value
+  }
+  if (!values['--state-dir']) return startUsage()
+  const numberOption = (key: string, fallback: number): number | undefined => {
+    const value = values[key]
+    if (value === undefined) return fallback
+    const n = Number(value)
+    return /^[0-9]+$/.test(value) && Number.isSafeInteger(n) && n > 0 ? n : undefined
+  }
+  const staleAfterMs = numberOption('--stale-after-ms', DEFAULT_STALE_AFTER_MS)
+  const heartbeatMs = numberOption('--heartbeat-ms', 1000)
+  if (!staleAfterMs || !heartbeatMs) return startUsage()
+  let takeover: { ownerId: string; generation: number; heartbeatMs: number } | undefined
+  if (values['--takeover']) {
+    const parts = values['--takeover'].split(':')
+    if (parts.length !== 3 || !parts[0] || !/^[0-9]+$/.test(parts[1]!) || !/^[0-9]+$/.test(parts[2]!)) return startUsage()
+    takeover = { ownerId: parts[0], generation: Number(parts[1]), heartbeatMs: Number(parts[2]) }
+    if (!Number.isSafeInteger(takeover.generation) || takeover.generation < 1 || !Number.isSafeInteger(takeover.heartbeatMs)) return startUsage()
+  }
+  let fault: import('../app/faults.ts').FaultName | undefined
+  try { fault = (await import('../app/faults.ts')).parseFault(process.env.FACTORY_FAULT) } catch { return startUsage() }
+  try {
+    const stateDir = values['--state-dir']!
+    if (!existsSync(join(stateDir, 'state.sqlite'))) throw new Error('missing database')
+    const { openStore } = await import('../app/store.ts')
+    const { acquireSupervisor } = await import('../app/supervisor-lease.ts')
+    const { runTick } = await import('../app/supervisor-loop.ts')
+    const { readCompletion, reconcileWorkers } = await import('../app/recovery.ts')
+    const { spawnWorker, killTree } = await import('../app/process-tree.ts')
+    const db = openStore(join(stateDir, 'state.sqlite'))
+    try {
+      const handle = acquireSupervisor(db, stateDir, { nowMs: Date.now(), staleAfterMs, takeover })
+      try {
+        await reconcileWorkers(db, handle, { killTree, stateDir, staleAfterMs }, Date.now())
+        while (true) {
+          const result = await runTick(db, handle, { spawnWorker, killTree, stateDir, staleAfterMs, readResult: readCompletion, isAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } } }, Date.now(), { fault })
+          if (idle && result.idle) break
+          await new Promise((resolve) => setTimeout(resolve, heartbeatMs))
+        }
+      } finally { handle.release(Date.now()) }
+    } finally { db.close() }
+    process.stdout.write('\u0627\u0643\u062a\u0645\u0644 \u062a\u0634\u063a\u064a\u0644 \u0627\u0644\u0645\u0634\u0631\u0641\n')
+    return 0
+  } catch (error) {
+    process.stderr.write(`\u062a\u0639\u0630\u0631 \u062a\u0634\u063a\u064a\u0644 \u0627\u0644\u0645\u0634\u0631\u0641: ${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
+  }
+}
+function startUsage(): number { process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0648\u0633\u0627\u0626\u0637 \u0627\u0644\u062a\u0634\u063a\u064a\u0644\n'); return 2 }
+
+process.exitCode = process.argv[2] === 'start' ? await runStart(process.argv.slice(2)) : await runTaskOrInit(process.argv.slice(2))
