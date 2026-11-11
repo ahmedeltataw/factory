@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "card": "M4-05",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "b29d244b7f7a3b232581c0ec6b2a74a7e4391c99",
+  "checks": [
+    {
+      "id": "CHK-M4-05-a",
+      "command": "pnpm typecheck; pnpm test; pnpm build; check-manifest; check-forbidden-imports; CI mutation run 42990837053",
+      "result": "pass",
+      "output": "784/784 passed; mutation recovery.ts 88.38, supervisor-loop.ts 84.76, outbox.ts 86.27; reviewers gemini-4-argon-high approve (impl), gpt-6.1-sol approve (protected tests)"
+    },
+    {
+      "id": "CHK-M4-05-b",
+      "command": "pnpm typecheck; pnpm test; pnpm build; check-manifest; check-forbidden-imports; CI mutation run 42990837053",
+      "result": "pass",
+      "output": "784/784 passed; mutation recovery.ts 88.38, supervisor-loop.ts 84.76, outbox.ts 86.27; reviewers gemini-4-argon-high approve (impl), gpt-6.1-sol approve (protected tests)"
+    },
+    {
+      "id": "CHK-M4-05-c",
+      "command": "pnpm typecheck; pnpm test; pnpm build; check-manifest; check-forbidden-imports; CI mutation run 42990837053",
+      "result": "pass",
+      "output": "784/784 passed; mutation recovery.ts 88.38, supervisor-loop.ts 84.76, outbox.ts 86.27; reviewers gemini-4-argon-high approve (impl), gpt-6.1-sol approve (protected tests)"
+    },
+    {
+      "id": "CHK-M4-05-d",
+      "command": "pnpm typecheck; pnpm test; pnpm build; check-manifest; check-forbidden-imports; CI mutation run 42990837053",
+      "result": "pass",
+      "output": "784/784 passed; mutation recovery.ts 88.38, supervisor-loop.ts 84.76, outbox.ts 86.27; reviewers gemini-4-argon-high approve (impl), gpt-6.1-sol approve (protected tests)"
+    },
+    {
+      "id": "CHK-M4-05-e",
+      "command": "pnpm typecheck; pnpm test; pnpm build; check-manifest; check-forbidden-imports; CI mutation run 42990837053",
+      "result": "pass",
+      "output": "784/784 passed; mutation recovery.ts 88.38, supervisor-loop.ts 84.76, outbox.ts 86.27; reviewers gemini-4-argon-high approve (impl), gpt-6.1-sol approve (protected tests)"
+    },
+    {
+      "id": "CHK-M4-05-f",
+      "command": "pnpm typecheck; pnpm test; pnpm build; check-manifest; check-forbidden-imports; CI mutation run 42990837053",
+      "result": "pass",
+      "output": "784/784 passed; mutation recovery.ts 88.38, supervisor-loop.ts 84.76, outbox.ts 86.27; reviewers gemini-4-argon-high approve (impl), gpt-6.1-sol approve (protected tests)"
+    },
+    {
+      "id": "CHK-M4-05-g",
+      "command": "pnpm typecheck; pnpm test; pnpm build; check-manifest; check-forbidden-imports; CI mutation run 42990837053",
+      "result": "pass",
+      "output": "784/784 passed; mutation recovery.ts 88.38, supervisor-loop.ts 84.76, outbox.ts 86.27; reviewers gemini-4-argon-high approve (impl), gpt-6.1-sol approve (protected tests)"
+    }
+  ],
+  "ended_at": "2026-11-11T10:33:56.870Z"
+}
