@@ -20,6 +20,12 @@ This file is for any agent (Claude, Codex, Gemini/Antigravity, OpenCode, ...) th
 | Owner | Ahmed | decisions, runs `acceptance/M<n>.ps1` at milestone close | |
 | Muse | Meta's agent, via repo `factory-muse-inbox` | mirrors the board to Notion, CI triage notes, drafts, web research | writes to this repo |
 
+Communication (owner rule, 2026-11-11):
+- Telegram group "Ai chat" is the chat channel. The Lead posts there with its bot (@Aeclaude_bot); Muse posts as the user "رفاعي". Use it for quick coordination: a card merged, check run X, a bug in Y.
+- GitHub (`factory-muse-inbox`) holds long items so builders can find them: QA reports, contract reviews, `qa-bug` and `ci-issue` issues.
+- The Lead reads only group messages that contain `@Lead`. When the Lead needs Muse to answer, it starts the message with `@Muse`, and Muse replies with `@Lead`.
+- Decisions and orders come from the owner only.
+
 Hard rules:
 - The reviewer comes from a different vendor than the builder. Protected tests (`tests/protected/**`) are written by the vendor other than the one that implements the card.
 - Nothing is merged without an `approve` from the reviewer and gates re-run by the Lead.
