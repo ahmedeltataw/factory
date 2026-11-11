@@ -201,7 +201,7 @@ async function main(): Promise<void> {
   mkdirSync(resolvedRunDir, { recursive: true })
   const realRunDir = getCanonicalPath(resolvedRunDir)
 
-  const workerPath = resolve(resolvedRunDir, 'worker.json')
+  const workerPath = resolve(realRunDir, 'worker.json')
   const relWorker = relative(realRunDir, workerPath)
   if (
     !relWorker ||
