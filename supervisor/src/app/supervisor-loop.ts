@@ -5,7 +5,7 @@ import { applyPendingCommands } from './apply-commands.ts'
 import { fencedWrite } from './fence.ts'
 import { triggerFault, type FaultName } from './faults.ts'
 import { createEffectHandlers, runDue } from './outbox.ts'
-import { failExhaustedEffects, finishAttempt, readWorker, reconcileWorkers, scheduleAttempt, stateDirectory, type RecoveryDeps } from './recovery.ts'
+import { failExhaustedEffects, finishAttempt, readWorker, reconcileWorkers, retryTask, scheduleAttempt, stateDirectory, type RecoveryDeps } from './recovery.ts'
 import type { SupervisorLeaseHandle } from './supervisor-lease.ts'
 import type { EnsureWorktreeConfig } from './worktree.ts'
 
@@ -55,7 +55,6 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
     const prerequisite = db.prepare('SELECT status FROM outbox WHERE idempotency_key = ?').get(`worktree.ensure:${attemptId}`) as { status: string } | undefined
     if (prerequisite && prerequisite.status !== 'done') throw new Error('worktree is not ready')
     await originalStart(row, context)
-    fencedWrite(db, handle, () => db.prepare("UPDATE attempts SET status = 'running' WHERE id = ? AND status = 'pending'").run(attemptId))
   }
   handlers['attempt.kill'] = async (row) => {
     const { attemptId } = JSON.parse(row.payload_json) as { attemptId: string }
@@ -83,15 +82,37 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
     // Kill commands applied this tick before creating any new work.
     await runEffects()
     fencedWrite(db, handle, () => {
-      const tasks = db.prepare("SELECT id FROM tasks WHERE status = 'ready'").all() as Array<{ id: string }>
+      const tasks = db.prepare("SELECT id FROM tasks WHERE status = 'ready' AND not_before_ms <= ?").all(nowMs) as Array<{ id: string }>
       for (const task of tasks) scheduleAttempt(db, handle, task.id, stateDir, nowMs)
     })
     await runEffects()
   })
   await phase('worker-liveness', deps.wrapWorkerLiveness, async () => {
-    const workers = db.prepare("SELECT a.id, a.task_id, w.pid, w.nonce, w.worktree_path FROM attempts a JOIN workers w ON w.attempt_id = a.id JOIN tasks t ON t.id = a.task_id WHERE a.status IN ('pending','running') AND w.state = 'running' AND t.status != 'dropped'").all() as unknown as Array<{ id: string; task_id: string; pid: number; nonce: string; worktree_path: string }>
+    const workers = db.prepare("SELECT a.id, a.task_id, w.pid, w.nonce, w.worktree_path, a.deadline_ms FROM attempts a JOIN workers w ON w.attempt_id = a.id JOIN tasks t ON t.id = a.task_id WHERE a.status IN ('pending','running') AND w.state = 'running' AND t.status != 'dropped'").all() as unknown as Array<{ id: string; task_id: string; pid: number; nonce: string; worktree_path: string; deadline_ms: number | null }>
     for (const worker of workers) {
       if (await deps.isAlive(worker.pid, worker.nonce)) {
+        if (worker.deadline_ms !== null && nowMs >= worker.deadline_ms) {
+          const killed = await deps.killTree(worker.pid, worker.nonce)
+          if (killed.result === 'kill-failed') continue
+          if (killed.result === 'not-running') {
+            const completion = await deps.readResult(join(stateDir, 'runs', worker.id))
+            if (completion) finishAttempt(db, handle, worker, stateDir, completion.exitCode, nowMs)
+            else fencedWrite(db, handle, () => {
+              const now = new Date(nowMs).toISOString()
+              db.prepare("UPDATE workers SET state = 'lost', ended_at = ? WHERE attempt_id = ?").run(now, worker.id)
+              db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'lost', ended_at = ? WHERE id = ?").run(now, worker.id)
+              db.prepare("UPDATE tasks SET status = 'ready', updated_at = ? WHERE id = ? AND status = 'progress'").run(now, worker.task_id)
+            })
+            continue
+          }
+          fencedWrite(db, handle, () => {
+            const now = new Date(nowMs).toISOString()
+            db.prepare('UPDATE workers SET state = ?, ended_at = ? WHERE attempt_id = ?').run(killed.result === 'killed' ? 'killed' : 'lost', now, worker.id)
+            db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'timeout', ended_at = ? WHERE id = ?").run(now, worker.id)
+            retryTask(db, worker.task_id, worker.id, nowMs)
+          })
+          continue
+        }
         fencedWrite(db, handle, () => db.prepare('UPDATE workers SET heartbeat_ms = ? WHERE attempt_id = ?').run(nowMs, worker.id))
       } else {
         const completion = await deps.readResult(join(stateDir, 'runs', worker.id))
