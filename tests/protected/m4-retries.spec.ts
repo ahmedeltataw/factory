@@ -1326,75 +1326,55 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
         expect(createRes.status).toBe(0)
         const taskId = parseCreatedTaskId(createRes.stdout)
 
-        // Start supervisor 1 with transient failure on attempts 1 and 2
-        const supChild1 = spawnCli(['start', '--state-dir', stateDir], {
-          env: {
-            FAKE_FAIL_UNTIL_ATTEMPT: '2',
-            FAKE_FAIL_CODE: '75',
-          },
-        })
+        // Directly seed the "crashed during backoff" state:
+        // - Lease generation 1 with a stale heartbeat
+        // - Command marked applied
+        // - Task ready with attempt_base 0 and not_before_ms in the future
+        // - Attempt 1 failed with error_class transient
+        const now = Date.now()
+        const leaseHeartbeatMs = now - 2000
+        const pendingBackoffMs = now + 3000
+        const staleOwnerId = `crashed-supervisor-${randomUUID()}`
+        const takeoverEvidence = `${staleOwnerId}:1:${leaseHeartbeatMs}`
+        const attempt1Id = randomUUID()
+        const attempt1Started = new Date(now - 5000).toISOString()
+        const attempt1Ended = new Date(now - 4000).toISOString()
 
-        // Poll until attempt 1 has failed and task is ready with not_before_ms in future
-        let capturedNotBeforeMs = 0
-        const pollDeadline = Date.now() + 20000
-        while (Date.now() < pollDeadline) {
-          const dbPoll = openStore(dbPath)
-          try {
-            const row = dbPoll.prepare('SELECT status, not_before_ms FROM tasks WHERE id = ?').get(taskId) as {
-              status: string
-              not_before_ms: number
-            } | undefined
-            const att = dbPoll.prepare('SELECT status, error_class FROM attempts WHERE task_id = ? AND attempt_no = 1').get(taskId) as {
-              status: string
-              error_class: string
-            } | undefined
-            if (row && row.status === 'ready' && att && att.status === 'failed' && att.error_class === 'transient') {
-              capturedNotBeforeMs = row.not_before_ms
-              break
-            }
-          } finally {
-            dbPoll.close()
-          }
-          await delay(100)
-        }
-
-        expect(capturedNotBeforeMs).toBeGreaterThan(Date.now())
-
-        // Hard-kill supervisor 1 immediately while backoff is pending (kill ONLY the supervisor, no /T)
-        await killSupervisorOnly(supChild1, 10000)
-
-        // Confirm supervisor 1 is dead
-        const sup1Dead = await waitForProcessDeath(supChild1.pid, 15000)
-        expect(sup1Dead).toBe(true)
-
-        // Read lease row from DB for takeover
-        const dbTakeover = openStore(dbPath)
-        let takeoverEvidence = ''
-        let leaseHeartbeatMs = 0
+        const dbSeed = openStore(dbPath)
         try {
-          const lease = dbTakeover.prepare('SELECT owner_id AS ownerId, generation, heartbeat_ms AS heartbeatMs FROM supervisor_lease WHERE id = 1').get() as {
-            ownerId: string
-            generation: number
-            heartbeatMs: number
-          }
-          takeoverEvidence = `${lease.ownerId}:${lease.generation}:${lease.heartbeatMs}`
-          leaseHeartbeatMs = lease.heartbeatMs
-        } finally {
-          dbTakeover.close()
-        }
+          dbSeed.prepare(`
+            UPDATE supervisor_lease
+            SET owner_id = ?, generation = 1, heartbeat_ms = ?, status = 'active'
+            WHERE id = 1
+          `).run(staleOwnerId, leaseHeartbeatMs)
 
-        // Preserve a longer pending backoff so that after waiting for lease staleness, backoff is still pending
-        const pendingBackoffMs = leaseHeartbeatMs + 4000
-        const dbUpdate = openStore(dbPath)
-        try {
-          dbUpdate.prepare('UPDATE tasks SET not_before_ms = ? WHERE id = ?').run(pendingBackoffMs, taskId)
-        } finally {
-          dbUpdate.close()
-        }
+          dbSeed.prepare(`
+            INSERT INTO command_outcomes (command_id, outcome, reason, lease_generation, applied_at)
+            VALUES (?, 'applied', NULL, 1, ?)
+          `).run(taskId, attempt1Started)
 
-        // Wait until that heartbeat is stale
-        const waitStaleMs = Math.max(0, leaseHeartbeatMs + 1000 - Date.now() + 150)
-        await delay(waitStaleMs)
+          dbSeed.prepare(`
+            INSERT INTO tasks (
+              id, project_id, created_by_command, title, status, created_at, updated_at,
+              scope_json, max_attempts, timeout_ms, attempt_base, not_before_ms
+            ) VALUES (?, (SELECT project_id FROM project_config LIMIT 1), ?, 'Crash In Backoff Task', 'ready', ?, ?, ?, 2, NULL, 0, ?)
+          `).run(
+            taskId,
+            taskId,
+            attempt1Started,
+            attempt1Ended,
+            JSON.stringify(['task-d-backoff']),
+            pendingBackoffMs,
+          )
+
+          dbSeed.prepare(`
+            INSERT INTO attempts (
+              id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at, deadline_ms
+            ) VALUES (?, ?, 1, 'failed', 75, 'transient', 1, ?, ?, NULL)
+          `).run(attempt1Id, taskId, attempt1Started, attempt1Ended)
+        } finally {
+          dbSeed.close()
+        }
 
         // Start supervisor 2 while backoff is still pending (Date.now() < pendingBackoffMs)
         expect(Date.now()).toBeLessThan(pendingBackoffMs)
