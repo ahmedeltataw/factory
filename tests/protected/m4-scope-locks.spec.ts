@@ -348,17 +348,17 @@ describe('M4-06 scope locks and scope enforcement', () => {
       const initRes = runCli(['init', '--state-dir', stateDir, '--repo', repoDir], { cwd: tempCwd })
       expect(initRes.status).toBe(0)
 
-      const create1 = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task 1', '--scope', 'src'], { cwd: tempCwd })
+      const task1Id = randomUUID()
+      const create1 = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task 1', '--scope', 'src', '--scope', `factory-fake/${task1Id}.txt`, '--command-id', task1Id], { cwd: tempCwd })
       expect(create1.status).toBe(0)
-      const task1Id = parseCreatedTaskId(create1.stdout)
 
-      const create2 = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task 2', '--scope', 'src/a'], { cwd: tempCwd })
+      const task2Id = randomUUID()
+      const create2 = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task 2', '--scope', 'src/a', '--scope', `factory-fake/${task2Id}.txt`, '--command-id', task2Id], { cwd: tempCwd })
       expect(create2.status).toBe(0)
-      const task2Id = parseCreatedTaskId(create2.stdout)
 
-      const create3 = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task 3', '--scope', 'lib'], { cwd: tempCwd })
+      const task3Id = randomUUID()
+      const create3 = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task 3', '--scope', 'lib', '--scope', `factory-fake/${task3Id}.txt`, '--command-id', task3Id], { cwd: tempCwd })
       expect(create3.status).toBe(0)
-      const task3Id = parseCreatedTaskId(create3.stdout)
 
       try {
         const startRes = runCli(
@@ -439,20 +439,24 @@ describe('M4-06 scope locks and scope enforcement', () => {
       expect(initRes.status).toBe(0)
 
       // Task A: scope 'src'
-      const createA = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task A', '--scope', 'src'], { cwd: tempCwd })
-      const taskAId = parseCreatedTaskId(createA.stdout)
+      const taskAId = randomUUID()
+      const createA = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task A', '--scope', 'src', '--scope', `factory-fake/${taskAId}.txt`, '--command-id', taskAId], { cwd: tempCwd })
+      expect(createA.status).toBe(0)
 
       // Task B: scope 'docs'
-      const createB = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task B', '--scope', 'docs'], { cwd: tempCwd })
-      const taskBId = parseCreatedTaskId(createB.stdout)
+      const taskBId = randomUUID()
+      const createB = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task B', '--scope', 'docs', '--scope', `factory-fake/${taskBId}.txt`, '--command-id', taskBId], { cwd: tempCwd })
+      expect(createB.status).toBe(0)
 
       // Task C: scope 'src/x' and 'docs/y' (overlaps A on src, overlaps B on docs)
-      const createC = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task C', '--scope', 'src/x', '--scope', 'docs/y'], { cwd: tempCwd })
-      const taskCId = parseCreatedTaskId(createC.stdout)
+      const taskCId = randomUUID()
+      const createC = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task C', '--scope', 'src/x', '--scope', 'docs/y', '--scope', `factory-fake/${taskCId}.txt`, '--command-id', taskCId], { cwd: tempCwd })
+      expect(createC.status).toBe(0)
 
       // Task D: scope 'lib' (disjoint from all)
-      const createD = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task D', '--scope', 'lib'], { cwd: tempCwd })
-      const taskDId = parseCreatedTaskId(createD.stdout)
+      const taskDId = randomUUID()
+      const createD = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task D', '--scope', 'lib', '--scope', `factory-fake/${taskDId}.txt`, '--command-id', taskDId], { cwd: tempCwd })
+      expect(createD.status).toBe(0)
 
       try {
         const startRes = runCli(
@@ -517,16 +521,19 @@ describe('M4-06 scope locks and scope enforcement', () => {
       expect(initRes.status).toBe(0)
 
       // Task A: scope 'src'
-      const createA = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task A', '--scope', 'src'], { cwd: tempCwd })
-      const taskAId = parseCreatedTaskId(createA.stdout)
+      const taskAId = randomUUID()
+      const createA = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task A', '--scope', 'src', '--scope', `factory-fake/${taskAId}.txt`, '--command-id', taskAId], { cwd: tempCwd })
+      expect(createA.status).toBe(0)
 
       // Task B: scope 'src/sub' (overlaps Task A)
-      const createB = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task B', '--scope', 'src/sub'], { cwd: tempCwd })
-      const taskBId = parseCreatedTaskId(createB.stdout)
+      const taskBId = randomUUID()
+      const createB = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task B', '--scope', 'src/sub', '--scope', `factory-fake/${taskBId}.txt`, '--command-id', taskBId], { cwd: tempCwd })
+      expect(createB.status).toBe(0)
 
       // Task D: scope 'lib' (disjoint from Task A and B)
-      const createD = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task D', '--scope', 'lib'], { cwd: tempCwd })
-      const taskDId = parseCreatedTaskId(createD.stdout)
+      const taskDId = randomUUID()
+      const createD = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task D', '--scope', 'lib', '--scope', `factory-fake/${taskDId}.txt`, '--command-id', taskDId], { cwd: tempCwd })
+      expect(createD.status).toBe(0)
 
       // Apply queued create commands
       const dbPre = openStore(join(stateDir, 'state.sqlite'))
@@ -653,16 +660,19 @@ describe('M4-06 scope locks and scope enforcement', () => {
       expect(initRes.status).toBe(0)
 
       // Task W: scope 'src', created first
-      const createW = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task W', '--scope', 'src'], { cwd: tempCwd })
-      const taskWId = parseCreatedTaskId(createW.stdout)
+      const taskWId = randomUUID()
+      const createW = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task W', '--scope', 'src', '--scope', `factory-fake/${taskWId}.txt`, '--command-id', taskWId], { cwd: tempCwd })
+      expect(createW.status).toBe(0)
 
       // Task X: scope 'src/sub', created second (overlaps W, not_before_ms = 0)
-      const createX = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task X', '--scope', 'src/sub'], { cwd: tempCwd })
-      const taskXId = parseCreatedTaskId(createX.stdout)
+      const taskXId = randomUUID()
+      const createX = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task X', '--scope', 'src/sub', '--scope', `factory-fake/${taskXId}.txt`, '--command-id', taskXId], { cwd: tempCwd })
+      expect(createX.status).toBe(0)
 
       // Task Y: scope 'lib', created third (disjoint from W and X, not_before_ms = 0)
-      const createY = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task Y', '--scope', 'lib'], { cwd: tempCwd })
-      const taskYId = parseCreatedTaskId(createY.stdout)
+      const taskYId = randomUUID()
+      const createY = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task Y', '--scope', 'lib', '--scope', `factory-fake/${taskYId}.txt`, '--command-id', taskYId], { cwd: tempCwd })
+      expect(createY.status).toBe(0)
 
       // Apply queued create commands, then directly seed not_before_ms for Task W into the future:
       const dbPre = openStore(join(stateDir, 'state.sqlite'))
@@ -744,11 +754,13 @@ describe('M4-06 scope locks and scope enforcement', () => {
       const initRes = runCli(['init', '--state-dir', stateDir, '--repo', repoDir], { cwd: tempCwd })
       expect(initRes.status).toBe(0)
 
-      const createA = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task A', '--scope', 'src'], { cwd: tempCwd })
-      const taskAId = parseCreatedTaskId(createA.stdout)
+      const taskAId = randomUUID()
+      const createA = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task A', '--scope', 'src', '--scope', `factory-fake/${taskAId}.txt`, '--command-id', taskAId], { cwd: tempCwd })
+      expect(createA.status).toBe(0)
 
-      const createB = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task B', '--scope', 'src/a'], { cwd: tempCwd })
-      const taskBId = parseCreatedTaskId(createB.stdout)
+      const taskBId = randomUUID()
+      const createB = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task B', '--scope', 'src/a', '--scope', `factory-fake/${taskBId}.txt`, '--command-id', taskBId], { cwd: tempCwd })
+      expect(createB.status).toBe(0)
 
       // Start supervisor 1 in background holding executor with long sleep
       const sup1 = spawn(
@@ -1015,9 +1027,9 @@ describe('M4-06 scope locks and scope enforcement', () => {
         await waitForProcessDeath(supDel.pid!, 30000)
 
         // 4. Write inside scope commits normally
-        const createInside = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Write Inside', '--scope', 'factory-fake'], { cwd: tempCwd })
+        const taskInsideId = randomUUID()
+        const createInside = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Write Inside', '--scope', 'factory-fake', '--scope', `factory-fake/${taskInsideId}.txt`, '--command-id', taskInsideId], { cwd: tempCwd })
         expect(createInside.status).toBe(0)
-        const taskInsideId = parseCreatedTaskId(createInside.stdout)
 
         const runInside = runCli(
           ['start', '--state-dir', stateDir, '--exit-when-idle'],
