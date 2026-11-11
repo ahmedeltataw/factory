@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M4-08",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "c87e1ad2cbce2ee31d5009ca2978e92e44968fe0",
+  "checks": [
+    {
+      "id": "CHK-M4-08-a",
+      "command": "powershell -File acceptance/M4.ps1 -SkipBaseline -Source <local repo> (Lead, twice); full run with baseline by the owner at M4-09",
+      "result": "pass",
+      "output": "steps 1-3, 6, 10-14 PASS both runs; 0 leaked processes; reviewer gemini-4-argon-high approve (2 Minor fixed)"
+    },
+    {
+      "id": "CHK-M4-08-b",
+      "command": "powershell -File acceptance/M4.ps1 -SkipBaseline -Source <local repo> (Lead, twice); full run with baseline by the owner at M4-09",
+      "result": "pass",
+      "output": "steps 1-3, 6, 10-14 PASS both runs; 0 leaked processes; reviewer gemini-4-argon-high approve (2 Minor fixed)"
+    },
+    {
+      "id": "CHK-M4-08-c",
+      "command": "powershell -File acceptance/M4.ps1 -SkipBaseline -Source <local repo> (Lead, twice); full run with baseline by the owner at M4-09",
+      "result": "pass",
+      "output": "steps 1-3, 6, 10-14 PASS both runs; 0 leaked processes; reviewer gemini-4-argon-high approve (2 Minor fixed)"
+    },
+    {
+      "id": "CHK-M4-08-d",
+      "command": "powershell -File acceptance/M4.ps1 -SkipBaseline -Source <local repo> (Lead, twice); full run with baseline by the owner at M4-09",
+      "result": "pass",
+      "output": "steps 1-3, 6, 10-14 PASS both runs; 0 leaked processes; reviewer gemini-4-argon-high approve (2 Minor fixed)"
+    },
+    {
+      "id": "CHK-M4-08-e",
+      "command": "powershell -File acceptance/M4.ps1 -SkipBaseline -Source <local repo> (Lead, twice); full run with baseline by the owner at M4-09",
+      "result": "pass",
+      "output": "steps 1-3, 6, 10-14 PASS both runs; 0 leaked processes; reviewer gemini-4-argon-high approve (2 Minor fixed)"
+    },
+    {
+      "id": "CHK-M4-08-f",
+      "command": "powershell -File acceptance/M4.ps1 -SkipBaseline -Source <local repo> (Lead, twice); full run with baseline by the owner at M4-09",
+      "result": "pass",
+      "output": "steps 1-3, 6, 10-14 PASS both runs; 0 leaked processes; reviewer gemini-4-argon-high approve (2 Minor fixed)"
+    }
+  ],
+  "ended_at": "2026-11-11T12:51:11.319Z"
+}
