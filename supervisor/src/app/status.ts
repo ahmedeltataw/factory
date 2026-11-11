@@ -633,7 +633,16 @@ function workerStateLabel(state: WorkerState): string {
 }
 
 function errorClassLabel(errorClass: string): string {
+  if (errorClass.startsWith('outbox:')) return `خطأ صندوق الصادر: ${errorClass.slice('outbox:'.length)}`
   switch (errorClass) {
+    case 'lost':
+      return 'مفقود'
+    case 'not-running':
+      return 'غير قيد التشغيل'
+    case 'identity-mismatch':
+      return 'عدم تطابق الهوية'
+    case 'killed':
+      return 'تم إنهاؤه'
     case 'transient':
       return 'عابر'
     case 'timeout':
