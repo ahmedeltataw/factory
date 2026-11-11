@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "card": "M5-WIN",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "8aaac98800bf1b9074ea2d0fa15194a99de41c65",
+  "checks": [
+    {
+      "id": "CHK-M5-WIN-a",
+      "command": "pnpm exec vitest run tests/m5-win-store.spec.ts tests/protected/m2-store.spec.ts tests/protected/m4-schema.spec.ts; gh workflow run ci.yml --ref card/M5-WIN -f verify=true",
+      "result": "pass",
+      "output": "local 18/18; verify run 43103187726 all four cells success; reviewer gemini-3.8-flash-high approve"
+    },
+    {
+      "id": "CHK-M5-WIN-b",
+      "command": "pnpm exec vitest run tests/m5-win-store.spec.ts tests/protected/m2-store.spec.ts tests/protected/m4-schema.spec.ts; gh workflow run ci.yml --ref card/M5-WIN -f verify=true",
+      "result": "pass",
+      "output": "local 18/18; verify run 43103187726 all four cells success; reviewer gemini-3.8-flash-high approve"
+    }
+  ],
+  "ended_at": "2026-11-11T21:40:09.930Z"
+}
