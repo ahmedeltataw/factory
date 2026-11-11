@@ -1127,4 +1127,73 @@ describe('M4-06 scope locks and scope enforcement', () => {
     },
     120000,
   )
+
+  it(
+    'CHK-M5-QA2-a: real-process task whose scope does not cover factory-fake/<id>.txt ends failed with scope-violation without commit or evidence',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'm5-qa2-a-'))
+      directories.push(root)
+      const repoDir = join(root, 'repo')
+      const stateDir = join(root, 'state')
+      const dbPath = join(stateDir, 'state.sqlite')
+      const tempCwd = join(root, 'cwd')
+      mkdirSync(tempCwd, { recursive: true })
+
+      const { baseSha } = createGitRepo(repoDir)
+      const initRes = runCli(['init', '--state-dir', stateDir, '--repo', repoDir], { cwd: tempCwd })
+      expect(initRes.status).toBe(0)
+
+      const taskId = randomUUID()
+      const createRes = runCli(
+        ['task', 'create', '--state-dir', stateDir, '--title', 'Scope Violation Task', '--scope', 'src', '--command-id', taskId],
+        { cwd: tempCwd },
+      )
+      expect(createRes.status).toBe(0)
+
+      try {
+        const startRes = runCli(
+          ['start', '--state-dir', stateDir, '--exit-when-idle'],
+          {
+            cwd: tempCwd,
+            env: cleanTestEnv(),
+            timeout: 45000,
+          },
+        )
+        expect(startRes.status).toBe(0)
+
+        const db = openStore(dbPath)
+        try {
+          const nonces = db.prepare('SELECT nonce FROM workers').all() as Array<{ nonce: string }>
+          for (const n of nonces) activeNonces.add(n.nonce)
+
+          const taskRow = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId) as { status: string }
+          expect(taskRow.status).toBe('failed')
+
+          const attRow = db.prepare('SELECT id, status, error_class FROM attempts WHERE task_id = ?').get(taskId) as { id: string; status: string; error_class: string }
+          expect(attRow.status).toBe('failed')
+          expect(attRow.error_class).toBe('scope-violation')
+
+          const outboxRow = db.prepare('SELECT status, last_error FROM outbox WHERE idempotency_key = ?').get(`evidence.commit:${attRow.id}`) as { status: string; last_error: string | null }
+          expect(outboxRow.status).toBe('done')
+          expect(outboxRow.last_error).toBeDefined()
+          expect(outboxRow.last_error!.startsWith(`scope-violation: factory-fake/${taskId}.txt`)).toBe(true)
+
+          const branchSha = git(repoDir, 'rev-parse', `factory/task/${taskId}`)
+          expect(branchSha).toBe(baseSha)
+          const revList = git(repoDir, 'rev-list', `${baseSha}..factory/task/${taskId}`)
+          expect(revList).toBe('')
+
+          const evCount = db.prepare('SELECT COUNT(*) as c FROM evidence WHERE attempt_id = ?').get(attRow.id) as { c: number }
+          expect(evCount.c).toBe(0)
+          const totalEv = db.prepare('SELECT COUNT(*) as c FROM evidence').get() as { c: number }
+          expect(totalEv.c).toBe(0)
+        } finally {
+          db.close()
+        }
+      } finally {
+        collectNoncesFromDatabases()
+      }
+    },
+    60000,
+  )
 })
