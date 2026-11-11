@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M4-WIN2",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "c1d09350bc4b6afa694d54712ee4db1ac88179f7",
+  "checks": [
+    {
+      "id": "CHK-M4-WIN2-a",
+      "command": "pnpm exec vitest run tests/m3-04-fixes.spec.ts -t 'kills 50 workers'",
+      "result": "pass",
+      "output": "1 passed on the owner machine; reviewer gemini-4-argon-high approve"
+    }
+  ],
+  "ended_at": "2026-11-11T12:51:10.225Z"
+}
