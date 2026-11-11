@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "card": "M5-01",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "b72ad3a6257e9697e4af984f2ce29dbfeb925b8d",
+  "checks": [
+    {
+      "id": "CHK-M5-01-a",
+      "command": "gh workflow run ci.yml --ref card/M5-01 -f verify=true",
+      "result": "pass",
+      "output": "run 43101037324: verify windows/ubuntu x node 24/26 all success, mutation skipped; traceability --present-only on dispatch; reviewer gemini-3.8-flash-high approve (3 rounds)"
+    },
+    {
+      "id": "CHK-M5-01-b",
+      "command": "gh workflow run ci.yml --ref card/M5-01 -f verify=true",
+      "result": "pass",
+      "output": "run 43101037324: verify windows/ubuntu x node 24/26 all success, mutation skipped; traceability --present-only on dispatch; reviewer gemini-3.8-flash-high approve (3 rounds)"
+    }
+  ],
+  "ended_at": "2026-11-11T21:27:01.312Z"
+}
