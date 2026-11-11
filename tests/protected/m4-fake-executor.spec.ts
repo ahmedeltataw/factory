@@ -18,7 +18,7 @@ function start(env: Record<string, string> = {}): Fixture {
   const cwd = join(root, 'cwd'), run = join(root, 'run'), nonce = randomUUID()
   mkdirSync(cwd); mkdirSync(run)
   const cleanEnv = { ...process.env }
-  for (const key of ['FACTORY_ATTEMPT_NO', 'FAKE_FAIL_UNTIL_ATTEMPT', 'FAKE_FAIL_CODE', 'FAKE_HANG', 'FAKE_WRITE', 'FAKE_SLEEP_MS', 'FAKE_EXIT_CODE']) delete cleanEnv[key]
+  for (const key of ['FACTORY_ATTEMPT_NO', 'FAKE_FAIL_UNTIL_ATTEMPT', 'FAKE_FAIL_CODE', 'FAKE_HANG', 'FAKE_NO_WATCHDOG', 'FAKE_WRITE', 'FAKE_SLEEP_MS', 'FAKE_EXIT_CODE']) delete cleanEnv[key]
   const child = spawn(process.execPath, [executor, task, nonce, run], {
     cwd, env: { ...cleanEnv, ...env }, detached: true, windowsHide: true,
     stdio: 'ignore',
@@ -93,7 +93,7 @@ it('CHK-M4-04-a: fails through attempt two and succeeds on three, with configura
 }, 60000)
 
 it('CHK-M4-04-b: hang keeps both processes alive beyond three seconds until tree kill', async () => {
-  const f = start({ FAKE_HANG: '1', FAKE_FAIL_UNTIL_ATTEMPT: '2', FAKE_EXIT_CODE: '9' })
+  const f = start({ FAKE_HANG: '1', FAKE_NO_WATCHDOG: '1', FAKE_FAIL_UNTIL_ATTEMPT: '2', FAKE_EXIT_CODE: '9' })
   try {
     const w = await worker(f)
     await delay(3100)
@@ -105,6 +105,17 @@ it('CHK-M4-04-b: hang keeps both processes alive beyond three seconds until tree
     const deadline = Date.now() + 5000
     while (alive(w.grandchildPid) && Date.now() < deadline) await delay(50)
     expect(alive(w.pid)).toBe(false); expect(alive(w.grandchildPid)).toBe(false)
+  } finally { await cleanup(f) }
+}, 40000)
+
+it('CHK-M5-QA1-a: grandchild survives executor-only kill with watchdog disabled', async () => {
+  const f = start({ FAKE_HANG: '1', FAKE_NO_WATCHDOG: '1' })
+  try {
+    const w = await worker(f)
+    expect(f.child.kill('SIGKILL')).toBe(true)
+    await waitForExit(f)
+    await delay(1000)
+    expect(alive(w.grandchildPid)).toBe(true)
   } finally { await cleanup(f) }
 }, 40000)
 
@@ -124,6 +135,7 @@ it('CHK-M4-04-c: writes deterministic files and rejects traversal, absolute and 
       expect(existsSync(join(f.root, 'outside', 'escape.txt'))).toBe(false)
       expect(existsSync(output(f))).toBe(false)
       expect(existsSync(join(f.run, 'result.json'))).toBe(false)
+      expect(existsSync(join(f.run, 'worker.json'))).toBe(false)
     } finally { await cleanup(f) }
   }
 }, 60000)
@@ -136,7 +148,7 @@ function startPrepared(kind: string): Fixture {
   if (kind === 'junction') symlinkSync(outside, join(cwd, 'link'), process.platform === 'win32' ? 'junction' : 'dir')
   const path = kind === 'traversal' ? '../outside/escape.txt' : kind === 'absolute' ? join(outside, 'escape.txt') : 'link/escape.txt'
   const nonce = randomUUID(), cleanEnv = { ...process.env }
-  for (const key of ['FACTORY_ATTEMPT_NO', 'FAKE_FAIL_UNTIL_ATTEMPT', 'FAKE_FAIL_CODE', 'FAKE_HANG', 'FAKE_WRITE', 'FAKE_SLEEP_MS', 'FAKE_EXIT_CODE']) delete cleanEnv[key]
+  for (const key of ['FACTORY_ATTEMPT_NO', 'FAKE_FAIL_UNTIL_ATTEMPT', 'FAKE_FAIL_CODE', 'FAKE_HANG', 'FAKE_NO_WATCHDOG', 'FAKE_WRITE', 'FAKE_SLEEP_MS', 'FAKE_EXIT_CODE']) delete cleanEnv[key]
   const child = spawn(process.execPath, [executor, task, nonce, runDir], { cwd, env: { ...cleanEnv, FAKE_WRITE: `safe.txt,${path}` }, detached: true, windowsHide: true, stdio: 'ignore' })
   const exit = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('exit', resolve) })
   return { root, cwd, run: runDir, nonce, child, exit }

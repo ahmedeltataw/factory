@@ -324,7 +324,7 @@ describe('M3-07 Status Reader and Formatter', () => {
 
   it('every enum value has a distinct Arabic label', () => {
     const base = {
-      schemaVersion: 6 as const,
+      schemaVersion: 7 as const,
       recordedCommandCount: 0,
       lease: null,
       commands: { recorded: 0, applied: 0, rejected: 0, pending: 0 },
@@ -404,7 +404,7 @@ describe('M3-07 Status Reader and Formatter', () => {
         INSERT INTO commands VALUES ('c1', 'payload1'), ('c2', 'payload2');
         CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT);
         INSERT INTO supervisor_lease VALUES (1, 'legacy-owner', 1, 500, 'active');
-        PRAGMA user_version = 6;
+        PRAGMA user_version = 7;
       `)
     } finally {
       db.close()
@@ -412,7 +412,7 @@ describe('M3-07 Status Reader and Formatter', () => {
 
     const status = readStatus(dir, { nowMs: 600, staleAfterMs: 500 })
     expect(status).toEqual({
-      schemaVersion: 6,
+      schemaVersion: 7,
       recordedCommandCount: 2,
       lease: {
         ownerId: 'legacy-owner',

@@ -13,7 +13,7 @@ import {
 import { parseScope, scopesOverlap } from '../core/scope.ts'
 
 /** Storage schema version this status reader supports: the M4 storage schema (v6). */
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 export type LeaseState = 'active' | 'released'
 export type LeaseFreshness = 'fresh' | 'stale' | 'future' | 'not-applicable'
@@ -87,7 +87,7 @@ export interface TaskStatusItem {
 }
 
 export interface Status {
-  readonly schemaVersion: 6
+  readonly schemaVersion: 7
   readonly recordedCommandCount: number
   readonly lease: null | Lease
   readonly commands?: CommandsSummary
@@ -633,7 +633,16 @@ function workerStateLabel(state: WorkerState): string {
 }
 
 function errorClassLabel(errorClass: string): string {
+  if (errorClass.startsWith('outbox:')) return `خطأ صندوق الصادر: ${errorClass.slice('outbox:'.length)}`
   switch (errorClass) {
+    case 'lost':
+      return 'مفقود'
+    case 'not-running':
+      return 'غير قيد التشغيل'
+    case 'identity-mismatch':
+      return 'عدم تطابق الهوية'
+    case 'killed':
+      return 'تم إنهاؤه'
     case 'transient':
       return 'عابر'
     case 'timeout':

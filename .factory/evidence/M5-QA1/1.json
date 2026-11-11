@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M5-QA1",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "c9599f58e6a168b15d87d9478e13b32d10442035",
+  "checks": [
+    {
+      "id": "CHK-M5-QA1-a",
+      "command": "pnpm exec vitest run tests/protected/m4-fake-executor.spec.ts tests/protected/m4-status.spec.ts tests/protected/m1-acceptance-safety.spec.ts tests/m4-04-fake-executor.spec.ts; pnpm test; verify dispatch",
+      "result": "pass",
+      "output": "outside sandbox 27/27, 0 leaked grandchild processes; full suite 802/802; verify run 43111137471 all four cells success; reviewer gemini-3.8-flash-high approve (rounds 1-3); contract amended twice (Muse #18, detached grandchild)"
+    },
+    {
+      "id": "CHK-M5-QA1-b",
+      "command": "pnpm exec vitest run tests/protected/m4-fake-executor.spec.ts tests/protected/m4-status.spec.ts tests/protected/m1-acceptance-safety.spec.ts tests/m4-04-fake-executor.spec.ts; pnpm test; verify dispatch",
+      "result": "pass",
+      "output": "outside sandbox 27/27, 0 leaked grandchild processes; full suite 802/802; verify run 43111137471 all four cells success; reviewer gemini-3.8-flash-high approve (rounds 1-3); contract amended twice (Muse #18, detached grandchild)"
+    },
+    {
+      "id": "CHK-M5-QA1-c",
+      "command": "pnpm exec vitest run tests/protected/m4-fake-executor.spec.ts tests/protected/m4-status.spec.ts tests/protected/m1-acceptance-safety.spec.ts tests/m4-04-fake-executor.spec.ts; pnpm test; verify dispatch",
+      "result": "pass",
+      "output": "outside sandbox 27/27, 0 leaked grandchild processes; full suite 802/802; verify run 43111137471 all four cells success; reviewer gemini-3.8-flash-high approve (rounds 1-3); contract amended twice (Muse #18, detached grandchild)"
+    },
+    {
+      "id": "CHK-M5-QA1-d",
+      "command": "pnpm exec vitest run tests/protected/m4-fake-executor.spec.ts tests/protected/m4-status.spec.ts tests/protected/m1-acceptance-safety.spec.ts tests/m4-04-fake-executor.spec.ts; pnpm test; verify dispatch",
+      "result": "pass",
+      "output": "outside sandbox 27/27, 0 leaked grandchild processes; full suite 802/802; verify run 43111137471 all four cells success; reviewer gemini-3.8-flash-high approve (rounds 1-3); contract amended twice (Muse #18, detached grandchild)"
+    }
+  ],
+  "ended_at": "2026-11-11T22:34:25.384Z"
+}

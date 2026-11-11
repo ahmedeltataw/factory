@@ -35,7 +35,7 @@ describe('M3-01 Schema v5 contract', () => {
     const path = databasePath()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
       expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
       expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
       expect(db.prepare('PRAGMA busy_timeout').get()).toMatchObject({ timeout: 5000 })
@@ -60,7 +60,7 @@ describe('M3-01 Schema v5 contract', () => {
       // Reopening is idempotent
       const observer = new DatabaseSync(path)
       try {
-        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 })
+        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
       } finally {
         observer.close()
       }
@@ -102,7 +102,7 @@ describe('M3-01 Schema v5 contract', () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const db = openStore(path)
       try {
-        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 })
+        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
         expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
         expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
         expect(db.prepare('SELECT name FROM projects WHERE id = ?').get('p1')).toMatchObject({ name: 'Alpha' })
@@ -209,13 +209,13 @@ describe('M3-01 Schema v5 contract', () => {
     }
   })
 
-  it('CHK-M3-01-b: refuses a v7 database unmodified', () => {
+  it('CHK-M3-01-b: refuses a v8 database unmodified', () => {
     const path = databasePath()
     const future = new DatabaseSync(path)
     future.exec(`
       CREATE TABLE future_data (value TEXT NOT NULL);
       INSERT INTO future_data VALUES ('preserved');
-      PRAGMA user_version = 7;
+      PRAGMA user_version = 8;
     `)
     future.close()
 
@@ -230,7 +230,7 @@ describe('M3-01 Schema v5 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow('store: unsupported schema version 7')
+      }).toThrow('store: unsupported schema version 8')
     } finally {
       unexpectedDb?.close()
     }
@@ -253,12 +253,12 @@ describe('M3-01 Schema v5 contract', () => {
     let simulatedVersionChangeOccurred = false
     const origExec = DatabaseSync.prototype.exec
 
-    const commitV7 = () => {
+    const commitV8 = () => {
       if (simulatedVersionChangeOccurred) return
       simulatedVersionChangeOccurred = true
       const second = new DatabaseSync(path)
       try {
-        origExec.call(second, 'PRAGMA user_version = 7')
+        origExec.call(second, 'PRAGMA user_version = 8')
       } finally {
         second.close()
       }
@@ -266,7 +266,7 @@ describe('M3-01 Schema v5 contract', () => {
 
     DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string) {
       if (/^\s*BEGIN\s+IMMEDIATE/i.test(sql)) {
-        commitV7()
+        commitV8()
       }
       return origExec.call(this, sql)
     }
@@ -275,7 +275,7 @@ describe('M3-01 Schema v5 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow(/unsupported schema version 7/i)
+      }).toThrow(/unsupported schema version 8/i)
     } finally {
       unexpectedDb?.close()
       DatabaseSync.prototype.exec = origExec
@@ -285,7 +285,7 @@ describe('M3-01 Schema v5 contract', () => {
 
     const check = new DatabaseSync(path)
     try {
-      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
+      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
       const v5TableNames = ['project_config', 'command_outcomes', 'tasks', 'attempts', 'workers', 'outbox', 'evidence']
       for (const name of v5TableNames) {
         expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name)).toBeUndefined()
@@ -763,12 +763,12 @@ describe('M3-01 Schema v5 contract', () => {
       const noLeaseStatus = readStatus(dir, { nowMs: 2000, staleAfterMs: 500 })
       expect(fileHash(path)).toBe(beforeHash)
       expect(m2Status(noLeaseStatus)).toEqual({
-        schemaVersion: 6,
+        schemaVersion: 7,
         recordedCommandCount: 2,
         lease: null,
       })
       const noLeaseArabic = formatStatus(noLeaseStatus)
-      expect(noLeaseArabic).toContain('إصدار المخطط: 6')
+      expect(noLeaseArabic).toContain('إصدار المخطط: 7')
       expect(noLeaseArabic).toContain('عدد الأوامر المسجلة: 2')
       expect(noLeaseArabic).toContain('الملكية: غير موجود')
 
@@ -777,7 +777,7 @@ describe('M3-01 Schema v5 contract', () => {
       try {
         const activeStatus = readStatus(dir, { nowMs: 2000, staleAfterMs: 500 })
         expect(m2Status(activeStatus)).toEqual({
-          schemaVersion: 6,
+          schemaVersion: 7,
           recordedCommandCount: 2,
           lease: {
             ownerId: handle.ownerId,
@@ -790,7 +790,7 @@ describe('M3-01 Schema v5 contract', () => {
         expect(JSON.stringify(activeStatus)).not.toContain('never-disclosed')
 
         const activeArabic = formatStatus(activeStatus)
-        expect(activeArabic).toContain('إصدار المخطط: 6')
+        expect(activeArabic).toContain('إصدار المخطط: 7')
         expect(activeArabic).toContain('عدد الأوامر المسجلة: 2')
         expect(activeArabic).toContain(
           `الملكية: المالك="${handle.ownerId}", الجيل=${handle.generation}, وقت النبض (Unix timestamp)=1800 ميلي ثانية, الحالة=نشط, حداثة النبض=حديث (لا يشكل دليلاً على أن العملية قيد التشغيل)`,

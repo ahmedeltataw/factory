@@ -239,9 +239,12 @@ async function main(): Promise<void> {
 
   // 2. Spawn grandchild process with parent-death detection
   const parentPid = process.pid
+  const watchdog = process.env.FAKE_NO_WATCHDOG !== '1'
   const grandchildScript = `
 const ppid = ${parentPid};
+const watchdog = ${watchdog};
 const timer = setInterval(() => {
+  if (!watchdog) return;
   try {
     process.kill(ppid, 0);
   } catch {
@@ -258,6 +261,7 @@ process.on('SIGINT', () => { clearInterval(timer); process.exit(0); });
     {
       stdio: 'ignore',
       windowsHide: true,
+      detached: !watchdog,
     },
   )
 
