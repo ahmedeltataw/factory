@@ -201,37 +201,42 @@ describe('M4-04 unit tests for fake-executor', () => {
 
   it.skipIf(process.platform !== 'win32')('runs with 8.3 short path alias as runDir and cwd', async (ctx) => {
     const root = mkdtempSync(join(tmpdir(), 'factory m4 04 long name-'))
-    const cmdOut = execSync(`cmd /c for %I in ("${root}") do @echo %~sI`, { encoding: 'utf8' })
-    const alias = cmdOut ? cmdOut.trim() : ''
+    let child: ChildProcess | undefined
+    let nonce: string | undefined
+    let alias: string | undefined
+    let exitPromise: Promise<number | null> | undefined
 
-    if (!alias || alias.toLowerCase() === root.toLowerCase()) {
-      rmSync(root, { recursive: true, force: true })
-      ctx.skip()
-      return
-    }
-
-    const nonce = randomUUID()
-    const cleanEnv = { ...process.env }
-    for (const key of ['FACTORY_ATTEMPT_NO', 'FAKE_FAIL_UNTIL_ATTEMPT', 'FAKE_FAIL_CODE', 'FAKE_HANG', 'FAKE_WRITE', 'FAKE_SLEEP_MS', 'FAKE_EXIT_CODE']) {
-      delete cleanEnv[key]
-    }
-
-    const child = spawn(process.execPath, [executor, task, nonce, alias], {
-      cwd: alias,
-      env: cleanEnv,
-      detached: true,
-      windowsHide: true,
-      stdio: 'ignore',
-    })
-
-    const exitPromise = new Promise<number | null>((resolve, reject) => {
-      child.once('error', reject)
-      child.once('exit', resolve)
-    })
-
-    let exitCode: number | null = null
     try {
+      const cmdOut = execSync(`cmd /c for %I in ("${root}") do @echo %~sI`, { encoding: 'utf8' })
+      alias = cmdOut ? cmdOut.trim() : ''
+
+      if (!alias || alias.toLowerCase() === root.toLowerCase()) {
+        ctx.skip()
+        return
+      }
+
+      nonce = randomUUID()
+      const cleanEnv = { ...process.env }
+      for (const key of ['FACTORY_ATTEMPT_NO', 'FAKE_FAIL_UNTIL_ATTEMPT', 'FAKE_FAIL_CODE', 'FAKE_HANG', 'FAKE_WRITE', 'FAKE_SLEEP_MS', 'FAKE_EXIT_CODE']) {
+        delete cleanEnv[key]
+      }
+
+      child = spawn(process.execPath, [executor, task, nonce, alias], {
+        cwd: alias,
+        env: cleanEnv,
+        detached: true,
+        windowsHide: true,
+        stdio: 'ignore',
+      })
+
+      const proc = child
+      exitPromise = new Promise<number | null>((resolve, reject) => {
+        proc.once('error', reject)
+        proc.once('exit', resolve)
+      })
+
       let timer: ReturnType<typeof setTimeout> | undefined
+      let exitCode: number | null = null
       try {
         exitCode = await Promise.race([
           exitPromise,
@@ -251,21 +256,38 @@ describe('M4-04 unit tests for fake-executor', () => {
       expect(workerData.nonce).toBe(nonce)
     } finally {
       try {
-        if (child.pid && child.exitCode === null && child.signalCode === null) {
-          await killTree(child.pid, nonce)
+        let killRes: Awaited<ReturnType<typeof killTree>> | undefined
+        if (child?.pid && child.exitCode === null && child.signalCode === null && nonce) {
+          killRes = await killTree(child.pid, nonce)
         }
-        const workerPath = join(alias, 'worker.json')
-        if (existsSync(workerPath)) {
-          try {
-            const w = JSON.parse(readFileSync(workerPath, 'utf8')) as Worker
-            if (w.pid === child.pid && w.nonce === nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0 && alive(w.grandchildPid)) {
-              await killTree(w.grandchildPid, nonce)
+        if (alias && nonce) {
+          const workerPath = join(alias, 'worker.json')
+          if (existsSync(workerPath)) {
+            try {
+              const w = JSON.parse(readFileSync(workerPath, 'utf8')) as Worker
+              if (w.pid === child?.pid && w.nonce === nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0 && alive(w.grandchildPid)) {
+                await killTree(w.grandchildPid, nonce)
+              }
+            } catch {
+              // ignore
             }
-          } catch {
-            // ignore
           }
         }
-        await exitPromise
+        if (exitPromise && child && (child.exitCode !== null || killRes?.result === 'killed' || killRes?.result === 'not-running')) {
+          let timer: ReturnType<typeof setTimeout> | undefined
+          try {
+            await Promise.race([
+              exitPromise,
+              new Promise<void>((resolve) => {
+                timer = setTimeout(resolve, 10000)
+              }),
+            ])
+          } catch {
+            // ignore
+          } finally {
+            if (timer) clearTimeout(timer)
+          }
+        }
       } finally {
         rmSync(root, { recursive: true, force: true })
       }
