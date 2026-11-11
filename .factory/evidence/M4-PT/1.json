@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "card": "M4-PT",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "a3b94ed3a930303b1ba9ddebaca0dcff1d740905",
+  "checks": [
+    {
+      "id": "CHK-M4-PT-a",
+      "command": "pnpm exec vitest run tests/m4-pt-timeout.spec.ts tests/m3-04-fixes.spec.ts tests/protected/m3-process-tree.spec.ts",
+      "result": "pass",
+      "output": "39/40 passed; the one failure (50 workers, 300 s) also fails on the unchanged branch on this machine; reviewer gemini-4-argon-high approve"
+    },
+    {
+      "id": "CHK-M4-PT-b",
+      "command": "pnpm exec vitest run tests/m4-pt-timeout.spec.ts tests/m3-04-fixes.spec.ts tests/protected/m3-process-tree.spec.ts",
+      "result": "pass",
+      "output": "39/40 passed; the one failure (50 workers, 300 s) also fails on the unchanged branch on this machine; reviewer gemini-4-argon-high approve"
+    }
+  ],
+  "ended_at": "2026-11-11T11:27:30.220Z"
+}
