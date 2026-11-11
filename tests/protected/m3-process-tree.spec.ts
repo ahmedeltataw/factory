@@ -118,11 +118,13 @@ function findPidsByNonces(nonces: string[]): number[] {
       `} | ForEach-Object { $_.ProcessId }`,
     ].join(' ')
 
-    const res = spawnSync('powershell', ['-NoProfile', '-Command', script], {
+    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
       encoding: 'utf8',
-      timeout: 20000,
+      timeout: 30000,
       windowsHide: true,
     })
+    let res = run()
+    if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') res = run()
 
     if (res.error) {
       throw new Error(`Process enumeration failed: ${res.error.message}`)

@@ -25,7 +25,7 @@ function getCommandLineForPid(pid: number): string | undefined {
   if (!pid || pid <= 0) return undefined
   try {
     if (process.platform === 'win32') {
-      const res = spawnSync(
+      const run = () => spawnSync(
         'powershell.exe',
         [
           '-NoProfile',
@@ -33,8 +33,10 @@ function getCommandLineForPid(pid: number): string | undefined {
           '-Command',
           `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
         ],
-        { encoding: 'utf8', timeout: 10000, windowsHide: true },
+        { encoding: 'utf8', timeout: 30000, windowsHide: true },
       )
+      let res = run()
+      if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') res = run()
       return res.status === 0 && res.stdout ? res.stdout.trim() : undefined
     } else {
       const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
@@ -71,7 +73,7 @@ function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: stri
   const validNonces = nonces.filter((n) => typeof n === 'string' && n.length > 0)
   if (!validNonces.length) return []
   if (process.platform === 'win32') {
-    const query = spawnSync(
+    const run = () => spawnSync(
       'powershell.exe',
       [
         '-NoProfile',
@@ -79,8 +81,10 @@ function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: stri
         '-Command',
         "$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Property ProcessId,CommandLine | Where-Object { $_.CommandLine } | ForEach-Object { @{ ProcessId = $_.ProcessId; CommandLine = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_.CommandLine)) } }); ConvertTo-Json -InputObject $p -Compress",
       ],
-      { encoding: 'utf8', timeout: 15000, windowsHide: true },
+      { encoding: 'utf8', timeout: 30000, windowsHide: true },
     )
+    let query = run()
+    if ((query.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') query = run()
     if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
     const rows = JSON.parse(query.stdout) as Array<{ ProcessId: number; CommandLine: string }>
     return rows.flatMap((row) => {
