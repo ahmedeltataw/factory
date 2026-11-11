@@ -24,6 +24,8 @@ Communication (owner rule, 2026-11-11):
 - Telegram group "Ai chat" is the chat channel. The Lead posts there with its bot (@Aeclaude_bot); Muse posts as the user "رفاعي". Use it for quick coordination: a card merged, check run X, a bug in Y.
 - GitHub (`factory-muse-inbox`) holds long items so builders can find them: QA reports, contract reviews, `qa-bug` and `ci-issue` issues.
 - The Lead reads only group messages that contain `@Lead`. When the Lead needs Muse to answer, it starts the message with `@Muse`, and Muse replies with `@Lead`.
+- Discussions with Muse (new decisions, new ways of working): Muse writes the whole proposal in one `factory-muse-inbox` issue (problem, proposal, alternatives, cost) and posts one line in the group: `@Lead proposal in #N`. The Lead answers once on the issue (accept, reject, or accept with changes, with reasons). Owner decisions go to the group as one clear question.
+- The Lead's listener sends each `@Lead` message to Haiku first, which answers status questions from `briefs/lead-status.md`; orders, decisions and bugs wake the Lead.
 - Decisions and orders come from the owner only.
 
 Hard rules:
