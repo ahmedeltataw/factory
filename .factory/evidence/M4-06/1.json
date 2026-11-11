@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M4-06",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "6f7fe1cc0831b22bd6d4e941dbc7b0ea7e43319f",
+  "checks": [
+    {
+      "id": "CHK-M4-06-a",
+      "command": "pnpm typecheck; pnpm test; CI mutation run 43019486102",
+      "result": "pass",
+      "output": "795/798 passed (3 pass alone or fail on the unchanged branch: machine load); mutation supervisor-loop.ts 85.50, outbox.ts 83.25; reviewers gemini-4-argon-high approve (impl, 2 rounds), gpt-6.1-sol approve (protected tests and M3 scope updates)"
+    },
+    {
+      "id": "CHK-M4-06-b",
+      "command": "pnpm typecheck; pnpm test; CI mutation run 43019486102",
+      "result": "pass",
+      "output": "795/798 passed (3 pass alone or fail on the unchanged branch: machine load); mutation supervisor-loop.ts 85.50, outbox.ts 83.25; reviewers gemini-4-argon-high approve (impl, 2 rounds), gpt-6.1-sol approve (protected tests and M3 scope updates)"
+    },
+    {
+      "id": "CHK-M4-06-c",
+      "command": "pnpm typecheck; pnpm test; CI mutation run 43019486102",
+      "result": "pass",
+      "output": "795/798 passed (3 pass alone or fail on the unchanged branch: machine load); mutation supervisor-loop.ts 85.50, outbox.ts 83.25; reviewers gemini-4-argon-high approve (impl, 2 rounds), gpt-6.1-sol approve (protected tests and M3 scope updates)"
+    },
+    {
+      "id": "CHK-M4-06-d",
+      "command": "pnpm typecheck; pnpm test; CI mutation run 43019486102",
+      "result": "pass",
+      "output": "795/798 passed (3 pass alone or fail on the unchanged branch: machine load); mutation supervisor-loop.ts 85.50, outbox.ts 83.25; reviewers gemini-4-argon-high approve (impl, 2 rounds), gpt-6.1-sol approve (protected tests and M3 scope updates)"
+    },
+    {
+      "id": "CHK-M4-06-e",
+      "command": "pnpm typecheck; pnpm test; CI mutation run 43019486102",
+      "result": "pass",
+      "output": "795/798 passed (3 pass alone or fail on the unchanged branch: machine load); mutation supervisor-loop.ts 85.50, outbox.ts 83.25; reviewers gemini-4-argon-high approve (impl, 2 rounds), gpt-6.1-sol approve (protected tests and M3 scope updates)"
+    }
+  ],
+  "ended_at": "2026-11-11T12:40:18.544Z"
+}
