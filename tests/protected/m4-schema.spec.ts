@@ -273,6 +273,7 @@ describe('M4-01 Schema v6 contract', () => {
           const after = afterTaskRows[i]!
           expect(after).toEqual({
             ...before,
+            phase: 'intake',
             scope_json: '["."]',
             max_attempts: 3,
             timeout_ms: null,
