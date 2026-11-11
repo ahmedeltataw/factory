@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "card": "M4-WIN",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "782691c31ae584d9edfc842a53b91d197d744b67",
+  "checks": [
+    {
+      "id": "CHK-M4-WIN-a",
+      "command": "pnpm exec vitest run tests/protected/m3-apply-property.spec.ts tests/protected/m4-fake-executor.spec.ts",
+      "result": "pass",
+      "output": "6/6 passed; reviewer gemini-4-argon-high approve"
+    },
+    {
+      "id": "CHK-M4-WIN-b",
+      "command": "pnpm exec vitest run tests/protected/m3-apply-property.spec.ts tests/protected/m4-fake-executor.spec.ts",
+      "result": "pass",
+      "output": "6/6 passed; reviewer gemini-4-argon-high approve"
+    }
+  ],
+  "ended_at": "2026-11-11T10:09:03.764Z"
+}
