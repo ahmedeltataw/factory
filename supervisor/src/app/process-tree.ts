@@ -35,7 +35,9 @@ export function spawnWorker(options: { runDir: string; cwd: string; taskId: stri
 }
 
 function powershell(script: string): string {
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'; " + script], { encoding: 'utf8', timeout: 10000, windowsHide: true })
+  const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'; " + script], { encoding: 'utf8', timeout: 30000, windowsHide: true })
+  let result = run()
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') result = run()
   if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr?.trim() || 'PowerShell failed')
   return result.stdout.trim()
 }
