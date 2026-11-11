@@ -1333,12 +1333,15 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
         // - Attempt 1 failed with error_class transient
         const now = Date.now()
         const leaseHeartbeatMs = now - 2000
-        const pendingBackoffMs = now + 3000
+        const attempt1EndedMs = now + 500
+        const pendingBackoffMs = attempt1EndedMs + 1000
+        const attempt1StartedMs = attempt1EndedMs - 1000
         const staleOwnerId = `crashed-supervisor-${randomUUID()}`
         const takeoverEvidence = `${staleOwnerId}:1:${leaseHeartbeatMs}`
         const attempt1Id = randomUUID()
-        const attempt1Started = new Date(now - 5000).toISOString()
-        const attempt1Ended = new Date(now - 4000).toISOString()
+        const worker1Nonce = `worker-nonce-${randomUUID()}`
+        const attempt1Started = new Date(attempt1StartedMs).toISOString()
+        const attempt1Ended = new Date(attempt1EndedMs).toISOString()
 
         const dbSeed = openStore(dbPath)
         try {
@@ -1372,6 +1375,52 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
               id, task_id, attempt_no, status, exit_code, error_class, lease_generation, started_at, ended_at, deadline_ms
             ) VALUES (?, ?, 1, 'failed', 75, 'transient', 1, ?, ?, NULL)
           `).run(attempt1Id, taskId, attempt1Started, attempt1Ended)
+
+          dbSeed.prepare(`
+            INSERT INTO workers (
+              attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at, ended_at
+            ) VALUES (?, ?, ?, 'exited', ?, ?, ?, ?)
+          `).run(
+            attempt1Id,
+            worker1Nonce,
+            4242,
+            join(stateDir, 'worktrees', taskId),
+            attempt1EndedMs,
+            attempt1Started,
+            attempt1Ended,
+          )
+
+          dbSeed.prepare(`
+            INSERT INTO outbox (
+              id, idempotency_key, kind, payload_json, status, tries, next_attempt_ms, last_error, created_at, updated_at
+            ) VALUES (?, ?, 'worktree.ensure', ?, 'done', 0, ?, NULL, ?, ?)
+          `).run(
+            randomUUID(),
+            `worktree.ensure:${attempt1Id}`,
+            JSON.stringify({ taskId }),
+            attempt1StartedMs,
+            attempt1Started,
+            attempt1Started,
+          )
+
+          dbSeed.prepare(`
+            INSERT INTO outbox (
+              id, idempotency_key, kind, payload_json, status, tries, next_attempt_ms, last_error, created_at, updated_at
+            ) VALUES (?, ?, 'attempt.start', ?, 'done', 0, ?, NULL, ?, ?)
+          `).run(
+            randomUUID(),
+            `attempt.start:${attempt1Id}`,
+            JSON.stringify({
+              attemptId: attempt1Id,
+              taskId,
+              runDir: join(stateDir, 'runs', attempt1Id),
+              cwd: join(stateDir, 'worktrees', taskId),
+              env: { FACTORY_ATTEMPT_NO: '1' },
+            }),
+            attempt1StartedMs,
+            attempt1Started,
+            attempt1Started,
+          )
         } finally {
           dbSeed.close()
         }
