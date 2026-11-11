@@ -73,7 +73,7 @@ jobs:
         run: node scripts/check-forbidden-imports.mjs
 
       - name: Traceability check
-        run: node scripts/check-traceability.mjs --all --require-passing ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/m') && endsWith(github.ref, '-integration') && '--present-only' || '' }}
+        run: node scripts/check-traceability.mjs --all --require-passing ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/m') && endsWith(github.ref, '-integration'))) && '--present-only' || '' }}
 
       - name: Manifest check
         run: node scripts/check-manifest.mjs
