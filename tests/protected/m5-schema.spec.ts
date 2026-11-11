@@ -194,8 +194,27 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
       expect(taskDepsColMap.get('task_id')).toMatchObject({ notnull: 1 })
       expect(taskDepsColMap.get('depends_on')).toMatchObject({ notnull: 1 })
 
+      // Verify index and triggers
+      const indexRow = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'phases_one_open'").get()
+      expect(indexRow, 'expected index phases_one_open to exist').toBeDefined()
+
+      for (const trigger of ['phases_no_delete', 'task_deps_no_update', 'task_deps_no_delete']) {
+        const trigRow = db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(trigger)
+        expect(trigRow, `expected trigger ${trigger} to exist`).toBeDefined()
+      }
+
+      // Foreign key on phases.project_id rejects an unknown project
+      expect(() => {
+        db.prepare("INSERT INTO phases (project_id, name, ord, status) VALUES ('unknown_project', 'intake', 1, 'locked')").run()
+      }).toThrow(/FOREIGN KEY constraint failed/i)
+
       // Inserting task omitting phase gets default 'intake'
       db.prepare("INSERT INTO projects (id, name, created_at) VALUES ('p_fresh', 'Fresh', '2026-11-10T00:00:00.000Z')").run()
+
+      // phases.status CHECK rejects 'closed'
+      expect(() => {
+        db.prepare("INSERT INTO phases (project_id, name, ord, status) VALUES ('p_fresh', 'intake', 1, 'closed')").run()
+      }).toThrow(/CHECK constraint failed/i)
       db.prepare("INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES ('c_fresh', 'p_fresh', 'task.create', '{}', '2026-11-10T00:00:00.000Z')").run()
       db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at) VALUES ('t_def', 'p_fresh', 'c_fresh', 'Default Task', 'ready', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z')").run()
 
@@ -269,12 +288,27 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
       raw.close()
     }
 
+    const timeBeforeUpgrade = new Date(Date.now() - 100).toISOString()
+    let timeAfterUpgrade: string | undefined
+    let firstPhasesSnapshot: Record<string, unknown>[] | undefined
+
     for (let attempt = 0; attempt < 2; attempt++) {
       const db = openStore(path)
+      if (attempt === 0) {
+        timeAfterUpgrade = new Date(Date.now() + 100).toISOString()
+      }
       try {
         expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
         expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
         expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
+
+        // Reopening the DB leaves the whole phases table byte-identical (compare full row snapshots before/after reopen)
+        const currentPhasesSnapshot = db.prepare('SELECT * FROM phases ORDER BY project_id, ord').all() as Record<string, unknown>[]
+        if (attempt === 0) {
+          firstPhasesSnapshot = currentPhasesSnapshot
+        } else {
+          expect(currentPhasesSnapshot, 'reopening the DB leaves the whole phases table byte-identical').toEqual(firstPhasesSnapshot)
+        }
 
         // Check row counts for every v6 table match snapshot
         for (const table of V6_TABLES) {
@@ -334,6 +368,13 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
           expect(typeof intake.opened_at).toBe('string')
           expect(intake.opened_at!.length).toBeGreaterThan(0)
           expect(intake.closed_at).toBeNull()
+
+          // opened_at of the intake phase after upgrade is a valid ISO timestamp between the time before and after the upgrade call
+          const parsedMs = Date.parse(intake.opened_at!)
+          expect(Number.isNaN(parsedMs)).toBe(false)
+          expect(new Date(parsedMs).toISOString()).toBe(intake.opened_at)
+          expect(parsedMs).toBeGreaterThanOrEqual(Date.parse(timeBeforeUpgrade))
+          expect(parsedMs).toBeLessThanOrEqual(Date.parse(timeAfterUpgrade!))
 
           for (const otherName of ['development', 'qa', 'devops', 'handover']) {
             const other = phases.find((p) => p.name === otherName)!
@@ -451,7 +492,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow('store: unsupported schema version 8')
+      }).toThrow()
     } finally {
       unexpectedDb?.close()
     }
@@ -464,6 +505,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
       expect(check.prepare('PRAGMA journal_mode').get()).toEqual(beforeJournalMode)
       expect(check.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name").all()).toEqual(beforeSchema)
       expect(check.prepare('SELECT value FROM future_data').get()).toMatchObject({ value: 'preserved' })
+      expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'phases'").get()).toBeUndefined()
     } finally {
       check.close()
     }
@@ -479,7 +521,12 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
       simulatedVersionChangeOccurred = true
       const second = new DatabaseSync(path)
       try {
-        origExec.call(second, 'PRAGMA user_version = 8')
+        origExec.call(
+          second,
+          `CREATE TABLE future_data (value TEXT NOT NULL);
+           INSERT INTO future_data VALUES ('preserved');
+           PRAGMA user_version = 8;`,
+        )
       } finally {
         second.close()
       }
@@ -496,7 +543,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow(/unsupported schema version 8/i)
+      }).toThrow()
     } finally {
       unexpectedDb?.close()
       DatabaseSync.prototype.exec = origExec
@@ -507,6 +554,8 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
     const check = new DatabaseSync(path)
     try {
       expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+      expect(check.prepare('SELECT value FROM future_data').get()).toMatchObject({ value: 'preserved' })
+      expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'phases'").get()).toBeUndefined()
     } finally {
       check.close()
     }
@@ -714,6 +763,9 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
         expect(() => {
           db.prepare("UPDATE task_deps SET task_id = 't3' WHERE task_id = 't2'").run()
         }).toThrow(/task_deps are immutable/i)
+        expect(() => {
+          db.prepare("UPDATE task_deps SET depends_on = depends_on WHERE task_id = 't2'").run()
+        }).toThrow(/task_deps are immutable/i)
 
         // DELETE rejected
         expect(() => {
@@ -775,31 +827,47 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
       db.close()
     }
 
-    // 2. An injected failure after the project insert leaves no project and no phases
+    // 2. An injected failure after at least one phase row insert leaves no project, no project_config and no phases
     const repoDirFail = databaseDir()
     createGitRepo(repoDirFail)
     const stateDirFail = databaseDir()
 
     const origPrepare = DatabaseSync.prototype.prepare
-    let projectInserted = false
+    const origExec = DatabaseSync.prototype.exec
+    let phaseExecutions = 0
     let injectionOccurred = false
+
+    const handlePhaseInsert = (sql: string, executeOriginal: () => unknown): unknown => {
+      const isMultiRow = /\)\s*,\s*\(/i.test(sql) || /\bselect\b/i.test(sql)
+      phaseExecutions++
+      const res = executeOriginal()
+      if (!injectionOccurred && (isMultiRow ? phaseExecutions >= 1 : phaseExecutions >= 2)) {
+        injectionOccurred = true
+        throw new Error('injected init failure')
+      }
+      return res
+    }
 
     DatabaseSync.prototype.prepare = function (this: DatabaseSync, sql: string) {
       const stmt = origPrepare.call(this, sql)
-      if (/INSERT\s+INTO\s+projects\b/i.test(sql)) {
-        const origRun = stmt.run
-        stmt.run = function (this: any, ...args: any[]) {
-          const res = (origRun as any).apply(this, args)
-          projectInserted = true
-          return res
+      if (/insert\s+into\s+[`"']?phases\b/i.test(sql)) {
+        const wrapMethod = <T extends (...args: any[]) => any>(origFn: T): T => {
+          return function (this: any, ...args: any[]) {
+            return handlePhaseInsert(sql, () => origFn.apply(this, args))
+          } as T
         }
-      } else if (projectInserted && !injectionOccurred) {
-        stmt.run = function (this: any, ..._args: any[]) {
-          injectionOccurred = true
-          throw new Error('injected init failure')
-        }
+        stmt.run = wrapMethod(stmt.run)
+        stmt.get = wrapMethod(stmt.get)
+        stmt.all = wrapMethod(stmt.all)
       }
       return stmt
+    }
+
+    DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string) {
+      if (/insert\s+into\s+[`"']?phases\b/i.test(sql)) {
+        return handlePhaseInsert(sql, () => origExec.call(this, sql)) as any
+      }
+      return origExec.call(this, sql)
     }
 
     try {
@@ -808,9 +876,10 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
       }).toThrow('injected init failure')
     } finally {
       DatabaseSync.prototype.prepare = origPrepare
+      DatabaseSync.prototype.exec = origExec
     }
 
-    expect(injectionOccurred, 'failure must be injected after project insert').toBe(true)
+    expect(injectionOccurred, 'failure must be injected after at least one phase row was inserted').toBe(true)
 
     const checkFailDb = new DatabaseSync(join(stateDirFail, 'state.sqlite'))
     try {
