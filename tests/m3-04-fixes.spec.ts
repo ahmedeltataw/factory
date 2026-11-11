@@ -335,9 +335,11 @@ async function waitForFile(path: string): Promise<void> {
 function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: string }> {
   if (!nonces.length) return []
   if (process.platform === 'win32') {
-    const query = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
       "$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Property ProcessId,CommandLine | Where-Object { $_.CommandLine } | ForEach-Object { @{ ProcessId = $_.ProcessId; CommandLine = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_.CommandLine)) } }); ConvertTo-Json -InputObject $p -Compress"],
-    { encoding: 'utf8', timeout: 10000, windowsHide: true })
+    { encoding: 'utf8', timeout: 30000, windowsHide: true })
+    let query = run()
+    if ((query.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') query = run()
     if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
     const rows = JSON.parse(query.stdout) as Array<{ ProcessId: number; CommandLine: string }>
     return rows.flatMap((row) => {

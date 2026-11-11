@@ -155,23 +155,22 @@ const activeNonces = new Set<string>()
 const spawnedSupervisorChildren: TrackedSupervisorChild[] = []
 const activeContexts: TestContext[] = []
 
+function powershell(script: string) {
+  const run = () => spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
+    encoding: 'utf8',
+    timeout: 30000,
+    windowsHide: true,
+  })
+  let res = run()
+  if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') res = run()
+  return res
+}
+
 function getCommandLineForPid(pid: number): string | undefined {
   if (!pid || pid <= 0) return undefined
   try {
     if (process.platform === 'win32') {
-      const res = spawnSync(
-        'powershell',
-        [
-          '-NoProfile',
-          '-Command',
-          `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
-        ],
-        {
-          encoding: 'utf8',
-          timeout: 10000,
-          windowsHide: true,
-        },
-      )
+      const res = powershell(`(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`)
       if (res.status === 0 && res.stdout) {
         return res.stdout.trim()
       }
@@ -281,11 +280,7 @@ function findPidsByNonces(
       `} | ForEach-Object { $_.ProcessId }`,
     ].join(' ')
 
-    const res = spawnSync('powershell', ['-NoProfile', '-Command', script], {
-      encoding: 'utf8',
-      timeout: 20000,
-      windowsHide: true,
-    })
+    const res = powershell(script)
 
     if (res.error) {
       throw new Error(`Process enumeration failed: ${res.error.message}`)
@@ -364,11 +359,7 @@ function findGrandchildPidsByNonces(nonces: string[]): number[] {
       `} | ForEach-Object { $_.ProcessId }`,
     ].join(' ')
 
-    const res = spawnSync('powershell', ['-NoProfile', '-Command', script], {
-      encoding: 'utf8',
-      timeout: 20000,
-      windowsHide: true,
-    })
+    const res = powershell(script)
 
     if (res.error) {
       throw new Error(`Grandchild process enumeration failed: ${res.error.message}`)
