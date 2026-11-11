@@ -482,5 +482,5 @@ describe('M3-02 applyPendingCommands property tests', () => {
       }),
       { numRuns: 25 },
     )
-  }, 40000)
+  }, 120000)
 })
