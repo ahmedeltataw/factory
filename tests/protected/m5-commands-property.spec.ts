@@ -225,6 +225,8 @@ const actionArbitrary: fc.Arbitrary<Action> = fc.oneof(
 
 describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => {
   it('CHK-M5-05-e: random sequences of create, kill, retry and advance commands preserve phase and dependency invariants', () => {
+    let totalGeneratedApplied = 0
+
     fc.assert(
       fc.property(fc.array(actionArbitrary, { minLength: 6, maxLength: 20 }), (actions) => {
         const stateDir = mkdtempSync(join(tmpdir(), 'factory-prop-m5-'))
@@ -241,6 +243,13 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
           db.prepare("INSERT INTO projects (id, name, created_at) VALUES ('p1', 'Property Project', '2026-11-10T00:00:00.000Z')").run()
           db.prepare("INSERT INTO project_config (project_id, repo_path, base_ref, created_at) VALUES ('p1', '/repo', 'main', '2026-11-10T00:00:00.000Z')").run()
           seedProjectPhases(db, 'p1')
+
+          // Track phase transitions across apply runs:
+          // a done phase never becomes open/locked, an open phase only becomes done, a locked phase only becomes open; at most one open.
+          const previousPhaseStatus = new Map<string, 'locked' | 'open' | 'done'>()
+          for (const p of PHASES) {
+            previousPhaseStatus.set(p, p === 'intake' ? 'open' : 'locked')
+          }
 
           let timeSeq = 1
 
@@ -262,6 +271,13 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
           })
           applyPendingCommands(db, handle)
 
+          const outcome1 = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get(seedTask1) as {
+            outcome: string
+            reason: string | null
+          } | undefined
+          expect(outcome1?.outcome, 'seed task 1 command must be applied').toBe('applied')
+          expect(outcome1?.reason).toBeNull()
+
           // Finish seed task 1 and advance intake phase to development
           db.prepare("UPDATE tasks SET status = 'done', updated_at = '2026-11-10T00:00:02.000Z' WHERE id = ?").run(seedTask1)
           appendCommand(db, {
@@ -272,6 +288,18 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
             createdAt: '2026-11-10T00:00:03.000Z',
           })
           applyPendingCommands(db, handle)
+
+          const outcomeAdv = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get('seed-cmd-adv-1') as {
+            outcome: string
+            reason: string | null
+          } | undefined
+          expect(outcomeAdv?.outcome, 'seed phase advance command must be applied').toBe('applied')
+          expect(outcomeAdv?.reason).toBeNull()
+
+          const intakePhase = db.prepare("SELECT status FROM phases WHERE project_id = 'p1' AND name = 'intake'").get() as { status: string } | undefined
+          expect(intakePhase?.status, 'intake phase must advance to done').toBe('done')
+          const devPhase = db.prepare("SELECT status FROM phases WHERE project_id = 'p1' AND name = 'development'").get() as { status: string } | undefined
+          expect(devPhase?.status, 'development phase must advance to open').toBe('open')
 
           // Seed task 2 in development phase with dep on seed task 1
           const seedTask2 = 'seed-task-2'
@@ -291,17 +319,24 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
           })
           applyPendingCommands(db, handle)
 
+          const outcome2 = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get(seedTask2) as {
+            outcome: string
+            reason: string | null
+          } | undefined
+          expect(outcome2?.outcome, 'seed task 2 command must be applied').toBe('applied')
+          expect(outcome2?.reason).toBeNull()
+
+          const depRows = db.prepare('SELECT task_id, depends_on FROM task_deps WHERE task_id = ?').all(seedTask2) as Array<{
+            task_id: string
+            depends_on: string
+          }>
+          expect(depRows.length, 'seed task 2 must create task_deps rows').toBe(1)
+          expect(depRows[0]).toEqual({ task_id: seedTask2, depends_on: seedTask1 })
+
           timeSeq = 10
 
           const verifyInvariants = () => {
-            // Invariant 1: At most one open phase
-            const openPhases = db!.prepare("SELECT name, ord FROM phases WHERE project_id = 'p1' AND status = 'open'").all() as Array<{
-              name: string
-              ord: number
-            }>
-            expect(openPhases.length).toBeLessThanOrEqual(1)
-
-            // Invariant 2: Phases only move forward
+            // Invariant 1: At most one open phase and valid phase transitions across apply runs
             const allPhases = db!.prepare("SELECT name, ord, status, opened_at, closed_at FROM phases WHERE project_id = 'p1' ORDER BY ord").all() as Array<{
               name: string
               ord: number
@@ -311,6 +346,26 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
             }>
             expect(allPhases).toHaveLength(5)
 
+            const openPhases = allPhases.filter((p) => p.status === 'open')
+            expect(openPhases.length, 'at most one phase may be open').toBeLessThanOrEqual(1)
+
+            // Check phase transitions across apply runs:
+            // a done phase never becomes open/locked, an open phase only becomes done, a locked phase only becomes open
+            for (const p of allPhases) {
+              const prev = previousPhaseStatus.get(p.name)
+              if (prev !== undefined) {
+                if (prev === 'done') {
+                  expect(p.status, `done phase ${p.name} never becomes open or locked`).toBe('done')
+                } else if (prev === 'open') {
+                  expect(p.status === 'open' || p.status === 'done', `open phase ${p.name} only becomes done, got ${p.status}`).toBe(true)
+                } else if (prev === 'locked') {
+                  expect(p.status === 'locked' || p.status === 'open', `locked phase ${p.name} only becomes open, got ${p.status}`).toBe(true)
+                }
+              }
+              previousPhaseStatus.set(p.name, p.status)
+            }
+
+            // Invariant 2: Phases only move forward
             let openSeen = false
             let lastDoneOrd = 0
             for (const p of allPhases) {
@@ -481,6 +536,12 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
           // Final flush to apply any remaining pending commands
           applyPendingCommands(db, handle)
           verifyInvariants()
+
+          const genApplied = (db.prepare(`
+            SELECT COUNT(*) as c FROM command_outcomes
+            WHERE command_id NOT IN ('seed-task-1', 'seed-cmd-adv-1', 'seed-task-2') AND outcome = 'applied'
+          `).get() as { c: number }).c
+          totalGeneratedApplied += genApplied
         } finally {
           if (handle) {
             try {
@@ -500,5 +561,6 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
       }),
       { numRuns: 20 },
     )
+    expect(totalGeneratedApplied, 'at least some generated commands must be applied across property runs').toBeGreaterThan(0)
   }, 60000)
 })

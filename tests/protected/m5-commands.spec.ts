@@ -8,6 +8,7 @@ import { applyPendingCommands } from '../../supervisor/src/app/apply-commands.ts
 import { appendCommand, CommandConflictError } from '../../supervisor/src/app/commands.ts'
 import { openStore } from '../../supervisor/src/app/store.ts'
 import { acquireSupervisor, type SupervisorLeaseHandle } from '../../supervisor/src/app/supervisor-lease.ts'
+import { parseDeps } from '../../supervisor/src/core/graph.ts'
 
 const ARABIC_REGEX = /[\u0600-\u06ff]/
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -234,6 +235,19 @@ function setupCliEnv(): { stateDir: string; repoDir: string; dbPath: string } {
   return { stateDir, repoDir, dbPath }
 }
 
+function snapshotDomain(db: DatabaseSync, ignoreCommandId?: string) {
+  return {
+    tasks: db.prepare('SELECT * FROM tasks ORDER BY id').all(),
+    task_deps: db.prepare('SELECT * FROM task_deps ORDER BY task_id, depends_on').all(),
+    phases: db.prepare('SELECT * FROM phases ORDER BY project_id, ord').all(),
+    outcomes: (
+      ignoreCommandId
+        ? db.prepare('SELECT * FROM command_outcomes WHERE command_id <> ? ORDER BY command_id').all(ignoreCommandId)
+        : db.prepare('SELECT * FROM command_outcomes ORDER BY command_id').all()
+    ),
+  }
+}
+
 afterEach(() => {
   const errors: unknown[] = []
   for (const ctx of activeContexts.splice(0)) {
@@ -316,21 +330,15 @@ describe('M5-05 CHK-M5-05-a: task create payload normalization and apply', () =>
       expect(row).toBeDefined()
       expect(row?.kind).toBe('task.create')
 
-      const payload = JSON.parse(row!.payload_json) as {
-        title: string
-        scope: string[]
-        maxAttempts: number
-        timeoutMs: number | null
-        phase: string | null
-        deps: string[]
-      }
-      expect(payload.title).toBe('Task with phase and deps')
-      expect(payload.scope).toEqual(['.'])
-      expect(payload.maxAttempts).toBe(3)
-      expect(payload.timeoutMs).toBeNull()
-      expect(payload.phase).toBe('qa')
-      // deps must be deduplicated and sorted in code-unit order
-      expect(payload.deps).toEqual(['task-A', 'task-B'])
+      const payload = JSON.parse(row!.payload_json)
+      expect(payload).toEqual({
+        title: 'Task with phase and deps',
+        scope: ['.'],
+        maxAttempts: 3,
+        timeoutMs: null,
+        phase: 'qa',
+        deps: ['task-A', 'task-B'],
+      })
 
       const handle = acquireSupervisor(db, stateDir, { nowMs: 2000, staleAfterMs: 300000 })
       try {
@@ -381,20 +389,15 @@ describe('M5-05 CHK-M5-05-a: task create payload normalization and apply', () =>
     try {
       db.exec('PRAGMA foreign_keys = ON')
       const row = db.prepare('SELECT payload_json FROM commands WHERE id = ?').get(cmdId) as { payload_json: string }
-      const payload = JSON.parse(row.payload_json) as {
-        title: string
-        scope: string[]
-        maxAttempts: number
-        timeoutMs: number | null
-        phase: string | null
-        deps: string[]
-      }
-      expect(payload.title).toBe('Task with defaults')
-      expect(payload.scope).toEqual(['.'])
-      expect(payload.maxAttempts).toBe(3)
-      expect(payload.timeoutMs).toBeNull()
-      expect(payload.phase).toBeNull()
-      expect(payload.deps).toEqual([])
+      const payload = JSON.parse(row.payload_json)
+      expect(payload).toEqual({
+        title: 'Task with defaults',
+        scope: ['.'],
+        maxAttempts: 3,
+        timeoutMs: null,
+        phase: null,
+        deps: [],
+      })
 
       const handle = acquireSupervisor(db, stateDir, { nowMs: 2000, staleAfterMs: 300000 })
       try {
@@ -502,7 +505,6 @@ describe('M5-05 CHK-M5-05-b: CLI argument validation, reject classes, and duplic
     { label: 'empty string entry', afterArgs: ['--after', ''] },
     { label: 'whitespace only entry', afterArgs: ['--after', '   '] },
     { label: 'entry longer than 200 characters (201 chars)', afterArgs: ['--after', 'a'.repeat(201)] },
-    { label: 'lone surrogate U+D800', afterArgs: ['--after', '\uD800'] },
   ]
 
   for (const { label, afterArgs } of parseDepsRejectCases) {
@@ -521,6 +523,26 @@ describe('M5-05 CHK-M5-05-b: CLI argument validation, reject classes, and duplic
       }
     })
   }
+
+  it('CHK-M5-05-b: parseDeps rejects malformed Unicode with a reason (tested in-process)', () => {
+    const r1 = parseDeps(['\uD800'])
+    expect(r1.ok).toBe(false)
+    if (r1.ok) throw new Error('lone surrogate accepted')
+    expect(typeof r1.reason).toBe('string')
+    expect(r1.reason.length).toBeGreaterThan(0)
+
+    const r2 = parseDeps(['\uDC00'])
+    expect(r2.ok).toBe(false)
+    if (r2.ok) throw new Error('lone surrogate accepted')
+    expect(typeof r2.reason).toBe('string')
+    expect(r2.reason.length).toBeGreaterThan(0)
+
+    const r3 = parseDeps(['valid-dep', '\uD800'])
+    expect(r3.ok).toBe(false)
+    if (r3.ok) throw new Error('lone surrogate accepted')
+    expect(typeof r3.reason).toBe('string')
+    expect(r3.reason.length).toBeGreaterThan(0)
+  })
 
   it('CHK-M5-05-b: task create duplicate with reordered deps outputs duplicate; different deps or phase with same command-id exits 1', () => {
     const { stateDir, dbPath } = setupCliEnv()
@@ -723,7 +745,10 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
       createdAt: '2026-11-10T00:01:00.000Z',
     })
 
+    const before = snapshotDomain(db, 'cmd-dep-missing')
     applyPendingCommands(db, handle)
+    const after = snapshotDomain(db, 'cmd-dep-missing')
+    expect(after).toEqual(before)
 
     const outcome = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get('cmd-dep-missing') as { outcome: string; reason: string | null }
     expect(outcome.outcome).toBe('rejected')
@@ -772,7 +797,10 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
       createdAt: '2026-11-10T00:01:00.000Z',
     })
 
+    const before = snapshotDomain(db, 'cmd-dep-other-proj')
     applyPendingCommands(db, handle)
+    const after = snapshotDomain(db, 'cmd-dep-other-proj')
+    expect(after).toEqual(before)
 
     const outcome = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get('cmd-dep-other-proj') as { outcome: string; reason: string | null }
     expect(outcome.outcome).toBe('rejected')
@@ -816,7 +844,10 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
       createdAt: '2026-11-10T00:01:00.000Z',
     })
 
+    const before = snapshotDomain(db, 'cmd-dep-dropped')
     applyPendingCommands(db, handle)
+    const after = snapshotDomain(db, 'cmd-dep-dropped')
+    expect(after).toEqual(before)
 
     const outcome = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get('cmd-dep-dropped') as { outcome: string; reason: string | null }
     expect(outcome.outcome).toBe('rejected')
@@ -861,7 +892,10 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
       createdAt: '2026-11-10T00:01:00.000Z',
     })
 
+    const before = snapshotDomain(db, 'cmd-dep-later-phase')
     applyPendingCommands(db, handle)
+    const after = snapshotDomain(db, 'cmd-dep-later-phase')
+    expect(after).toEqual(before)
 
     const outcome = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get('cmd-dep-later-phase') as { outcome: string; reason: string | null }
     expect(outcome.outcome).toBe('rejected')
@@ -896,7 +930,10 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
       createdAt: '2026-11-10T00:02:00.000Z',
     })
 
+    const before = snapshotDomain(db, 'cmd-named-phase-done')
     applyPendingCommands(db, handle)
+    const after = snapshotDomain(db, 'cmd-named-phase-done')
+    expect(after).toEqual(before)
 
     const outcome = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get('cmd-named-phase-done') as { outcome: string; reason: string | null }
     expect(outcome.outcome).toBe('rejected')
@@ -930,7 +967,10 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
       createdAt: '2026-11-10T00:02:00.000Z',
     })
 
+    const before = snapshotDomain(db, 'cmd-no-open-phase')
     applyPendingCommands(db, handle)
+    const after = snapshotDomain(db, 'cmd-no-open-phase')
+    expect(after).toEqual(before)
 
     const outcome = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get('cmd-no-open-phase') as { outcome: string; reason: string | null }
     expect(outcome.outcome).toBe('rejected')
@@ -939,6 +979,109 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
 
     expect(db.prepare('SELECT COUNT(*) as c FROM tasks WHERE id = ?').get('cmd-no-open-phase')).toEqual({ c: 0 })
     expect(db.prepare('SELECT COUNT(*) as c FROM task_deps WHERE task_id = ?').get('cmd-no-open-phase')).toEqual({ c: 0 })
+  })
+
+  it('CHK-M5-05-c: apply rejects with reason when valid dep is followed by an invalid dep kind, leaving no partial task_deps rows and leaving domain state intact', () => {
+    const ctx = setupTestEnv()
+    const { db, handle } = ctx
+
+    // 1. Seed valid dep in p1 (intake, done)
+    db.prepare(`
+      INSERT INTO commands (id, project_id, kind, payload_json, created_at)
+      VALUES ('c-valid-dep', 'p1', 'task.create', '{"title":"Valid Dep"}', '2026-11-10T00:00:00.000Z')
+    `).run()
+    db.prepare(`
+      INSERT INTO command_outcomes (command_id, outcome, reason, lease_generation, applied_at)
+      VALUES ('c-valid-dep', 'applied', null, 1, '2026-11-10T00:00:00.500Z')
+    `).run()
+    db.prepare(`
+      INSERT INTO tasks (id, project_id, created_by_command, title, status, phase, created_at, updated_at)
+      VALUES ('valid-dep-1', 'p1', 'c-valid-dep', 'Valid Dep', 'done', 'intake', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:01.000Z')
+    `).run()
+
+    // 2. Seed project p2 and a task in p2
+    db.prepare("INSERT INTO projects (id, name, created_at) VALUES ('p2', 'Project Two', '2026-11-10T00:00:00.000Z')").run()
+    db.prepare("INSERT INTO project_config (project_id, repo_path, base_ref, created_at) VALUES ('p2', '/repo2', 'main', '2026-11-10T00:00:00.000Z')").run()
+    seedProjectPhases(db, 'p2')
+    db.prepare(`
+      INSERT INTO commands (id, project_id, kind, payload_json, created_at)
+      VALUES ('c-p2-task', 'p2', 'task.create', '{"title":"P2 Task"}', '2026-11-10T00:00:01.000Z')
+    `).run()
+    db.prepare(`
+      INSERT INTO command_outcomes (command_id, outcome, reason, lease_generation, applied_at)
+      VALUES ('c-p2-task', 'applied', null, 1, '2026-11-10T00:00:01.500Z')
+    `).run()
+    db.prepare(`
+      INSERT INTO tasks (id, project_id, created_by_command, title, status, phase, created_at, updated_at)
+      VALUES ('task-in-p2', 'p2', 'c-p2-task', 'P2 Task', 'done', 'intake', '2026-11-10T00:00:01.000Z', '2026-11-10T00:00:02.000Z')
+    `).run()
+
+    // 3. Seed dropped task in p1
+    db.prepare(`
+      INSERT INTO commands (id, project_id, kind, payload_json, created_at)
+      VALUES ('c-dropped', 'p1', 'task.create', '{"title":"Dropped Task"}', '2026-11-10T00:00:00.000Z')
+    `).run()
+    db.prepare(`
+      INSERT INTO command_outcomes (command_id, outcome, reason, lease_generation, applied_at)
+      VALUES ('c-dropped', 'applied', null, 1, '2026-11-10T00:00:00.500Z')
+    `).run()
+    db.prepare(`
+      INSERT INTO tasks (id, project_id, created_by_command, title, status, phase, created_at, updated_at)
+      VALUES ('task-dropped', 'p1', 'c-dropped', 'Dropped Task', 'dropped', 'intake', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:01.000Z')
+    `).run()
+
+    // 4. Seed task in qa phase in p1
+    db.prepare(`
+      INSERT INTO commands (id, project_id, kind, payload_json, created_at)
+      VALUES ('c-qa-task', 'p1', 'task.create', '{"title":"QA Task"}', '2026-11-10T00:00:00.000Z')
+    `).run()
+    db.prepare(`
+      INSERT INTO command_outcomes (command_id, outcome, reason, lease_generation, applied_at)
+      VALUES ('c-qa-task', 'applied', null, 1, '2026-11-10T00:00:00.500Z')
+    `).run()
+    db.prepare(`
+      INSERT INTO tasks (id, project_id, created_by_command, title, status, phase, created_at, updated_at)
+      VALUES ('task-in-qa', 'p1', 'c-qa-task', 'QA Task', 'ready', 'qa', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:01.000Z')
+    `).run()
+
+    const mixedDepCases = [
+      { id: 'cmd-mix-missing', deps: ['valid-dep-1', 'missing-task-xyz'], desc: 'valid dep + missing dep' },
+      { id: 'cmd-mix-other-proj', deps: ['valid-dep-1', 'task-in-p2'], desc: 'valid dep + other project dep' },
+      { id: 'cmd-mix-dropped', deps: ['valid-dep-1', 'task-dropped'], desc: 'valid dep + dropped dep' },
+      { id: 'cmd-mix-later-phase', deps: ['valid-dep-1', 'task-in-qa'], desc: 'valid dep + later phase dep' },
+    ]
+
+    for (const testCase of mixedDepCases) {
+      appendCommand(db, {
+        id: testCase.id,
+        projectId: 'p1',
+        kind: 'task.create',
+        payloadJson: JSON.stringify({
+          title: `Task with ${testCase.desc}`,
+          scope: ['.'],
+          maxAttempts: 3,
+          timeoutMs: null,
+          phase: 'intake',
+          deps: testCase.deps,
+        }),
+        createdAt: '2026-11-10T00:01:00.000Z',
+      })
+
+      const before = snapshotDomain(db, testCase.id)
+      applyPendingCommands(db, handle)
+      const after = snapshotDomain(db, testCase.id)
+
+      expect(after, `domain rows must be unchanged for ${testCase.desc}`).toEqual(before)
+
+      const outcome = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get(testCase.id) as { outcome: string; reason: string | null }
+      expect(outcome.outcome, `outcome for ${testCase.desc}`).toBe('rejected')
+      expect(typeof outcome.reason).toBe('string')
+      expect(outcome.reason!.length).toBeGreaterThan(0)
+
+      expect(db.prepare('SELECT COUNT(*) as c FROM tasks WHERE id = ?').get(testCase.id)).toEqual({ c: 0 })
+      // Critical check: no partial task_deps rows written!
+      expect(db.prepare('SELECT COUNT(*) as c FROM task_deps WHERE task_id = ?').get(testCase.id), `no partial task_deps rows for ${testCase.desc}`).toEqual({ c: 0 })
+    }
   })
 
   it('CHK-M5-05-c: M4 payload without phase or deps is applied with the open phase and no task_deps', () => {
@@ -1017,12 +1160,24 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
     const ctx = setupTestEnv()
     const { db, handle } = ctx
 
+    const validBasePayload = {
+      title: 'Valid Base Task',
+      scope: ['.'],
+      maxAttempts: 3,
+      timeoutMs: null,
+      phase: 'intake',
+      deps: [],
+    }
+
     const malformedPayloads: Array<{ id: string; payload: unknown; desc: string }> = [
-      { id: 'cmd-mal-1', payload: { title: 'Bad', phase: 'invalid-phase', deps: [] }, desc: 'invalid phase' },
-      { id: 'cmd-mal-2', payload: { title: 'Bad', phase: 'intake', deps: 'not-an-array' }, desc: 'deps not an array' },
-      { id: 'cmd-mal-3', payload: { title: 'Bad', phase: 'intake', deps: [123] }, desc: 'deps containing non-string' },
-      { id: 'cmd-mal-4', payload: { title: 'Bad', phase: 'intake', deps: [''] }, desc: 'deps containing empty string' },
-      { id: 'cmd-mal-5', payload: { title: 'Bad', phase: 'intake', deps: Array.from({ length: 33 }, (_, i) => `d${i}`) }, desc: 'deps exceeding 32 entries' },
+      { id: 'cmd-mal-1', payload: { ...validBasePayload, phase: 'invalid-phase' }, desc: 'invalid phase' },
+      { id: 'cmd-mal-2', payload: { ...validBasePayload, deps: 'not-an-array' }, desc: 'deps not an array' },
+      { id: 'cmd-mal-3', payload: { ...validBasePayload, deps: [123] }, desc: 'deps containing non-string' },
+      { id: 'cmd-mal-4', payload: { ...validBasePayload, deps: [''] }, desc: 'deps containing empty string' },
+      { id: 'cmd-mal-5', payload: { ...validBasePayload, deps: ['   '] }, desc: 'deps containing whitespace only string' },
+      { id: 'cmd-mal-6', payload: { ...validBasePayload, deps: ['a'.repeat(201)] }, desc: 'deps containing string > 200 chars' },
+      { id: 'cmd-mal-7', payload: { ...validBasePayload, deps: ['\uD800'] }, desc: 'deps containing lone surrogate' },
+      { id: 'cmd-mal-8', payload: { ...validBasePayload, deps: Array.from({ length: 33 }, (_, i) => `d${i}`) }, desc: 'deps exceeding 32 entries' },
     ]
 
     for (const item of malformedPayloads) {
@@ -1035,7 +1190,9 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
       })
     }
 
+    const before = snapshotDomain(db)
     applyPendingCommands(db, handle)
+    const after = snapshotDomain(db)
 
     for (const item of malformedPayloads) {
       const outcome = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get(item.id) as { outcome: string; reason: string | null }
@@ -1046,6 +1203,10 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
       expect(db.prepare('SELECT COUNT(*) as c FROM tasks WHERE id = ?').get(item.id)).toEqual({ c: 0 })
       expect(db.prepare('SELECT COUNT(*) as c FROM task_deps WHERE task_id = ?').get(item.id)).toEqual({ c: 0 })
     }
+
+    expect(after.tasks).toEqual(before.tasks)
+    expect(after.task_deps).toEqual(before.task_deps)
+    expect(after.phases).toEqual(before.phases)
   })
 })
 
