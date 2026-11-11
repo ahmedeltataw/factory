@@ -951,7 +951,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         const oldAttemptId = 'att-order-old'
         db.prepare("INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES ('c-order-old', ?, 'task.create', '{\"title\":\"Old Task\"}', '2026-11-10T00:00:00.000Z')").run(projectId)
         db.prepare("INSERT INTO command_outcomes (command_id, outcome, reason, lease_generation, applied_at) VALUES ('c-order-old', 'applied', NULL, 1, '2026-11-10T00:00:00.000Z')").run()
-        db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at) VALUES ('order-task-old', ?, 'c-order-old', 'Old Task', 'progress', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z')").run(projectId)
+        db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json) VALUES ('order-task-old', ?, 'c-order-old', 'Old Task', 'progress', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z', '[\"order-old\"]')").run(projectId)
         db.prepare("INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation, started_at) VALUES (?, 'order-task-old', 1, 'running', 1, '2026-11-10T00:00:00.000Z')").run(oldAttemptId)
         db.prepare("INSERT INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, 'nonce-order-old', 99991, 'running', 'wt', 1000, '2026-11-10T00:00:00.000Z')").run(oldAttemptId)
 
@@ -961,13 +961,13 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         // 4. Ready task for dispatch-tasks
         db.prepare("INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES ('c-order-ready', ?, 'task.create', '{\"title\":\"Ready Task\"}', '2026-11-10T00:00:00.000Z')").run(projectId)
         db.prepare("INSERT INTO command_outcomes (command_id, outcome, reason, lease_generation, applied_at) VALUES ('c-order-ready', 'applied', NULL, 1, '2026-11-10T00:00:00.000Z')").run()
-        db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at) VALUES ('order-task-ready', ?, 'c-order-ready', 'Ready Task', 'ready', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z')").run(projectId)
+        db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json) VALUES ('order-task-ready', ?, 'c-order-ready', 'Ready Task', 'ready', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z', '[\"order-ready\",\"factory-fake/order-task-ready.txt\"]')").run(projectId)
 
         // 5. Running worker belonging to current lease generation for liveness check
         const liveAttemptId = 'att-order-live'
         db.prepare("INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES ('c-order-live', ?, 'task.create', '{\"title\":\"Live Task\"}', '2026-11-10T00:00:00.000Z')").run(projectId)
         db.prepare("INSERT INTO command_outcomes (command_id, outcome, reason, lease_generation, applied_at) VALUES ('c-order-live', 'applied', NULL, 1, '2026-11-10T00:00:00.000Z')").run()
-        db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at) VALUES ('order-task-live', ?, 'c-order-live', 'Live Task', 'progress', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z')").run(projectId)
+        db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json) VALUES ('order-task-live', ?, 'c-order-live', 'Live Task', 'progress', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z', '[\"order-live\"]')").run(projectId)
         db.prepare("INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation, started_at) VALUES (?, 'order-task-live', 1, 'running', 2, '2026-11-10T00:00:00.000Z')").run(liveAttemptId)
         db.prepare("INSERT INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, 'nonce-order-live', 99992, 'running', 'wt', 1000, '2026-11-10T00:00:00.000Z')").run(liveAttemptId)
 

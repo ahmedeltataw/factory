@@ -437,7 +437,12 @@ describe('CHK-M3-06-f: recovery and lifecycle property invariants', () => {
               switch (action.type) {
                 case 'createTask': {
                   const commandId = randomUUID()
-                  const payload = JSON.stringify({ title: action.title.trim() || 'Untitled' })
+                  const payload = JSON.stringify({
+                    title: action.title.trim() || 'Untitled',
+                    scope: [`task-${commandId}`, `factory-fake/${commandId}.txt`],
+                    maxAttempts: 3,
+                    timeoutMs: null,
+                  })
                   appendCommand(db, {
                     id: commandId,
                     projectId,
@@ -545,7 +550,12 @@ describe('CHK-M3-06-f: recovery and lifecycle property invariants', () => {
               id: detTaskId,
               projectId,
               kind: 'task.create',
-              payloadJson: JSON.stringify({ title: 'Deterministic Completion Task' }),
+              payloadJson: JSON.stringify({
+                title: 'Deterministic Completion Task',
+                scope: [`task-${detTaskId}`, `factory-fake/${detTaskId}.txt`],
+                maxAttempts: 3,
+                timeoutMs: null,
+              }),
               createdAt: new Date((currentTime += 100)).toISOString(),
             })
 
