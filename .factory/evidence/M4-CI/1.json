@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "card": "M4-CI",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "6fc03acfc8fb52b51c89f3b8dea71b8477f2e65a",
+  "checks": [
+    {
+      "id": "CHK-M4-CI-a",
+      "command": "pnpm exec vitest run tests/scripts/check-traceability.spec.ts tests/protected/m1-traceability-strict.spec.ts; node scripts/check-traceability.mjs --all --require-passing --present-only",
+      "result": "pass",
+      "output": "24/24 passed; OK, pending cards listed; reviewer gemini-4-argon-high approve"
+    },
+    {
+      "id": "CHK-M4-CI-b",
+      "command": "pnpm exec vitest run tests/scripts/check-traceability.spec.ts tests/protected/m1-traceability-strict.spec.ts; node scripts/check-traceability.mjs --all --require-passing --present-only",
+      "result": "pass",
+      "output": "24/24 passed; OK, pending cards listed; reviewer gemini-4-argon-high approve"
+    }
+  ],
+  "ended_at": "2026-11-11T08:54:10.467Z"
+}
