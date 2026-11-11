@@ -996,7 +996,7 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
     `).run()
     db.prepare(`
       INSERT INTO tasks (id, project_id, created_by_command, title, status, phase, created_at, updated_at)
-      VALUES ('valid-dep-1', 'p1', 'c-valid-dep', 'Valid Dep', 'done', 'intake', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:01.000Z')
+      VALUES ('a-valid-dep', 'p1', 'c-valid-dep', 'Valid Dep', 'done', 'intake', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:01.000Z')
     `).run()
 
     // 2. Seed project p2 and a task in p2
@@ -1045,10 +1045,10 @@ describe('M5-05 CHK-M5-05-c: command apply rejection rules and legacy M4 payload
     `).run()
 
     const mixedDepCases = [
-      { id: 'cmd-mix-missing', deps: ['valid-dep-1', 'missing-task-xyz'], desc: 'valid dep + missing dep' },
-      { id: 'cmd-mix-other-proj', deps: ['valid-dep-1', 'task-in-p2'], desc: 'valid dep + other project dep' },
-      { id: 'cmd-mix-dropped', deps: ['valid-dep-1', 'task-dropped'], desc: 'valid dep + dropped dep' },
-      { id: 'cmd-mix-later-phase', deps: ['valid-dep-1', 'task-in-qa'], desc: 'valid dep + later phase dep' },
+      { id: 'cmd-mix-missing', deps: ['a-valid-dep', 'missing-task-xyz'], desc: 'valid dep + missing dep' },
+      { id: 'cmd-mix-other-proj', deps: ['a-valid-dep', 'task-in-p2'], desc: 'valid dep + other project dep' },
+      { id: 'cmd-mix-dropped', deps: ['a-valid-dep', 'task-dropped'], desc: 'valid dep + dropped dep' },
+      { id: 'cmd-mix-later-phase', deps: ['a-valid-dep', 'task-in-qa'], desc: 'valid dep + later phase dep' },
     ]
 
     for (const testCase of mixedDepCases) {
