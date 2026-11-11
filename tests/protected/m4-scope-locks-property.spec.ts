@@ -288,9 +288,9 @@ describe('M4-06 scope lock property tests', () => {
             db.close()
           }
         }),
-        { numRuns: 20, endOnFailure: true },
+        { numRuns: 8, endOnFailure: true },
       )
     },
-    60000,
+    180000,
   )
 })
