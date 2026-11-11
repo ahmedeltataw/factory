@@ -1,6 +1,8 @@
 // CHK-M1-03-c: traceability — CHK ids of the card section must be covered by
 // the evidence record (pass, or not-run with deferred_to).
 import path from 'node:path'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import { fixturePath, runScript } from './helpers.ts'
 
@@ -143,6 +145,38 @@ describe('check-traceability', () => {
 
 describe('check-traceability --all', () => {
   const allRoot = (name: string) => fixturePath('check-traceability', name)
+
+  it('lists pending cards but still rejects failing or missing evidence', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'traceability-'))
+    try {
+      mkdirSync(path.join(root, 'docs', 'milestones'), { recursive: true })
+      mkdirSync(path.join(root, '.factory', 'evidence', 'M4-PASS'), { recursive: true })
+      writeFileSync(path.join(root, 'docs', 'milestones', 'M4.md'),
+        '### M4-PASS\nCHK-M4-PASS-a\n### M4-PENDING\nCHK-M4-PENDING-a\n')
+      const evidence = path.join(root, '.factory', 'evidence', 'M4-PASS', '1.json')
+      writeFileSync(evidence, JSON.stringify({ card: 'M4-PASS', attempt: 1, checks: [{ id: 'CHK-M4-PASS-a', result: 'pass' }] }))
+      const args = ['--all', '--require-passing', '--present-only']
+      const passing = runScript('check-traceability.mjs', args, { cwd: root })
+      expect(passing.status).toBe(0)
+      expect(passing.stdout).toContain('PENDING: M4-PENDING')
+      writeFileSync(evidence, JSON.stringify({ card: 'M4-PASS', attempt: 1, checks: [{ id: 'CHK-M4-PASS-a', result: 'fail' }] }))
+      const failing = runScript('check-traceability.mjs', args, { cwd: root })
+      expect(failing.status).toBe(1)
+      expect(failing.stdout).toContain('M4-PASS')
+      mkdirSync(path.join(root, '.factory', 'evidence', 'M4-PENDING'))
+      const empty = runScript('check-traceability.mjs', args, { cwd: root })
+      expect(empty.status).toBe(1)
+      expect(empty.stdout).toContain('missing evidence record for card M4-PENDING')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects --present-only without --all', () => {
+    const run = runScript('check-traceability.mjs', ['--present-only'])
+    expect(run.status).toBe(1)
+    expect(run.stdout).toContain('--present-only can only be used with --all')
+  })
 
   it('fails when one checked card has an uncovered check (fixture: pass + fail + section-less card)', () => {
     const run = runScript('check-traceability.mjs', ['--all'], { cwd: allRoot('all') })
