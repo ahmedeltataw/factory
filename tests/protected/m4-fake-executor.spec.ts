@@ -56,7 +56,7 @@ async function cleanup(f: Fixture): Promise<void> {
     }
     await waitForExit(f)
   } finally {
-    rmSync(f.root, { recursive: true, force: true })
+    rmSync(f.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }
 }
 
