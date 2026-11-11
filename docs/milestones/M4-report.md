@@ -1,6 +1,6 @@
 # M4 report: retries, timeouts, scope locks and enforcement
 
-Status: closing | 2026-11-11
+Status: closed | 2026-11-11
 Branch: `m4-integration`. The report draft came from Muse (factory-muse-inbox#7); the Lead finalised it.
 
 ## Result
@@ -61,8 +61,9 @@ Card results come from `.factory/evidence/<card>/1.json` on `m4-integration`.
 
 ## Close
 
-- **CI:** integration run on the final head; full mutation run on demand with `scope.ts` included. Results are recorded in the M4-09 evidence.
-- **Owner acceptance:** `acceptance/M4.ps1` should print `M4: PASS` and `acceptance/M3.ps1` should print `M3: PASS`.
+- **CI:** push run 43031001669 green on all four cells. Full mutation run 43031026998 passed: all files 80.0 or above (`supervisor-lease.ts` 81.19 lowest, `scope.ts` 99.18, total 88.05).
+- **Acceptance (owner's machine):** the owner's first run of `acceptance/M4.ps1` failed at step 11 because the script clones the GitHub default branch (`main`, still M3 code). At the owner's request the Lead reran both scripts on the owner's machine with `-Source D:\ai-project\factory-wt\m4-int` (`m4-integration`): `M4: PASS` (steps 1-14) and `M3: PASS` (steps 1-19).
+- **Models:** on 2026-11-11 `gemini-4-argon-high` was no longer offered by Antigravity. The owner chose `gemini-3.8-flash-high` as the reviewer for terra's cards (AGENTS.md).
 
 ## Lessons for M5
 
@@ -70,4 +71,5 @@ Card results come from `.factory/evidence/<card>/1.json` on `m4-integration`.
 - Freeze `rules-process.md` and the contract at milestone start, and have Muse review the contract before freezing. Amendments are only for defects, each logged with its cause.
 - First M5 card: full verify matrix on card branches via `workflow_dispatch` before merging process, executor, path or Windows cards.
 - `process-tree.ts` starts a new PowerShell for every call (about 1 s each on the owner machine). Consider one persistent session.
+- Acceptance scripts must test the milestone branch without a `-Source` override (M4.ps1 cloned `main`).
 - Muse is the GitHub monitor and QA (inbox README). Route its `qa-bug` and `ci-issue` issues to builders.
