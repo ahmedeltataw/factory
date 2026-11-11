@@ -1,4 +1,4 @@
-﻿import { readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { applyPendingCommands } from './apply-commands.ts'
@@ -8,6 +8,7 @@ import { createEffectHandlers, runDue } from './outbox.ts'
 import { failExhaustedEffects, finishAttempt, readWorker, reconcileWorkers, retryTask, scheduleAttempt, stateDirectory, type RecoveryDeps } from './recovery.ts'
 import type { SupervisorLeaseHandle } from './supervisor-lease.ts'
 import type { EnsureWorktreeConfig } from './worktree.ts'
+import { parseScope, scopesOverlap } from '../core/scope.ts'
 
 export { MAX_ATTEMPTS } from './recovery.ts'
 export interface WorkerCompletionRecord { exitCode: number }
@@ -82,8 +83,19 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
     // Kill commands applied this tick before creating any new work.
     await runEffects()
     fencedWrite(db, handle, () => {
-      const tasks = db.prepare("SELECT id FROM tasks WHERE status = 'ready' AND not_before_ms <= ?").all(nowMs) as Array<{ id: string }>
-      for (const task of tasks) scheduleAttempt(db, handle, task.id, stateDir, nowMs)
+      const tasks = db.prepare("SELECT id, status, scope_json, not_before_ms FROM tasks WHERE status IN ('ready', 'progress') ORDER BY created_at, rowid").all() as Array<{ id: string; status: string; scope_json: string; not_before_ms: number }>
+      const scopeOf = (json: string) => {
+        const parsed = parseScope(JSON.parse(json))
+        if (!parsed.ok) throw new Error(`invalid task scope: ${parsed.reason}`)
+        return parsed.scope
+      }
+      const held = tasks.filter((task) => task.status === 'progress').map((task) => scopeOf(task.scope_json))
+      for (const task of tasks) {
+        if (task.status !== 'ready') continue
+        const scope = scopeOf(task.scope_json)
+        if (!held.some((other) => scopesOverlap(scope, other)) && task.not_before_ms <= nowMs) scheduleAttempt(db, handle, task.id, stateDir, nowMs)
+        held.push(scope)
+      }
     })
     await runEffects()
   })
