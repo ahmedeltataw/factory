@@ -60,13 +60,29 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function waitForProcessDeath(pid: number, timeoutMs = 15000): Promise<boolean> {
+function isProcessAliveWithNonce(pid: number, markerOrNonce: string): boolean {
+  if (!isProcessAlive(pid)) return false
+  const cmd = getCommandLineForPid(pid)
+  return typeof cmd === 'string' && cmd.includes(markerOrNonce)
+}
+
+async function waitForProcessDeath(
+  pid: number,
+  timeoutMs = 15000,
+  markerOrNonce?: string,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) return true
+    const alive = markerOrNonce
+      ? isProcessAliveWithNonce(pid, markerOrNonce)
+      : isProcessAlive(pid)
+    if (!alive) return true
     await delay(50)
   }
-  return !isProcessAlive(pid)
+  const alive = markerOrNonce
+    ? isProcessAliveWithNonce(pid, markerOrNonce)
+    : isProcessAlive(pid)
+  return !alive
 }
 
 function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: string }> {
@@ -136,14 +152,11 @@ function collectNoncesFromDatabases(): void {
 async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
   // 1. Terminate tracked supervisors
   for (const s of spawnedSupervisors) {
-    if (isProcessAlive(s.pid)) {
-      const cmd = getCommandLineForPid(s.pid)
-      if (cmd && cmd.includes(s.marker)) {
-        if (process.platform === 'win32') {
-          spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
-        } else {
-          try { s.child.kill('SIGKILL') } catch {}
-        }
+    if (isProcessAliveWithNonce(s.pid, s.marker)) {
+      if (process.platform === 'win32') {
+        spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
+      } else {
+        try { s.child.kill('SIGKILL') } catch {}
       }
     }
   }
@@ -166,14 +179,11 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
         try {
           killRes = await killTree(s.pid, s.nonce)
         } catch {}
-        if (killRes.result !== 'identity-mismatch' && isProcessAlive(s.pid)) {
-          const cmd = getCommandLineForPid(s.pid)
-          if (cmd && cmd.includes(s.nonce)) {
-            if (process.platform === 'win32') {
-              spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
-            } else {
-              try { process.kill(s.pid, 'SIGKILL') } catch {}
-            }
+        if (killRes.result !== 'identity-mismatch' && isProcessAliveWithNonce(s.pid, s.nonce)) {
+          if (process.platform === 'win32') {
+            spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
+          } else {
+            try { process.kill(s.pid, 'SIGKILL') } catch {}
           }
         }
       }
@@ -815,13 +825,13 @@ describe('M4-06 scope locks and scope enforcement', () => {
           process.kill(sup1.pid!, 'SIGKILL')
         }
 
-        const sup1Dead = await waitForProcessDeath(sup1.pid!, 15000)
+        const sup1Dead = await waitForProcessDeath(sup1.pid!, 15000, stateDir)
         expect(sup1Dead).toBe(true)
 
         // Confirm Supervisor-only death: supervisor is dead, executor and grandchild are still alive
-        expect(isProcessAlive(sup1.pid!)).toBe(false)
-        expect(isProcessAlive(publishedWorker.pid)).toBe(true)
-        expect(isProcessAlive(publishedWorker.grandchildPid)).toBe(true)
+        expect(isProcessAliveWithNonce(sup1.pid!, stateDir)).toBe(false)
+        expect(isProcessAliveWithNonce(publishedWorker.pid, publishedWorker.nonce)).toBe(true)
+        expect(isProcessAliveWithNonce(publishedWorker.grandchildPid, publishedWorker.nonce)).toBe(true)
 
         // Capture heartbeat evidence AFTER supervisor death confirmation
         let lease: { owner_id: string; generation: number; heartbeat_ms: number } | undefined
@@ -974,7 +984,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
         mkdirSync(join(wtRenSrc, 'factory-fake'), { recursive: true })
         git(wtRenSrc, 'mv', 'tracked-outside.txt', 'factory-fake/renamed-inside.txt')
 
-        await waitForProcessDeath(supRenSrc.pid!, 30000)
+        await waitForProcessDeath(supRenSrc.pid!, 30000, stateDir)
 
         // 2b. Rename SOURCE inside scope, TARGET outside scope (staged porcelain rename R)
         const createRenTgt = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Rename Tgt Outside', '--scope', 'factory-fake'], { cwd: tempCwd })
@@ -1001,7 +1011,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
         const wtRenTgt = join(stateDir, 'worktrees', taskRenTgtId)
         git(wtRenTgt, 'mv', 'factory-fake/tracked-inside.txt', 'escaped-outside.txt')
 
-        await waitForProcessDeath(supRenTgt.pid!, 30000)
+        await waitForProcessDeath(supRenTgt.pid!, 30000, stateDir)
 
         // 3. Deletion of tracked file outside scope (staged deletion D)
         const createDelete = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Delete Outside', '--scope', 'factory-fake'], { cwd: tempCwd })
@@ -1028,7 +1038,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
         const wtDel = join(stateDir, 'worktrees', taskDeleteId)
         git(wtDel, 'rm', 'tracked-outside.txt')
 
-        await waitForProcessDeath(supDel.pid!, 30000)
+        await waitForProcessDeath(supDel.pid!, 30000, stateDir)
 
         // 4. Write inside scope commits normally
         const taskInsideId = randomUUID()

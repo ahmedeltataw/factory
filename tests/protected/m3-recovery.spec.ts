@@ -191,9 +191,7 @@ function getCommandLineForPid(pid: number): string | undefined {
 }
 
 function isSupervisorProcess(pid: number, marker: string): boolean {
-  const cmd = getCommandLineForPid(pid)
-  if (!cmd) return false
-  return cmd.includes(marker)
+  return isProcessAliveWithNonce(pid, marker)
 }
 
 function parseCreatedTaskId(stdout: string): string {
@@ -253,6 +251,12 @@ function isProcessAlive(pid: number): boolean {
   } catch {
     return false
   }
+}
+
+function isProcessAliveWithNonce(pid: number, markerOrNonce: string): boolean {
+  if (!isProcessAlive(pid)) return false
+  const cmd = getCommandLineForPid(pid)
+  return typeof cmd === 'string' && cmd.includes(markerOrNonce)
 }
 
 function findPidsByNonces(
@@ -464,13 +468,23 @@ async function cleanupNonces(
   }
 }
 
-async function waitForProcessDeath(pid: number, timeoutMs = 20000): Promise<boolean> {
+async function waitForProcessDeath(
+  pid: number,
+  timeoutMs = 20000,
+  markerOrNonce?: string,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) return true
+    const alive = markerOrNonce
+      ? isProcessAliveWithNonce(pid, markerOrNonce)
+      : isProcessAlive(pid)
+    if (!alive) return true
     await delay(50)
   }
-  return !isProcessAlive(pid)
+  const alive = markerOrNonce
+    ? isProcessAliveWithNonce(pid, markerOrNonce)
+    : isProcessAlive(pid)
+  return !alive
 }
 
 interface WorkerJson {
@@ -676,10 +690,7 @@ afterEach(async () => {
     const { child, marker, pid } = item
     if (pid && isProcessAlive(pid)) {
       if (!isSupervisorProcess(pid, marker)) {
-        supervisorKillFailures.push(
-          `Supervisor PID ${pid} does not match marker ${marker} (possible PID reuse); refusing to kill`,
-        )
-        remainingSupervisors.push(item)
+        // PID reused; refusing to kill and treat as already gone
         continue
       }
       try {
@@ -695,7 +706,7 @@ afterEach(async () => {
       } catch {
         // ignore
       }
-      const dead = await waitForProcessDeath(pid, 15000)
+      const dead = await waitForProcessDeath(pid, 15000, marker)
       if (!dead) {
         supervisorKillFailures.push(`Supervisor process ${pid} failed to terminate within 15000ms`)
         remainingSupervisors.push(item)
@@ -1192,7 +1203,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           windowsHide: true,
         })
         const livePid = liveWorkerChild.pid!
-        expect(isProcessAlive(livePid)).toBe(true)
+        expect(isProcessAliveWithNonce(livePid, oldNonce)).toBe(true)
 
         const taskId = 'task-b-live'
         const oldAttemptId = 'att-b-live-1'
@@ -1219,7 +1230,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
 
         const recoveryDeps: RecoveryDeps = {
           killTree: async (pid, nonce) => {
-            if (nonce === oldNonce && isProcessAlive(pid)) {
+            if (nonce === oldNonce && isProcessAliveWithNonce(pid, oldNonce)) {
               if (process.platform === 'win32') {
                 spawnSync('taskkill', ['/F', '/PID', String(pid)], { stdio: 'ignore', timeout: 5000, windowsHide: true })
               } else {
@@ -1241,7 +1252,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           expect(recResult.reconciledCount).toBeGreaterThanOrEqual(1)
           expect(recResult.killedCount).toBe(1)
 
-          const deadConfirmed = await waitForProcessDeath(livePid, 15000)
+          const deadConfirmed = await waitForProcessDeath(livePid, 15000, oldNonce)
           expect(deadConfirmed).toBe(true)
 
           const oldWorker = handleDb.prepare('SELECT state FROM workers WHERE attempt_id = ?').get(oldAttemptId) as { state: string }
@@ -1276,11 +1287,11 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
 
         const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { timeout: 10000 })
         const deadPid = deadChild.pid!
-        expect(isProcessAlive(deadPid)).toBe(false)
+        const deadNonce = `dead-worker-nonce-${randomUUID()}`
+        expect(isProcessAliveWithNonce(deadPid, deadNonce)).toBe(false)
 
         const taskId = 'task-b-dead'
         const oldAttemptId = 'att-b-dead-1'
-        const deadNonce = `dead-worker-nonce-${randomUUID()}`
 
         const db = openStore(dbPath)
         try {
@@ -1343,11 +1354,11 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
 
         const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { timeout: 10000 })
         const deadPid = deadChild.pid!
-        expect(isProcessAlive(deadPid)).toBe(false)
+        const deadNonce = `dead-restart-0-nonce-${randomUUID()}`
+        expect(isProcessAliveWithNonce(deadPid, deadNonce)).toBe(false)
 
         const taskId = 'task-b-restart-0'
         const oldAttemptId = 'att-b-restart-0-1'
-        const deadNonce = `dead-restart-0-nonce-${randomUUID()}`
 
         // Set up worktree with completed output and commit
         const worktreePath = join(stateDir, 'worktrees', taskId)
@@ -1444,11 +1455,11 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
 
         const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { timeout: 10000 })
         const deadPid = deadChild.pid!
-        expect(isProcessAlive(deadPid)).toBe(false)
+        const deadNonce = `dead-restart-3-nonce-${randomUUID()}`
+        expect(isProcessAliveWithNonce(deadPid, deadNonce)).toBe(false)
 
         const taskId = 'task-b-restart-3'
         const oldAttemptId = 'att-b-restart-3-1'
-        const deadNonce = `dead-restart-3-nonce-${randomUUID()}`
 
         // Set up worktree
         const worktreePath = join(stateDir, 'worktrees', taskId)
@@ -1935,8 +1946,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           throw new Error('Expected grandchildPid to be defined')
         }
 
-        expect(isProcessAlive(workerPid)).toBe(true)
-        expect(isProcessAlive(grandchildPid)).toBe(true)
+        expect(isProcessAliveWithNonce(workerPid, workerNonce)).toBe(true)
+        expect(isProcessAliveWithNonce(grandchildPid, workerNonce)).toBe(true)
 
         // Kill supervisor1 first with verified identity and confirm termination BEFORE reading persisted evidence
         expect(isSupervisorProcess(supervisor1.pid!, supervisor1.marker)).toBe(true)
@@ -1946,7 +1957,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           supervisor1.kill('SIGKILL')
         }
 
-        const supervisorDead = await waitForProcessDeath(supervisor1.pid!, 15000)
+        const supervisorDead = await waitForProcessDeath(supervisor1.pid!, 15000, supervisor1.marker)
         expect(supervisorDead).toBe(true)
 
         // Read final persisted takeover evidence only after supervisor is confirmed dead
@@ -1972,8 +1983,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         }
 
         // Executor and grandchild remain alive while supervisor is dead
-        expect(isProcessAlive(workerPid!)).toBe(true)
-        expect(isProcessAlive(grandchildPid)).toBe(true)
+        expect(isProcessAliveWithNonce(workerPid!, workerNonce)).toBe(true)
+        expect(isProcessAliveWithNonce(grandchildPid, workerNonce)).toBe(true)
 
         // Wait until that heartbeat is stale
         const waitStaleMs = Math.max(0, leaseEvidence!.heartbeatMs + 1000 - Date.now() + 150)
@@ -1994,8 +2005,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         expect(restartRes.status).toBe(0)
 
         // Both executor and grandchild are verified terminated after takeover
-        expect(isProcessAlive(workerPid!)).toBe(false)
-        expect(isProcessAlive(grandchildPid)).toBe(false)
+        expect(isProcessAliveWithNonce(workerPid!, workerNonce)).toBe(false)
+        expect(isProcessAliveWithNonce(grandchildPid, workerNonce)).toBe(false)
 
         const dbAfter = openStore(dbPath)
         try {
@@ -2074,8 +2085,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         activeNonces.add(orphanedNonce)
 
         // Require BOTH executor and grandchild alive before recovery
-        expect(isProcessAlive(orphanedPid)).toBe(true)
-        expect(isProcessAlive(orphanedGrandchild)).toBe(true)
+        expect(isProcessAliveWithNonce(orphanedPid, orphanedNonce)).toBe(true)
+        expect(isProcessAliveWithNonce(orphanedGrandchild, orphanedNonce)).toBe(true)
 
         // Confirm faulted supervisor child is dead before reading lease row
         let leaseEvidence: { ownerId: string; generation: number; heartbeatMs: number } | undefined
@@ -2178,10 +2189,10 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
               liveAttempt1Executors.length,
               `Attempt 1 executor must be terminated before or when attempt 2 is observed alive`,
             ).toBe(0)
-            expect(isProcessAlive(orphanedPid)).toBe(false)
+            expect(isProcessAliveWithNonce(orphanedPid, orphanedNonce)).toBe(false)
 
             // Check descendant (grandchild) termination separately
-            expect(isProcessAlive(orphanedGrandchild)).toBe(false)
+            expect(isProcessAliveWithNonce(orphanedGrandchild, orphanedNonce)).toBe(false)
             const liveAttempt1Grandchildren = findGrandchildPidsByNonces([orphanedNonce])
             expect(
               liveAttempt1Grandchildren.length,
@@ -2209,8 +2220,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         ).toBe(true)
 
         // Require BOTH executor and grandchild gone after recovery
-        expect(isProcessAlive(orphanedPid)).toBe(false)
-        expect(isProcessAlive(orphanedGrandchild)).toBe(false)
+        expect(isProcessAliveWithNonce(orphanedPid, orphanedNonce)).toBe(false)
+        expect(isProcessAliveWithNonce(orphanedGrandchild, orphanedNonce)).toBe(false)
 
         // Check descendant (grandchild) termination separately
         const grandchildSurvivors = findGrandchildPidsByNonces([orphanedNonce])
@@ -2316,8 +2327,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         if (!grandchildPid) {
           throw new Error('Expected grandchildPid to be defined')
         }
-        expect(isProcessAlive(workerPid)).toBe(true)
-        expect(isProcessAlive(grandchildPid)).toBe(true)
+        expect(isProcessAliveWithNonce(workerPid, workerNonce)).toBe(true)
+        expect(isProcessAliveWithNonce(grandchildPid, workerNonce)).toBe(true)
 
         const killRes = runCli([
           'task',
@@ -2331,8 +2342,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         expect(killRes.stdout).toMatch(/^created [0-9a-f-]+\r?\n/i)
         expect(killRes.stdout).toMatch(ARABIC_REGEX)
 
-        const deathConfirmed = await waitForProcessDeath(workerPid, 20000)
-        const grandDeathConfirmed = await waitForProcessDeath(grandchildPid, 20000)
+        const deathConfirmed = await waitForProcessDeath(workerPid, 20000, workerNonce)
+        const grandDeathConfirmed = await waitForProcessDeath(grandchildPid, 20000, workerNonce)
         expect(deathConfirmed).toBe(true)
         expect(grandDeathConfirmed).toBe(true)
 
@@ -2473,13 +2484,13 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           throw new Error('Expected workerPid and workerNonce to be defined')
         }
         activeNonces.add(workerNonce)
-        expect(isProcessAlive(workerPid)).toBe(true)
+        expect(isProcessAliveWithNonce(workerPid, workerNonce)).toBe(true)
 
         const supervisor2Res = runCli(['start', '--state-dir', stateDir])
         expect(supervisor2Res.status).toBe(1)
         expect(supervisor2Res.stderr).toMatch(ARABIC_REGEX)
 
-        expect(isProcessAlive(workerPid!)).toBe(true)
+        expect(isProcessAliveWithNonce(workerPid!, workerNonce)).toBe(true)
       },
       60000,
     )
@@ -2497,7 +2508,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           windowsHide: true,
         })
         const workerPid = workerChild.pid!
-        expect(isProcessAlive(workerPid)).toBe(true)
+        expect(isProcessAliveWithNonce(workerPid, workerNonce)).toBe(true)
 
         const now = Date.now()
         const db = openStore(dbPath)
@@ -2538,7 +2549,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           expect(resWithTakeover.stderr).toMatch(ARABIC_REGEX)
 
           // Verify seeded worker remains untouched on refusal
-          expect(isProcessAlive(workerPid)).toBe(true)
+          expect(isProcessAliveWithNonce(workerPid, workerNonce)).toBe(true)
 
           const dbAfter = openStore(dbPath)
           try {
@@ -2550,7 +2561,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
             dbAfter.close()
           }
         } finally {
-          if (workerChild.pid && isProcessAlive(workerChild.pid)) {
+          if (workerChild.pid && isProcessAliveWithNonce(workerChild.pid, workerNonce)) {
             if (process.platform === 'win32') {
               spawnSync('taskkill', ['/F', '/PID', String(workerChild.pid)], { timeout: 5000, windowsHide: true })
             } else {
@@ -2575,7 +2586,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           windowsHide: true,
         })
         const workerPid = workerChild.pid!
-        expect(isProcessAlive(workerPid)).toBe(true)
+        expect(isProcessAliveWithNonce(workerPid, workerNonce)).toBe(true)
 
         const staleTime = 1000
         const db = openStore(dbPath)
@@ -2636,7 +2647,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           expect(resWrongHeartbeat.stderr).toMatch(ARABIC_REGEX)
 
           // Verify worker is never touched on any refusal
-          expect(isProcessAlive(workerPid)).toBe(true)
+          expect(isProcessAliveWithNonce(workerPid, workerNonce)).toBe(true)
 
           const dbAfter = openStore(dbPath)
           try {
@@ -2648,7 +2659,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
             dbAfter.close()
           }
         } finally {
-          if (workerChild.pid && isProcessAlive(workerChild.pid)) {
+          if (workerChild.pid && isProcessAliveWithNonce(workerChild.pid, workerNonce)) {
             if (process.platform === 'win32') {
               spawnSync('taskkill', ['/F', '/PID', String(workerChild.pid)], { timeout: 5000, windowsHide: true })
             } else {

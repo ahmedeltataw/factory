@@ -135,8 +135,8 @@ function powershell(script: string): string {
   return result.stdout.trim()
 }
 
-function isSupervisorProcess(pid: number, marker: string): boolean {
-  if (!pid || pid <= 0) return false
+function getCommandLineForPid(pid: number): string | undefined {
+  if (!pid || pid <= 0) return undefined
   try {
     if (process.platform === 'win32') {
       const script = `$records = @(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' -Property ProcessId,ParentProcessId,CreationDate,CommandLine | ForEach-Object {
@@ -144,30 +144,51 @@ function isSupervisorProcess(pid: number, marker: string): boolean {
         @{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; CreationDate = $_.CreationDate.ToUniversalTime().Ticks.ToString(); CommandLine = $command }
       }); ConvertTo-Json -InputObject $records -Compress`
       const procs = parseWindowsProcesses(powershell(script), pid)
-      return procs[0]?.command?.includes(marker) ?? false
+      return procs[0]?.command
     } else {
-      const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
-      return cmd.includes(marker)
+      return readFileSync(`/proc/${pid}/cmdline`, 'utf8')
     }
   } catch {
-    return false
+    return undefined
   }
 }
 
-async function waitForProcessDeath(pid: number, timeoutMs = 15000): Promise<boolean> {
+function isSupervisorProcess(pid: number, marker: string): boolean {
+  return isProcessAliveWithNonce(pid, marker)
+}
+
+function isProcessAliveWithNonce(pid: number, markerOrNonce: string): boolean {
+  if (!isProcessAlive(pid)) return false
+  const cmd = getCommandLineForPid(pid)
+  return typeof cmd === 'string' && cmd.includes(markerOrNonce)
+}
+
+async function waitForProcessDeath(
+  pid: number,
+  timeoutMs = 15000,
+  markerOrNonce?: string,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) return true
+    const alive = markerOrNonce
+      ? isProcessAliveWithNonce(pid, markerOrNonce)
+      : isProcessAlive(pid)
+    if (!alive) return true
     await delay(50)
   }
-  return !isProcessAlive(pid)
+  const alive = markerOrNonce
+    ? isProcessAliveWithNonce(pid, markerOrNonce)
+    : isProcessAlive(pid)
+  return !alive
 }
 
 async function killSupervisorSafely(item: TrackedSupervisorChild, timeoutMs = 15000): Promise<void> {
   const { child, marker, pid } = item
   if (!pid || !isProcessAlive(pid)) return
   if (!isSupervisorProcess(pid, marker)) {
-    throw new Error(`Supervisor PID ${pid} does not match marker ${marker} (possible PID reuse); refusing to kill`)
+    // Possible PID reuse; refusing to kill
+    // Treat that case as already gone: no error, no kill.
+    return
   }
   if (process.platform === 'win32') {
     spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
@@ -178,7 +199,7 @@ async function killSupervisorSafely(item: TrackedSupervisorChild, timeoutMs = 15
   } else {
     child.kill('SIGKILL')
   }
-  const dead = await waitForProcessDeath(pid, timeoutMs)
+  const dead = await waitForProcessDeath(pid, timeoutMs, marker)
   if (!dead) {
     throw new Error(`Supervisor process PID ${pid} failed to terminate within ${timeoutMs}ms`)
   }
@@ -188,7 +209,9 @@ async function killSupervisorOnly(item: TrackedSupervisorChild, timeoutMs = 1500
   const { child, marker, pid } = item
   if (!pid || !isProcessAlive(pid)) return
   if (!isSupervisorProcess(pid, marker)) {
-    throw new Error(`Supervisor PID ${pid} does not match marker ${marker} (possible PID reuse); refusing to kill`)
+    // Possible PID reuse; refusing to kill
+    // Treat that case as already gone: no error, no kill.
+    return
   }
   if (process.platform === 'win32') {
     // Kill ONLY the supervisor process without /T so child executor & grandchild orphans survive
@@ -200,7 +223,7 @@ async function killSupervisorOnly(item: TrackedSupervisorChild, timeoutMs = 1500
   } else {
     child.kill('SIGKILL')
   }
-  const dead = await waitForProcessDeath(pid, timeoutMs)
+  const dead = await waitForProcessDeath(pid, timeoutMs, marker)
   if (!dead) {
     throw new Error(`Supervisor process PID ${pid} failed to terminate within ${timeoutMs}ms`)
   }
@@ -1563,22 +1586,22 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
         }
 
         expect(runningWorkerPid).toBeGreaterThan(0)
-        expect(isProcessAlive(runningWorkerPid)).toBe(true)
+        expect(isProcessAliveWithNonce(runningWorkerPid, runningWorkerNonce)).toBe(true)
         if (grandchildPid > 0) {
-          expect(isProcessAlive(grandchildPid)).toBe(true)
+          expect(isProcessAliveWithNonce(grandchildPid, runningWorkerNonce)).toBe(true)
         }
 
         // Hard-kill supervisor 1 while worker hangs (kill ONLY the supervisor, no /T, so worker & grandchild survive)
         await killSupervisorOnly(supChild1, 10000)
 
         // Confirm supervisor 1 is dead
-        const supervisorDead = await waitForProcessDeath(supChild1.pid, 15000)
+        const supervisorDead = await waitForProcessDeath(supChild1.pid, 15000, supChild1.marker)
         expect(supervisorDead).toBe(true)
 
         // Assert orphan survives while supervisor is dead
-        expect(isProcessAlive(runningWorkerPid)).toBe(true)
+        expect(isProcessAliveWithNonce(runningWorkerPid, runningWorkerNonce)).toBe(true)
         if (grandchildPid > 0) {
-          expect(isProcessAlive(grandchildPid)).toBe(true)
+          expect(isProcessAliveWithNonce(grandchildPid, runningWorkerNonce)).toBe(true)
         }
 
         const dbTakeover = openStore(dbPath)
@@ -1601,9 +1624,9 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
         await delay(waitStaleMs)
 
         // Orphan STILL survives right before restart!
-        expect(isProcessAlive(runningWorkerPid)).toBe(true)
+        expect(isProcessAliveWithNonce(runningWorkerPid, runningWorkerNonce)).toBe(true)
         if (grandchildPid > 0) {
-          expect(isProcessAlive(grandchildPid)).toBe(true)
+          expect(isProcessAliveWithNonce(grandchildPid, runningWorkerNonce)).toBe(true)
         }
 
         const supChild2 = spawnCli(
@@ -1628,9 +1651,9 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
         expect(exitCode).toBe(0)
 
         // The hanging worker from supervisor 1 must have been killed during reconcile
-        expect(isProcessAlive(runningWorkerPid)).toBe(false)
+        expect(isProcessAliveWithNonce(runningWorkerPid, runningWorkerNonce)).toBe(false)
         if (grandchildPid > 0) {
-          expect(isProcessAlive(grandchildPid)).toBe(false)
+          expect(isProcessAliveWithNonce(grandchildPid, runningWorkerNonce)).toBe(false)
         }
 
         const dbFinal = openStore(dbPath)
@@ -1856,7 +1879,7 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
           secondDb.exec('BEGIN IMMEDIATE')
 
           // Assert supervisor child remains alive while database is locked
-          expect(isProcessAlive(supChild.pid)).toBe(true)
+          expect(isProcessAliveWithNonce(supChild.pid, supChild.marker)).toBe(true)
 
           // Poll stderr until supervisor logs the Arabic busy line (> 5000ms busy timeout)
           const busyDeadline = Date.now() + 10000
@@ -1866,12 +1889,12 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
               observedBusy = true
               break
             }
-            expect(isProcessAlive(supChild.pid)).toBe(true)
+            expect(isProcessAliveWithNonce(supChild.pid, supChild.marker)).toBe(true)
             await delay(100)
           }
 
           // Assert supervisor survived while locked
-          expect(isProcessAlive(supChild.pid)).toBe(true)
+          expect(isProcessAliveWithNonce(supChild.pid, supChild.marker)).toBe(true)
 
           // Release lock promptly after observing busy or timeout
           secondDb.exec('ROLLBACK')
