@@ -452,7 +452,7 @@ describe('CHK-M4-05-g: recovery, retry backoff, timeout, and budget property inv
                   // Normalized payload with distinct disjoint scope
                   const payload = JSON.stringify({
                     title: action.title.trim() || 'Untitled',
-                    scope: [`task-${commandId}`],
+                    scope: [`factory-fake/${commandId}.txt`, `task-${commandId}`],
                     maxAttempts: action.maxAttempts,
                     timeoutMs: action.timeoutMs,
                   })

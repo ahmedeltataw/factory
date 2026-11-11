@@ -1,4 +1,5 @@
 ﻿import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite'
 import { recordEvidence, type RecordEvidenceOptions } from './evidence.ts'
@@ -6,6 +7,7 @@ import { fencedWrite } from './fence.ts'
 import { triggerFault, type FaultName } from './faults.ts'
 import { LeaseLostError, type SupervisorLeaseHandle } from './supervisor-lease.ts'
 import { ensureWorktree, type EnsureWorktreeConfig } from './worktree.ts'
+import { parseScope, pathInScope } from '../core/scope.ts'
 
 export interface OutboxRow {
   [key: string]: SQLOutputValue
@@ -86,6 +88,28 @@ export function createEffectHandlers(deps: EffectHandlerDeps): Record<string, Ou
       if (deps.db.prepare('SELECT 1 FROM evidence WHERE attempt_id = ?').get(attemptId)) return
       const handle = context[lease]
       if (!handle) throw new Error('outbox lease required')
+      const task = deps.db.prepare('SELECT t.scope_json FROM tasks t JOIN attempts a ON a.task_id = t.id WHERE a.id = ?').get(attemptId) as { scope_json: string } | undefined
+      if (!task) throw new Error('attempt task not found')
+      const scope = parseScope(JSON.parse(task.scope_json))
+      if (!scope.ok) throw new Error(`invalid task scope: ${scope.reason}`)
+      const status = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: options.worktreePath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+      const entries = status.split('\0')
+      const paths: string[] = []
+      for (let i = 0; i < entries.length && entries[i]; i++) {
+        const entry = entries[i]!
+        paths.push(entry.slice(3))
+        if (entry.slice(0, 2).includes('R') || entry.slice(0, 2).includes('C')) paths.push(entries[++i]!)
+      }
+      const bad = paths.find((path) => !pathInScope(path, scope.scope))
+      if (bad !== undefined) {
+        fencedWrite(deps.db, handle, () => {
+          const now = new Date(context.nowMs ?? Date.now()).toISOString()
+          deps.db.prepare("UPDATE attempts SET status = 'failed', error_class = 'scope-violation', ended_at = ? WHERE id = ?").run(now, attemptId)
+          deps.db.prepare("UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = (SELECT task_id FROM attempts WHERE id = ?) AND status = 'progress'").run(now, attemptId)
+          deps.db.prepare("UPDATE outbox SET status = 'done', last_error = ?, updated_at = ? WHERE id = ? AND status = 'pending'").run(`scope-violation: ${bad}`, now, row.id)
+        })
+        return
+      }
       await recordEvidence(evidenceDatabase(deps.db, handle), attemptId, options)
     },
   }
