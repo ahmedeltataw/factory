@@ -16,7 +16,7 @@ This file is for any agent (Claude, Codex, Gemini/Antigravity, OpenCode, ...) th
 |---|---|---|---|
 | Lead | Claude | writes card specs and briefs, runs gates outside sandboxes, records evidence, merges, pushes | writes product or test code |
 | Builder | gpt-6.1-terra (Codex), gemini-3.8-flash (Antigravity), OpenCode free models as fallback | implements one card inside its allowed paths | commits, edits outside allowed paths |
-| Reviewer | gpt-6.1-sol (Codex), gemini-4-argon (Antigravity) | read-only review, verdict `approve` or `changes` | edits files |
+| Reviewer | gpt-6.1-sol (Codex), gemini-3.8-flash-high (Antigravity; replaced gemini-4-argon, which agy no longer offers, 2026-11-11). Flash never reviews its own card | read-only review, verdict `approve` or `changes` | edits files |
 | Owner | Ahmed | decisions, runs `acceptance/M<n>.ps1` at milestone close | |
 | Muse | Meta's agent, via repo `factory-muse-inbox` | mirrors the board to Notion, CI triage notes, drafts, web research | writes to this repo |
 
@@ -83,7 +83,7 @@ codex exec -s workspace-write -m gpt-6.1-terra --skip-git-repo-check \
   -o <out.md> - < <brief.md>
 ```
 
-Antigravity (builder: `--model gemini-3.8-flash-high`, no `--sandbox` on agy 1.5.5; reviewer: `--model gemini-4-argon-high --read-only`):
+Antigravity (builder: `--model gemini-3.8-flash-high`, no `--sandbox` on agy 1.5.5; reviewer: `--model gemini-3.8-flash-high --read-only`):
 ```
 node "C:/Users/DownTown/.claude/skills/agy-delegate/scripts/relay.mjs" --brief <brief.md> --cd <worktree> --model <model> --sandbox
 ```
