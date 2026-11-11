@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M4-WIN3",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "6b50920519d6b794766f75d5e4882744ea100873",
+  "checks": [
+    {
+      "id": "CHK-M4-WIN3-a",
+      "command": "pnpm test on m4-integration after merge",
+      "result": "pass",
+      "output": "801/801 passed; reviewer gpt-6.1-sol approve"
+    }
+  ],
+  "ended_at": "2026-11-11T13:38:50.416Z"
+}
