@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M4-04-fix",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "ce59bb39b0f888d8a8b1f282c455b510b7905fe8",
+  "checks": [
+    {
+      "id": "CHK-M4-04-fix-a",
+      "command": "TEMP=<8.3 alias> pnpm exec vitest run tests/m4-04-fake-executor.spec.ts tests/protected/m4-fake-executor.spec.ts",
+      "result": "pass",
+      "output": "12/12 passed with an 8.3 TEMP; reviewer gpt-6.1-sol approve (round 2)"
+    }
+  ],
+  "ended_at": "2026-11-11T09:06:37.779Z"
+}
