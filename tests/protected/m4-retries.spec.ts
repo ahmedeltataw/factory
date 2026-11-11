@@ -492,15 +492,20 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
       async () => {
         const { stateDir, dbPath } = createInitializedProject('m4-05-a-real-')
 
+        const commandId = randomUUID()
         const createRes = runCli([
           'task',
           'create',
           '--state-dir',
           stateDir,
+          '--command-id',
+          commandId,
           '--title',
           'Transient Retry Task',
           '--scope',
           'task-a-real',
+          '--scope',
+          `factory-fake/${commandId}.txt`,
           '--max-attempts',
           '3',
         ])
@@ -709,15 +714,20 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
       async () => {
         const { stateDir, dbPath } = createInitializedProject('m4-05-b-retry-')
 
+        const commandId = randomUUID()
         const createRes = runCli([
           'task',
           'create',
           '--state-dir',
           stateDir,
+          '--command-id',
+          commandId,
           '--title',
           'Budget Exhaustion Task',
           '--scope',
           'task-b-real',
+          '--scope',
+          `factory-fake/${commandId}.txt`,
           '--max-attempts',
           '2',
         ])
@@ -1764,15 +1774,20 @@ describe('M4-05: Retries, timeouts, outbox backoff and SQLITE_BUSY', () => {
       async () => {
         const { stateDir, dbPath } = createInitializedProject('m4-05-f-busy-')
 
+        const commandId = randomUUID()
         const createRes = runCli([
           'task',
           'create',
           '--state-dir',
           stateDir,
+          '--command-id',
+          commandId,
           '--title',
           'Busy Lock Test Task',
           '--scope',
           'task-f-busy',
+          '--scope',
+          `factory-fake/${commandId}.txt`,
         ])
         expect(createRes.status).toBe(0)
         const taskId = parseCreatedTaskId(createRes.stdout)
