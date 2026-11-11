@@ -9,7 +9,8 @@
     "supervisor/src/app/outbox.ts",
     "supervisor/src/app/recovery.ts",
     "supervisor/src/app/supervisor-loop.ts",
-    "supervisor/src/core/scope.ts"
+    "supervisor/src/core/scope.ts",
+    "supervisor/src/core/graph.ts"
   ],
   "testRunner": "vitest",
   "plugins": [
