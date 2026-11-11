@@ -90,7 +90,7 @@ describe('M4-01 Schema v6 contract', () => {
     const path = databasePath()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
       expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
       expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
       expect(db.prepare('PRAGMA busy_timeout').get()).toMatchObject({ timeout: 5000 })
@@ -179,7 +179,7 @@ describe('M4-01 Schema v6 contract', () => {
       // Reopening is idempotent
       const observer = new DatabaseSync(path)
       try {
-        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 })
+        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
       } finally {
         observer.close()
       }
@@ -240,7 +240,7 @@ describe('M4-01 Schema v6 contract', () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const db = openStore(path)
       try {
-        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 })
+        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
         expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
         expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
 
@@ -378,13 +378,13 @@ describe('M4-01 Schema v6 contract', () => {
     }
   })
 
-  it('CHK-M4-01-b: refuses a v7 database unmodified', () => {
+  it('CHK-M4-01-b: refuses a v8 database unmodified', () => {
     const path = databasePath()
     const future = new DatabaseSync(path)
     future.exec(`
       CREATE TABLE future_data (value TEXT NOT NULL);
       INSERT INTO future_data VALUES ('preserved');
-      PRAGMA user_version = 7;
+      PRAGMA user_version = 8;
     `)
     future.close()
 
@@ -399,7 +399,7 @@ describe('M4-01 Schema v6 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow('store: unsupported schema version 7')
+      }).toThrow('store: unsupported schema version 8')
     } finally {
       unexpectedDb?.close()
     }
@@ -422,12 +422,12 @@ describe('M4-01 Schema v6 contract', () => {
     let simulatedVersionChangeOccurred = false
     const origExec = DatabaseSync.prototype.exec
 
-    const commitV7 = () => {
+    const commitV8 = () => {
       if (simulatedVersionChangeOccurred) return
       simulatedVersionChangeOccurred = true
       const second = new DatabaseSync(path)
       try {
-        origExec.call(second, 'PRAGMA user_version = 7')
+        origExec.call(second, 'PRAGMA user_version = 8')
       } finally {
         second.close()
       }
@@ -435,7 +435,7 @@ describe('M4-01 Schema v6 contract', () => {
 
     DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string) {
       if (/^\s*BEGIN\s+IMMEDIATE/i.test(sql)) {
-        commitV7()
+        commitV8()
       }
       return origExec.call(this, sql)
     }
@@ -444,7 +444,7 @@ describe('M4-01 Schema v6 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow(/unsupported schema version 7/i)
+      }).toThrow(/unsupported schema version 8/i)
     } finally {
       unexpectedDb?.close()
       DatabaseSync.prototype.exec = origExec
@@ -454,7 +454,7 @@ describe('M4-01 Schema v6 contract', () => {
 
     const check = new DatabaseSync(path)
     try {
-      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
+      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
     } finally {
       check.close()
     }
@@ -594,7 +594,7 @@ describe('M4-01 Schema v6 contract', () => {
         db.prepare("INSERT INTO evidence VALUES ('attempt-1', 'base', 'head-sha', '[{\"path\":\"src/a.ts\",\"sha256\":\"abc123\"}]', 'out', 'err', 'now')").run()
 
         const expectedStatus = {
-          schemaVersion: 6,
+          schemaVersion: 7,
           recordedCommandCount: 6,
           commands: { recorded: 6, applied: 1, rejected: 2, pending: 3 },
           lease: {
@@ -646,7 +646,7 @@ describe('M4-01 Schema v6 contract', () => {
 
         // formatStatus gives Arabic view with schema version 6 and same M3 facts
         const arabic = formatStatus(status as unknown as Status)
-        expect(arabic).toContain('إصدار المخطط: 6')
+        expect(arabic).toContain('إصدار المخطط: 7')
         expect(arabic).toContain('عدد الأوامر المسجلة: 6')
         expect(arabic).toContain('Example task')
         expect(arabic).toContain('task-one')

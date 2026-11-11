@@ -157,7 +157,7 @@ it('CHK-M4-07-d: watch emits three independent read-only snapshots', async () =>
       expect(hash(path)).toBe(afterWriteHash)
       expect(walSize(path)).toBeLessThanOrEqual(afterWriteWal)
       const db = new DatabaseSync(path, { readOnly: true })
-      try { expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 6 }) } finally { db.close() }
+      try { expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 }) } finally { db.close() }
       expect(before).not.toBe(afterWriteHash)
       expect(beforeWal).toBe(0)
     } finally { clearTimeout(timeout); child.kill(); await exit.catch(() => {}) }
