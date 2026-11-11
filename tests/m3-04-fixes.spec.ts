@@ -284,7 +284,7 @@ describe('in-process mutation coverage', () => {
       expect(calls[0]![1]![3]).toContain('CommandLine')
       expect(calls[1]![1]![3]).not.toContain('-Filter')
       expect(calls[1]![1]![3]).toContain('ConvertTo-Json')
-      expect(calls[0]![2]).toEqual({ encoding: 'utf8', timeout: 10000, windowsHide: true })
+      expect(calls[0]![2]).toEqual({ encoding: 'utf8', timeout: 30000, windowsHide: true })
     } finally { platform.mockRestore(); vi.mocked(spawnSync).mockRestore() }
   })
 })
