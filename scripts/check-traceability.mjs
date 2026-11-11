@@ -19,6 +19,7 @@ function parseFlags(argv) {
   const flags = {
     all: false,
     requirePassing: false,
+    presentOnly: false,
     cardPrefix: undefined,
     spec: undefined,
     card: undefined,
@@ -35,6 +36,10 @@ function parseFlags(argv) {
     }
     if (name === '--require-passing') {
       flags.requirePassing = true
+      continue
+    }
+    if (name === '--present-only') {
+      flags.presentOnly = true
       continue
     }
     if (name !== '--card-prefix' && name !== '--spec' && name !== '--card' && name !== '--evidence') {
@@ -54,6 +59,7 @@ function parseFlags(argv) {
   if (flags.cardPrefix !== undefined && !flags.all) {
     fail('--card-prefix can only be used with --all')
   }
+  if (flags.presentOnly && !flags.all) fail('--present-only can only be used with --all')
   if (flags.all) {
     if (flags.spec !== undefined || flags.card !== undefined || flags.evidence !== undefined) {
       fail('--all cannot be combined with --spec, --card or --evidence')
@@ -267,7 +273,7 @@ async function collectEvidenceRecords(root, strict = false, cardPrefix = undefin
   return cards
 }
 
-const { all, requirePassing, cardPrefix, spec, card, evidence } = parseFlags(process.argv.slice(2))
+const { all, requirePassing, presentOnly, cardPrefix, spec, card, evidence } = parseFlags(process.argv.slice(2))
 
 if (!all) {
   const specSource = await readSpec(spec)
@@ -320,11 +326,21 @@ if (all) {
       if (!qualifyingCardIds.has(name)) fail(`evidence card ${name} has no qualifying spec section`)
     }
     const cardMap = new Map(cards.map((c) => [c.card, c]))
+    const evidenceDirectories = presentOnly
+      ? new Set((await readdir(path.join(root, '.factory', 'evidence'), { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+      : new Set()
     const checked = []
     const failures = []
     for (const { id, specSource } of qualifyingCards) {
       const recordEntry = cardMap.get(id)
-      if (!recordEntry) fail(`missing evidence record for card ${id}`)
+      if (!recordEntry) {
+        if (presentOnly && !evidenceDirectories.has(id)) {
+          console.log(`PENDING: ${id}`)
+          continue
+        }
+        fail(`missing evidence record for card ${id}`)
+      }
       const result = cardCheck(specSource, id, recordEntry.record, recordEntry.evidenceLabel, true)
       checked.push(id)
       if (!result.ok) failures.push(`${id}: ${result.reason}`)
