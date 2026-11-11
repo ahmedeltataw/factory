@@ -13,7 +13,7 @@ import {
 import { parseScope, scopesOverlap } from '../core/scope.ts'
 
 /** Storage schema version this status reader supports: the M4 storage schema (v6). */
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 export type LeaseState = 'active' | 'released'
 export type LeaseFreshness = 'fresh' | 'stale' | 'future' | 'not-applicable'
@@ -87,7 +87,7 @@ export interface TaskStatusItem {
 }
 
 export interface Status {
-  readonly schemaVersion: 6
+  readonly schemaVersion: 7
   readonly recordedCommandCount: number
   readonly lease: null | Lease
   readonly commands?: CommandsSummary
