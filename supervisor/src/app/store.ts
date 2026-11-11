@@ -80,18 +80,22 @@ function migrate(db: DatabaseSync): void {
 
 /** Open and migrate the storage database; the caller owns and closes the connection. */
 export function openStore(path: string): DatabaseSync {
-  const db = new DatabaseSync(path)
-  try {
-    db.exec('PRAGMA foreign_keys = ON')
-    db.exec('PRAGMA busy_timeout = 5000')
-    const current = version(db)
-    if (current > SCHEMA_VERSION) throw new Error(`store: unsupported schema version ${current}`)
-    const journal = db.prepare('PRAGMA journal_mode = WAL').get() as { journal_mode?: string } | undefined
-    if (journal?.journal_mode !== 'wal') throw new Error('store: WAL journal mode is required')
-    migrate(db)
-    return db
-  } catch (error) {
-    db.close()
-    throw error
+  for (let attempt = 1; ; attempt++) {
+    let db: DatabaseSync | undefined
+    try {
+      db = new DatabaseSync(path)
+      db.exec('PRAGMA foreign_keys = ON')
+      db.exec('PRAGMA busy_timeout = 5000')
+      const current = version(db)
+      if (current > SCHEMA_VERSION) throw new Error(`store: unsupported schema version ${current}`)
+      const journal = db.prepare('PRAGMA journal_mode = WAL').get() as { journal_mode?: string } | undefined
+      if (journal?.journal_mode !== 'wal') throw new Error('store: WAL journal mode is required')
+      migrate(db)
+      return db
+    } catch (error) {
+      try { db?.close() } catch { /* Preserve the original opening error. */ }
+      if ((((error as { errcode?: number } | null)?.errcode ?? 0) & 0xff) !== 10 || attempt === 5) throw error
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200)
+    }
   }
 }
