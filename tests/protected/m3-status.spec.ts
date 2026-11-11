@@ -76,11 +76,11 @@ it('CHK-M3-07-a: JSON reports command, task and outbox facts without writing', a
       const result = run(dir, '--json')
       expect(result.status).toBe(0)
       const status = JSON.parse(result.stdout)
-      expect(Object.keys(status).sort()).toEqual(['commands', 'lease', 'outbox', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
+      expect(Object.keys(status).sort()).toEqual(['commands', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
       expect(status.schemaVersion).toBe(6)
       expect(status.recordedCommandCount).toBe(6)
       expect(status.commands).toEqual({ recorded: 6, applied: 1, rejected: 2, pending: 3 })
-      expect(status.tasks).toEqual( [{ id: 'task-one', title: 'Example task', status: 'ready', scope: ['.'], maxAttempts: 3, timeoutMs: null, notBeforeMs: 0, blockedBy: [], attempts: [{ no: 1, status: 'succeeded', exitCode: 0, errorClass: null, deadlineMs: null, worker: { pid: 12345, state: 'exited', heartbeatMs: 42 }, evidence: { headSha: 'head-sha', files: [{ path: 'src/a.ts', sha256: 'abc123' }] } }, { no: 2, status: 'running', exitCode: null, errorClass: null, deadlineMs: null, worker: null, evidence: null }] }])
+      expect(status.tasks).toEqual( [{ id: 'task-one', title: 'Example task', status: 'ready', scope: ['.'], maxAttempts: 3, timeoutMs: null, notBeforeMs: 0, blockedBy: [], phase: 'intake', dependsOn: [], waiting: null, attempts: [{ no: 1, status: 'succeeded', exitCode: 0, errorClass: null, deadlineMs: null, worker: { pid: 12345, state: 'exited', heartbeatMs: 42 }, evidence: { headSha: 'head-sha', files: [{ path: 'src/a.ts', sha256: 'abc123' }] } }, { no: 2, status: 'running', exitCode: null, errorClass: null, deadlineMs: null, worker: null, evidence: null }] }])
       expect(status.outbox).toEqual({ pending: 1, done: 2, failed: 3, failedRows: [{ key: 'failed-1', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-2', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-3', kind: 'extra', tries: 0, lastError: null }] })
       expect(result.stdout).not.toContain('private-payload')
       expect(result.stdout).not.toContain('nonce-1')
@@ -133,7 +133,7 @@ it('CHK-M3-07-a: reads all status facts in one read-only transaction', () => {
       expect(transactions.length).toBeGreaterThan(0)
       expect(transactions.every(Boolean)).toBe(true)
       expect(status.commands).toEqual({ recorded: 6, applied: 1, rejected: 2, pending: 3 })
-      expect(status.tasks).toEqual([{ id: 'task-one', title: 'Example task', status: 'ready', scope: ['.'], maxAttempts: 3, timeoutMs: null, notBeforeMs: 0, blockedBy: [], attempts: [] }])
+      expect(status.tasks).toEqual([{ id: 'task-one', title: 'Example task', status: 'ready', scope: ['.'], maxAttempts: 3, timeoutMs: null, notBeforeMs: 0, blockedBy: [], phase: 'intake', dependsOn: [], waiting: null, attempts: [] }])
       expect(status.outbox).toEqual({ pending: 2, done: 1, failed: 3, failedRows: [{ key: 'failed-1', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-2', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-3', kind: 'extra', tries: 0, lastError: null }] })
       expect(readOnly).toBe(true)
       expect(exec.mock.calls.map(([sql]) => sql)).toEqual(['BEGIN', 'COMMIT'])
@@ -150,7 +150,7 @@ it('extracts counter labels from supported formats', () => {
 })
 
 it('CHK-M3-07-b: every displayed enum value has a distinct Arabic label', () => {
-  const base = { schemaVersion: 6, recordedCommandCount: 0, lease: null, commands: { recorded: 0, applied: 0, rejected: 0, pending: 0 }, outbox: { pending: 0, done: 0, failed: 0, failedRows: [] as Array<{ key: string; kind: string; tries: number; lastError: string | null }> }, tasks: [{ id: 'task', title: 'title', status: 'ready', scope: ['.'], maxAttempts: 3, timeoutMs: null, notBeforeMs: 0, blockedBy: [], attempts: [{ no: 1, status: 'succeeded', exitCode: 0, errorClass: null, deadlineMs: null, worker: { pid: 12345, state: 'running', heartbeatMs: 1 }, evidence: null }] }] }
+  const base = { phases: [], schemaVersion: 6, recordedCommandCount: 0, lease: null, commands: { recorded: 0, applied: 0, rejected: 0, pending: 0 }, outbox: { pending: 0, done: 0, failed: 0, failedRows: [] as Array<{ key: string; kind: string; tries: number; lastError: string | null }> }, tasks: [{ id: 'task', title: 'title', status: 'ready', scope: ['.'], maxAttempts: 3, timeoutMs: null, notBeforeMs: 0, blockedBy: [], phase: 'intake', dependsOn: [], waiting: null, attempts: [{ no: 1, status: 'succeeded', exitCode: 0, errorClass: null, deadlineMs: null, worker: { pid: 12345, state: 'running', heartbeatMs: 1 }, evidence: null }] }] }
   const cases: Array<[readonly string[], (s: typeof base, v: string) => void]> = [
     [TaskStatusSchema.options, (s, v) => { s.tasks[0]!.status = v }],
     [AttemptStatusSchema.options, (s, v) => { s.tasks[0]!.attempts[0]!.status = v }],
