@@ -86,7 +86,7 @@ it('CHK-M4-07-b: Arabic view shows the new facts and retry budget', () => withFi
 
 it('CHK-M4-07-b: every new error class has a distinct Arabic rendering', () => withFixture(dir => {
   const base = readStatus(dir, { nowMs: 1000, staleAfterMs: 500 }) as any
-  const values = ['lost', 'not-running', 'identity-mismatch', 'killed', 'outbox:evidence.commit', 'transient', 'timeout', 'scope-violation', 'exit', 'unknown-class']
+  const values = ['lost', 'not-running', 'identity-mismatch', 'killed', 'outbox:evidence.commit', 'outbox:worktree', 'transient', 'timeout', 'scope-violation', 'exit', 'unknown-class']
   const outputs = values.map(value => {
     const status = structuredClone(base)
     status.tasks = [status.tasks.find((task: any) => task.id === 'ready')]
@@ -102,6 +102,7 @@ it('CHK-M4-07-b: every new error class has a distinct Arabic rendering', () => w
   const labels = outputs.map(s => s.slice(prefix, s.length - suffix))
   labels.slice(0, -1).forEach((label, i) => { expect(label).toMatch(/[\u0600-\u06ff]/); expect(label).not.toContain(values[i]!) })
   expect(labels[4]).toContain('evidence.commit')
+  expect(labels[5]).toContain('worktree')
   expect(labels.at(-1)).toBe('unknown-class')
   expect(new Set(labels).size).toBe(values.length)
 }))

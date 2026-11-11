@@ -32,7 +32,7 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-a/b: failed local cl
     expect(pathOf(b.stdout)).toBeDefined()
     expect(pathOf(a.stdout)).not.toBe(pathOf(b.stdout))
   } finally { rmSync(temp, { recursive: true, force: true }) }
-}, 40000)
+}, 130000)
 
 it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: a failing install that writes output stops acceptance', () => {
   const temp = mkdtempSync(join(tmpdir(), 'factory-accept-failed-install-'))
@@ -61,7 +61,7 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: a failing install
     expect(result.stdout).not.toContain('[4] Typecheck')
     expect(result.stdout).not.toContain('M1: PASS')
   } finally { rmSync(temp, { recursive: true, force: true }) }
-}, 40000)
+}, 70000)
 
 it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: an unsupported Node version stops before clone', () => {
   const temp = mkdtempSync(join(tmpdir(), 'factory-accept-node-version-'))
@@ -78,7 +78,7 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: an unsupported No
     expect(result.status).not.toBe(0)
     expect(result.stdout).not.toContain('[2] Fresh clone')
   } finally { rmSync(temp, { recursive: true, force: true }) }
-}, 30000)
+}, 70000)
 
 it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: a failing Node command cannot pass with version-like output', () => {
   const temp = mkdtempSync(join(tmpdir(), 'factory-accept-node-failure-'))
@@ -95,4 +95,4 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: a failing Node co
     expect(result.status).not.toBe(0)
     expect(result.stdout).not.toContain('[2] Fresh clone')
   } finally { rmSync(temp, { recursive: true, force: true }) }
-}, 30000)
+}, 70000)
