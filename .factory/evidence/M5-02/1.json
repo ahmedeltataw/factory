@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "card": "M5-02",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "37ae29d54a8233dbb709c672b10a18e3d29de422",
+  "checks": [
+    {
+      "id": "CHK-M5-02-a",
+      "command": "powershell -File acceptance/M3.ps1 -SkipBaseline; powershell -File acceptance/M4.ps1 -SkipBaseline (from card/M5-02 checkout, no -Source/-Ref); verify dispatch",
+      "result": "pass",
+      "output": "both print 'Cloned ref card/M5-02 at commit 3f04827d64c3890f9a21e69617cb6a6ece25ce53' and every demo step PASS (final line FAIL only because -SkipBaseline marks a dev run); the m5-integration run is repeated at M5-09; verify run 43103151369 all four cells success; reviewer gpt-6.1-sol approve"
+    },
+    {
+      "id": "CHK-M5-02-b",
+      "command": "powershell -File acceptance/M3.ps1 -SkipBaseline; powershell -File acceptance/M4.ps1 -SkipBaseline (from card/M5-02 checkout, no -Source/-Ref); verify dispatch",
+      "result": "pass",
+      "output": "both print 'Cloned ref card/M5-02 at commit 3f04827d64c3890f9a21e69617cb6a6ece25ce53' and every demo step PASS (final line FAIL only because -SkipBaseline marks a dev run); the m5-integration run is repeated at M5-09; verify run 43103151369 all four cells success; reviewer gpt-6.1-sol approve"
+    }
+  ],
+  "ended_at": "2026-11-11T21:40:11.513Z"
+}

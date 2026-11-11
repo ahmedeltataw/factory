@@ -2,6 +2,7 @@
 # كل خطوة بتطبع PASS أو FAIL. النتيجة المطلوبة: كل الخطوات PASS.
 param(
   [string]$Source = 'https://github.com/ahmedeltataw/factory.git',
+  [string]$Ref = '',
   [switch]$SkipBaseline
 )
 
@@ -797,7 +798,42 @@ try {
 
   # 2) Fresh clone from GitHub
   if (-not (Step 2 'Fresh clone from GitHub' {
-    & git clone -q -- $Source $dest
+    $targetRef = if ($Ref) { $Ref.Trim() } else { '' }
+    if ([string]::IsNullOrWhiteSpace($targetRef)) {
+      if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        throw 'PSScriptRoot is empty. Please pass -Ref explicitly.'
+      }
+      $refErrFile = Join-Path $logsDir 'git-resolve-ref.err'
+      $refRaw = & git -C $PSScriptRoot rev-parse --abbrev-ref HEAD 2> $refErrFile
+      $refExit = $LASTEXITCODE
+      if ($refExit -ne 0) {
+        $refErr = if (Test-Path -LiteralPath $refErrFile) { (Get-Content -LiteralPath $refErrFile -Raw).Trim() } else { '' }
+        throw "Failed to resolve git ref from repository at '$PSScriptRoot' (exit code $($refExit)) - $refErr. Please pass -Ref explicitly."
+      }
+      $targetRef = ($refRaw -join '').Trim()
+      if ([string]::IsNullOrWhiteSpace($targetRef) -or $targetRef -eq 'HEAD') {
+        throw "Repository at '$PSScriptRoot' is in detached HEAD state. Please pass -Ref explicitly."
+      }
+    }
+
+    $cloneErrFile = Join-Path $logsDir 'git-clone.err'
+    & git clone -q --branch $targetRef -- $Source $dest 2> $cloneErrFile
+    $cloneExit = $LASTEXITCODE
+    if ($cloneExit -ne 0) {
+      $cloneErr = if (Test-Path -LiteralPath $cloneErrFile) { (Get-Content -LiteralPath $cloneErrFile -Raw).Trim() } else { '' }
+      throw "git clone failed with exit code $($cloneExit) - $cloneErr"
+    }
+
+    $shaErrFile = Join-Path $logsDir 'git-rev-parse-cloned.err'
+    $shaRaw = & git -C $dest rev-parse HEAD 2> $shaErrFile
+    $shaExit = $LASTEXITCODE
+    if ($shaExit -ne 0) {
+      $shaErr = if (Test-Path -LiteralPath $shaErrFile) { (Get-Content -LiteralPath $shaErrFile -Raw).Trim() } else { '' }
+      throw "git rev-parse HEAD failed with exit code $($shaExit) - $shaErr"
+    }
+    $clonedSha = ($shaRaw -join '').Trim()
+    Write-Host "Cloned ref $targetRef at commit $clonedSha"
+    $global:LASTEXITCODE = 0
   })) { throw 'Step 2 failed' }
 
   Set-Location $dest

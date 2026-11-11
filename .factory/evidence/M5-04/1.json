@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M5-04",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "3bcc3213de03e95310077a28def9d9810aac26a5",
+  "checks": [
+    {
+      "id": "CHK-M5-04-a",
+      "command": "pnpm exec vitest run tests/protected/m5-graph.spec.ts tests/protected/m5-graph-property.spec.ts tests/m5-04-graph.spec.ts; gh workflow run ci.yml --ref card/M5-04 -f mutate=supervisor/src/core/graph.ts; verify dispatch",
+      "result": "pass",
+      "output": "52/52; mutation run 43100524015 graph.ts 94.01 (>=80); verify run 43103199878 all four cells success; reviewer gpt-6.1-sol approve; protected tests by gpt-6.1-terra approved by gemini-3.8-flash-high"
+    },
+    {
+      "id": "CHK-M5-04-b",
+      "command": "pnpm exec vitest run tests/protected/m5-graph.spec.ts tests/protected/m5-graph-property.spec.ts tests/m5-04-graph.spec.ts; gh workflow run ci.yml --ref card/M5-04 -f mutate=supervisor/src/core/graph.ts; verify dispatch",
+      "result": "pass",
+      "output": "52/52; mutation run 43100524015 graph.ts 94.01 (>=80); verify run 43103199878 all four cells success; reviewer gpt-6.1-sol approve; protected tests by gpt-6.1-terra approved by gemini-3.8-flash-high"
+    },
+    {
+      "id": "CHK-M5-04-c",
+      "command": "pnpm exec vitest run tests/protected/m5-graph.spec.ts tests/protected/m5-graph-property.spec.ts tests/m5-04-graph.spec.ts; gh workflow run ci.yml --ref card/M5-04 -f mutate=supervisor/src/core/graph.ts; verify dispatch",
+      "result": "pass",
+      "output": "52/52; mutation run 43100524015 graph.ts 94.01 (>=80); verify run 43103199878 all four cells success; reviewer gpt-6.1-sol approve; protected tests by gpt-6.1-terra approved by gemini-3.8-flash-high"
+    },
+    {
+      "id": "CHK-M5-04-d",
+      "command": "pnpm exec vitest run tests/protected/m5-graph.spec.ts tests/protected/m5-graph-property.spec.ts tests/m5-04-graph.spec.ts; gh workflow run ci.yml --ref card/M5-04 -f mutate=supervisor/src/core/graph.ts; verify dispatch",
+      "result": "pass",
+      "output": "52/52; mutation run 43100524015 graph.ts 94.01 (>=80); verify run 43103199878 all four cells success; reviewer gpt-6.1-sol approve; protected tests by gpt-6.1-terra approved by gemini-3.8-flash-high"
+    }
+  ],
+  "ended_at": "2026-11-11T21:40:10.709Z"
+}
