@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "card": "M5-WIN2",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "6858a7f92f0314ed1d11f8396467dd5bb9ced655",
+  "checks": [
+    {
+      "id": "CHK-M5-WIN2-a",
+      "command": "pnpm exec vitest run tests/protected/m3-recovery.spec.ts tests/protected/m4-retries.spec.ts tests/protected/m4-scope-locks.spec.ts; gh workflow run ci.yml --ref card/M5-WIN2 -f verify=true",
+      "result": "pass",
+      "output": "local outside sandbox 37/37 (round 1) and 26/26 m3-recovery+m4-scope-locks (round 2); verify run 43109570250 all four cells success; reviewer gpt-6.1-sol: round 1 changes (2 findings), round 2 applies exactly those, Lead verified"
+    },
+    {
+      "id": "CHK-M5-WIN2-b",
+      "command": "pnpm exec vitest run tests/protected/m3-recovery.spec.ts tests/protected/m4-retries.spec.ts tests/protected/m4-scope-locks.spec.ts; gh workflow run ci.yml --ref card/M5-WIN2 -f verify=true",
+      "result": "pass",
+      "output": "local outside sandbox 37/37 (round 1) and 26/26 m3-recovery+m4-scope-locks (round 2); verify run 43109570250 all four cells success; reviewer gpt-6.1-sol: round 1 changes (2 findings), round 2 applies exactly those, Lead verified"
+    }
+  ],
+  "ended_at": "2026-11-11T22:21:56.019Z"
+}
