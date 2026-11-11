@@ -150,17 +150,28 @@ function collectNoncesFromDatabases(): void {
 }
 
 async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
+  const cleanupFailures: string[] = []
+
   // 1. Terminate tracked supervisors
+  const remainingSupervisors: TrackedSupervisorChild[] = []
   for (const s of spawnedSupervisors) {
-    if (isProcessAliveWithNonce(s.pid, s.marker)) {
-      if (process.platform === 'win32') {
-        spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
-      } else {
-        try { s.child.kill('SIGKILL') } catch {}
+    if (s.pid && isProcessAliveWithNonce(s.pid, s.marker)) {
+      try {
+        if (process.platform === 'win32') {
+          spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
+        } else {
+          try { s.child.kill('SIGKILL') } catch {}
+        }
+      } catch {}
+      const dead = await waitForProcessDeath(s.pid, 15000, s.marker)
+      if (!dead) {
+        cleanupFailures.push(`Supervisor process ${s.pid} failed to terminate within 15000ms`)
+        remainingSupervisors.push(s)
       }
     }
   }
   spawnedSupervisors.length = 0
+  spawnedSupervisors.push(...remainingSupervisors)
 
   // 2. Collect any remaining nonces from all DBs
   collectNoncesFromDatabases()
@@ -192,9 +203,14 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
 
     survivors = processesWithNonces(nonces)
     if (survivors.length > 0) {
-      throw new Error(`Cleanup failed to terminate all matching processes for nonces [${nonces.join(', ')}]. Survivors: ${survivors.map(s => s.pid).join(', ')}`)
+      cleanupFailures.push(`Cleanup failed to terminate all matching processes for nonces [${nonces.join(', ')}]. Survivors: ${survivors.map(s => s.pid).join(', ')}`)
+    } else {
+      activeNonces.clear()
     }
-    activeNonces.clear()
+  }
+
+  if (cleanupFailures.length > 0) {
+    throw new Error(`Process cleanup failed:\n${cleanupFailures.join('\n')}`)
   }
 }
 

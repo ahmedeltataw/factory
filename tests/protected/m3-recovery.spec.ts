@@ -1286,9 +1286,10 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         const { stateDir, dbPath } = createInitializedProject('m3-06-b-dead-')
 
         const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { timeout: 10000 })
+        expect(deadChild.error).toBeUndefined()
+        expect(deadChild.status).toBe(0)
         const deadPid = deadChild.pid!
         const deadNonce = `dead-worker-nonce-${randomUUID()}`
-        expect(isProcessAliveWithNonce(deadPid, deadNonce)).toBe(false)
 
         const taskId = 'task-b-dead'
         const oldAttemptId = 'att-b-dead-1'
@@ -1353,9 +1354,10 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         const { stateDir, dbPath, repoDir, baseSha } = createInitializedProject('m3-06-b-restart-0-')
 
         const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { timeout: 10000 })
+        expect(deadChild.error).toBeUndefined()
+        expect(deadChild.status).toBe(0)
         const deadPid = deadChild.pid!
         const deadNonce = `dead-restart-0-nonce-${randomUUID()}`
-        expect(isProcessAliveWithNonce(deadPid, deadNonce)).toBe(false)
 
         const taskId = 'task-b-restart-0'
         const oldAttemptId = 'att-b-restart-0-1'
@@ -1454,9 +1456,10 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         const { stateDir, dbPath, repoDir, baseSha } = createInitializedProject('m3-06-b-restart-3-')
 
         const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { timeout: 10000 })
+        expect(deadChild.error).toBeUndefined()
+        expect(deadChild.status).toBe(0)
         const deadPid = deadChild.pid!
         const deadNonce = `dead-restart-3-nonce-${randomUUID()}`
-        expect(isProcessAliveWithNonce(deadPid, deadNonce)).toBe(false)
 
         const taskId = 'task-b-restart-3'
         const oldAttemptId = 'att-b-restart-3-1'
