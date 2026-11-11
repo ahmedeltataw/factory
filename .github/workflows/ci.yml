@@ -19,7 +19,7 @@ on:
 
 jobs:
   verify:
-    if: github.event_name != 'workflow_dispatch' || inputs.verify
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.verify == 'true' }}
     name: verify (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -83,7 +83,7 @@ jobs:
         run: node scripts/check-evidence.mjs .factory/evidence/*/*.json
 
   mutation:
-    if: github.event_name == 'workflow_dispatch' && (!inputs.verify || inputs.mutate != '')
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.verify != 'true' || github.event.inputs.mutate != '') }}
     # The mutation module list lives in stryker.config.json; combined break threshold 80 (CHK-M2-TOOLS-c).
     name: mutation (ubuntu, node 24)
     runs-on: ubuntu-latest
