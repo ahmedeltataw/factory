@@ -19,20 +19,7 @@ $script:ownedPids = [System.Collections.Generic.List[int]]::new()
 $script:trackedProcessRecords = [System.Collections.Generic.List[object]]::new()
 $script:trackedWorkerNonces = [System.Collections.Generic.List[string]]::new()
 $script:baseSha = $null
-$script:taskId1 = $null
-$script:taskId2 = $null
-$script:taskId3 = $null
 $script:attemptId2 = $null
-$script:worker1Pid = $null
-$script:worker1GrandchildPid = $null
-$script:worker1Nonce = $null
-$script:worker2Pid = $null
-$script:worker2GrandchildPid = $null
-$script:worker2Nonce = $null
-$script:worker3Pid = $null
-$script:worker3GrandchildPid = $null
-$script:sup1Process = $null
-$script:sup1Pid = $null
 
 $acceptanceNonce = [guid]::NewGuid().ToString('N')
 $sharedBase = Join-Path $env:TEMP 'factory-m4-acceptance'
@@ -43,9 +30,6 @@ $stateDir = Join-Path $acceptanceBase 'state'
 $logsDir = Join-Path $acceptanceBase 'logs'
 $helpersDir = Join-Path $acceptanceBase 'helpers'
 $origLocation = $null
-$verifyEvidenceScript = $null
-$arrangePendingScript = $null
-$checkCrashBoundaryScript = $null
 
 function Remove-AcceptanceTempDir([string]$dir) {
   if ([string]::IsNullOrWhiteSpace($dir)) { return }
@@ -643,9 +627,6 @@ try {
   New-Item -ItemType Directory -Path $helpersDir -Force | Out-Null
 
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  $verifyEvidenceScript = Join-Path $helpersDir 'verify-evidence.mjs'
-  $arrangePendingScript = Join-Path $helpersDir 'arrange-pending-commit.mjs'
-  $checkCrashBoundaryScript = Join-Path $helpersDir 'check-crash-boundary.mjs'
 
   Write-Host "Clone destination: $dest"
 
@@ -788,6 +769,8 @@ try {
       Start-Sleep -Milliseconds 100
     }
     Wait-DemoSupervisor $proc 'locks'
+    $snapshot = Invoke-FactoryStatus $stateDir
+    $tasks = @($snapshot.tasks | Where-Object { $_.id -in @($a, $b, $c) })
     Assert-Demo ($tasks.Count -eq 3 -and @($tasks | Where-Object { $_.status -eq 'done' }).Count -eq 3 -and $overlap) "Lock demonstration failed: $last, disjoint overlap=$overlap"
     foreach ($taskId in @($a, $b, $c)) { Assert-DemoCommits $taskId 1 }
     $global:LASTEXITCODE = 0
