@@ -34,7 +34,11 @@ export function applyPendingCommands(db: DatabaseSync, handle: SupervisorLeaseHa
             ? db.prepare("SELECT name, status FROM phases WHERE project_id = ? AND status = 'open'").get(command.project_id)
             : db.prepare('SELECT name, status FROM phases WHERE project_id = ? AND name = ?').get(command.project_id, phase)
           const target = selected as { name: string; status: string } | undefined
-          if (!target || target.status === 'done') reason = 'phase is not available'
+          const phaseLess = !target && !db.prepare('SELECT 1 FROM phases WHERE project_id = ? LIMIT 1').get(command.project_id)
+          if (phaseLess && phase === null && deps.deps.length === 0) {
+            db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)")
+              .run(command.id, command.project_id, command.id, object.title, command.created_at, now, JSON.stringify(scope.scope), maxAttempts, timeoutMs)
+          } else if (!target || target.status === 'done') reason = 'phase is not available'
           else {
             for (const dep of deps.deps) {
               const task = db.prepare('SELECT project_id, status, phase FROM tasks WHERE id = ?').get(dep) as { project_id: string; status: string; phase: string } | undefined
