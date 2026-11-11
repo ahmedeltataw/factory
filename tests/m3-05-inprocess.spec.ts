@@ -30,7 +30,7 @@ describe('in-process outbox effect coverage', () => {
     const handlers = createEffectHandlers({ db, spawnWorker, config: { stateDir: dir } as never })
     enqueue(db, handle, { idempotencyKey: 'a', kind: 'attempt.start', payloadJson: JSON.stringify({ attemptId: 'a', taskId: 't', env: { X: 'Y' } }), nowMs: 1 })
     expect(await runDue(db, handle, handlers, 2)).toEqual({ done: 1, failed: 0, retried: 0 })
-    expect(spawnWorker).toHaveBeenCalledWith({ runDir: join(dir, 'runs', 'a'), cwd: join(dir, 'worktrees', 't'), taskId: 't', attemptId: 'a', env: { X: 'Y' } })
+    expect(spawnWorker).toHaveBeenCalledWith({ runDir: join(dir, 'runs', 'a'), cwd: join(dir, 'worktrees', 't'), taskId: 't', attemptId: 'a', env: expect.objectContaining({ ...process.env, X: 'Y' }) })
     expect(db.prepare('SELECT state, pid, nonce, worktree_path FROM workers WHERE attempt_id = ?').get('a')).toMatchObject({ state: 'running', pid: 42, nonce: 'nonce-a', worktree_path: join(dir, 'worktrees', 't') })
     enqueue(db, handle, { idempotencyKey: 'again', kind: 'attempt.start', payloadJson: '{"attemptId":"a","taskId":"t"}', nowMs: 1 })
     expect((await runDue(db, handle, handlers, 2)).done).toBe(1)
@@ -38,7 +38,7 @@ describe('in-process outbox effect coverage', () => {
     spawnWorker.mockResolvedValueOnce({ pid: 43, nonce: 'nonce-b' })
     enqueue(db, handle, { idempotencyKey: 'b', kind: 'attempt.start', payloadJson: JSON.stringify({ attemptId: 'b', taskId: 't', runDir: 'custom-run', cwd: 'custom-cwd' }), nowMs: 1 })
     expect((await runDue(db, handle, handlers, 2)).done).toBe(1)
-    expect(spawnWorker).toHaveBeenLastCalledWith({ runDir: 'custom-run', cwd: 'custom-cwd', taskId: 't', attemptId: 'b', env: undefined })
+    expect(spawnWorker).toHaveBeenLastCalledWith({ runDir: 'custom-run', cwd: 'custom-cwd', taskId: 't', attemptId: 'b', env: expect.objectContaining({ ...process.env }) })
   })
 
   it('requires a spawner and a lease for direct built-in handler calls', async () => {
