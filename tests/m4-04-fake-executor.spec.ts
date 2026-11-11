@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execSync, spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -197,5 +197,78 @@ describe('M4-04 unit tests for fake-executor', () => {
       expect(existsSync(filePath)).toBe(true)
       expect(readFileSync(filePath, 'utf8').length).toBeGreaterThan(0)
     })
+  })
+
+  it.skipIf(process.platform !== 'win32')('runs with 8.3 short path alias as runDir and cwd', async (ctx) => {
+    const root = mkdtempSync(join(tmpdir(), 'factory m4 04 long name-'))
+    const cmdOut = execSync(`cmd /c for %I in ("${root}") do @echo %~sI`, { encoding: 'utf8' })
+    const alias = cmdOut ? cmdOut.trim() : ''
+
+    if (!alias || alias.toLowerCase() === root.toLowerCase()) {
+      rmSync(root, { recursive: true, force: true })
+      ctx.skip()
+      return
+    }
+
+    const nonce = randomUUID()
+    const cleanEnv = { ...process.env }
+    for (const key of ['FACTORY_ATTEMPT_NO', 'FAKE_FAIL_UNTIL_ATTEMPT', 'FAKE_FAIL_CODE', 'FAKE_HANG', 'FAKE_WRITE', 'FAKE_SLEEP_MS', 'FAKE_EXIT_CODE']) {
+      delete cleanEnv[key]
+    }
+
+    const child = spawn(process.execPath, [executor, task, nonce, alias], {
+      cwd: alias,
+      env: cleanEnv,
+      detached: true,
+      windowsHide: true,
+      stdio: 'ignore',
+    })
+
+    const exitPromise = new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('exit', resolve)
+    })
+
+    let exitCode: number | null = null
+    try {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        exitCode = await Promise.race([
+          exitPromise,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Executor exit timed out')), 15000)
+          }),
+        ])
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
+
+      expect(exitCode).toBe(0)
+      const workerPath = join(alias, 'worker.json')
+      expect(existsSync(workerPath)).toBe(true)
+      const workerData = JSON.parse(readFileSync(workerPath, 'utf8')) as Worker
+      expect(workerData.pid).toBe(child.pid)
+      expect(workerData.nonce).toBe(nonce)
+    } finally {
+      try {
+        if (child.pid && child.exitCode === null && child.signalCode === null) {
+          await killTree(child.pid, nonce)
+        }
+        const workerPath = join(alias, 'worker.json')
+        if (existsSync(workerPath)) {
+          try {
+            const w = JSON.parse(readFileSync(workerPath, 'utf8')) as Worker
+            if (w.pid === child.pid && w.nonce === nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0 && alive(w.grandchildPid)) {
+              await killTree(w.grandchildPid, nonce)
+            }
+          } catch {
+            // ignore
+          }
+        }
+        await exitPromise
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
   })
 })
