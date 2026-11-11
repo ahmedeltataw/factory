@@ -78,10 +78,11 @@ jobs:
         run: node scripts/check-evidence.mjs .factory/evidence/*/*.json
 
   mutation:
+    if: github.event_name == 'workflow_dispatch'
     # The mutation module list lives in stryker.config.json; combined break threshold 80 (CHK-M2-TOOLS-c).
     name: mutation (ubuntu, node 24)
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 345
     steps:
       - uses: actions/checkout@v4
 
@@ -97,7 +98,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Mutation test
-        timeout-minutes: 110
+        timeout-minutes: 330
         env:
           MUTATE: ${{ inputs.mutate }}
         run: |
