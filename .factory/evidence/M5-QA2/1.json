@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M5-QA2",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "294dbd0617b6be2676bd0a39531158c373357a87",
+  "checks": [
+    {
+      "id": "CHK-M5-QA2-a",
+      "command": "pnpm exec vitest run tests/protected/m4-scope-locks.spec.ts; pnpm test; verify dispatch",
+      "result": "pass",
+      "output": "outside sandbox pass; verify run 43112810541 all four cells success (re-verify after timing flake 43111149384); reviewer gpt-6.1-sol approve"
+    }
+  ],
+  "ended_at": "2026-11-11T23:08:26.745Z"
+}
