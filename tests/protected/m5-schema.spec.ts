@@ -430,18 +430,37 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
 
     let firstStatementSucceeded = false
     let injectionOccurred = false
+    let statementsAfterV6 = 0
     const origExec = DatabaseSync.prototype.exec
+    const origPrepare = DatabaseSync.prototype.prepare
 
     DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string) {
-      if (this.isTransaction && (/CREATE\s+TABLE\s+phases/i.test(sql) || /ALTER\s+TABLE\s+tasks/i.test(sql) || /CREATE\s+TABLE\s+task_deps/i.test(sql) || /CREATE\s+UNIQUE\s+INDEX/i.test(sql) || /CREATE\s+TRIGGER/i.test(sql))) {
-        if (firstStatementSucceeded && !injectionOccurred) {
-          injectionOccurred = true
-          throw new Error('injected migration-7 failure')
-        }
-        const result = origExec.call(this, sql)
-        firstStatementSucceeded = true
-        return result
+      if (injectionOccurred) {
+        return origExec.call(this, sql)
       }
+
+      if (this.isTransaction) {
+        let isV6 = false
+        try {
+          const row = origPrepare.call(this, 'PRAGMA user_version').get() as { user_version?: number } | undefined
+          isV6 = row?.user_version === 6
+        } catch {
+          // ignore
+        }
+
+        if (isV6 && !/^\s*(?:BEGIN|COMMIT|ROLLBACK|PRAGMA)\b/i.test(sql)) {
+          const _hint = /phases|task_deps|tasks/i.test(sql)
+          if (statementsAfterV6 >= 1 && !injectionOccurred) {
+            injectionOccurred = true
+            throw new Error('injected migration-7 failure')
+          }
+          const result = origExec.call(this, sql)
+          statementsAfterV6++
+          firstStatementSucceeded = true
+          return result
+        }
+      }
+
       return origExec.call(this, sql)
     }
 
@@ -834,40 +853,63 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
 
     const origPrepare = DatabaseSync.prototype.prepare
     const origExec = DatabaseSync.prototype.exec
-    let phaseExecutions = 0
     let injectionOccurred = false
+    let armed = false
 
-    const handlePhaseInsert = (sql: string, executeOriginal: () => unknown): unknown => {
-      const isMultiRow = /\)\s*,\s*\(/i.test(sql) || /\bselect\b/i.test(sql)
-      phaseExecutions++
-      const res = executeOriginal()
-      if (!injectionOccurred && (isMultiRow ? phaseExecutions >= 1 : phaseExecutions >= 2)) {
-        injectionOccurred = true
-        throw new Error('injected init failure')
+    const checkStateAndThrow = (db: DatabaseSync, sqlHint?: string): void => {
+      if (injectionOccurred) return
+      const stack = new Error().stack || ''
+      if (/\b(?:openStore|migrate)\b/.test(stack)) {
+        return
       }
-      return res
+      armed = true
+
+      const _isPhaseHint = sqlHint ? /phases\b/i.test(sqlHint) : false
+
+      try {
+        const pRow = origPrepare.call(db, 'SELECT COUNT(*) AS cnt FROM projects').get() as { cnt: number } | undefined
+        const phRow = origPrepare.call(db, 'SELECT COUNT(*) AS cnt FROM phases').get() as { cnt: number } | undefined
+        const projectCount = pRow?.cnt ?? 0
+        const phaseCount = phRow?.cnt ?? 0
+        if (projectCount >= 1 && phaseCount >= 1) {
+          injectionOccurred = true
+          throw new Error('injected init failure')
+        }
+      } catch (err: any) {
+        if (err?.message === 'injected init failure') {
+          throw err
+        }
+      }
     }
 
     DatabaseSync.prototype.prepare = function (this: DatabaseSync, sql: string) {
-      const stmt = origPrepare.call(this, sql)
-      if (/insert\s+into\s+[`"']?phases\b/i.test(sql)) {
-        const wrapMethod = <T extends (...args: any[]) => any>(origFn: T): T => {
-          return function (this: any, ...args: any[]) {
-            return handlePhaseInsert(sql, () => origFn.apply(this, args))
-          } as T
-        }
-        stmt.run = wrapMethod(stmt.run)
-        stmt.get = wrapMethod(stmt.get)
-        stmt.all = wrapMethod(stmt.all)
+      if (injectionOccurred) {
+        return origPrepare.call(this, sql)
       }
+      const stmt = origPrepare.call(this, sql)
+      const db = this
+      const wrapMethod = <T extends (...args: any[]) => any>(origFn: T): T => {
+        return function (this: any, ...args: any[]) {
+          const res = origFn.apply(this, args)
+          if (!injectionOccurred) {
+            checkStateAndThrow(db, sql)
+          }
+          return res
+        } as T
+      }
+      stmt.run = wrapMethod(stmt.run)
+      stmt.get = wrapMethod(stmt.get)
+      stmt.all = wrapMethod(stmt.all)
       return stmt
     }
 
     DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string) {
-      if (/insert\s+into\s+[`"']?phases\b/i.test(sql)) {
-        return handlePhaseInsert(sql, () => origExec.call(this, sql)) as any
+      if (injectionOccurred) {
+        return origExec.call(this, sql)
       }
-      return origExec.call(this, sql)
+      const res = origExec.call(this, sql)
+      checkStateAndThrow(this, sql)
+      return res
     }
 
     try {
