@@ -34,3 +34,38 @@ it('reserves skipped and backoff scopes in FIFO order while dispatching disjoint
     expect(rows.map((row) => [row.id, row.status])).toEqual([['a', 'progress'], ['b', 'ready'], ['c', 'ready'], ['d', 'ready'], ['e', 'ready'], ['f', 'progress']])
   } finally { handle.release(2000); db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
+
+it('applies and dispatches an unblocked default-scope task in the same ordered tick', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm406-tick-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  const handle = acquireSupervisor(db, dir, { nowMs: 1, staleAfterMs: 10000 })
+  try {
+    db.prepare("INSERT INTO projects (id, name, created_at) VALUES ('p', 'P', 'now')").run()
+    db.prepare("INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES ('new', 'p', 'task.create', ?, 'now')").run(JSON.stringify({ title: 'New' }))
+    const phases: string[] = []
+    const skip = <T>() => undefined as T
+    const deps: LoopDeps = { stateDir: dir, spawnWorker: () => ({ pid: 1, nonce: 'unused' }), killTree: async () => ({ result: 'not-running' }), isAlive: () => true, readResult: () => undefined, onPhase: (phase) => phases.push(phase), wrapRecoverOutbox: skip, wrapReconcileWorkers: skip, wrapWorkerLiveness: skip }
+    await runTick(db, handle, deps, 1000)
+    expect(db.prepare("SELECT status, scope_json FROM tasks WHERE id = 'new'").get()).toMatchObject({ status: 'progress', scope_json: '["."]' })
+    expect(phases).toEqual(['recover-outbox', 'reconcile-workers', 'apply-commands', 'dispatch-tasks', 'worker-liveness', 'lease-heartbeat'])
+  } finally { handle.release(2000); db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('releases terminal scopes, including a task exhausted during dispatch', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'm406-terminal-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  const handle = acquireSupervisor(db, dir, { nowMs: 1, staleAfterMs: 10000 })
+  try {
+    db.prepare("INSERT INTO projects (id, name, created_at) VALUES ('p', 'P', 'now')").run()
+    for (const [id, status] of [['dropped', 'dropped'], ['failed', 'failed'], ['exhausted', 'ready'], ['next', 'ready']]) {
+      db.prepare("INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES (?, 'p', 'task.create', '{}', 'now')").run(id!)
+      db.prepare("INSERT INTO command_outcomes (command_id, outcome, lease_generation, applied_at) VALUES (?, 'applied', ?, 'now')").run(id!, handle.generation)
+      db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, max_attempts, created_at, updated_at) VALUES (?, 'p', ?, ?, ?, 1, 'now', 'now')").run(id!, id!, id!, status!)
+    }
+    db.prepare("INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation) VALUES ('old', 'exhausted', 1, 'failed', ?)").run(handle.generation)
+    const skip = <T>() => undefined as T
+    const deps: LoopDeps = { stateDir: dir, spawnWorker: () => ({ pid: 1, nonce: 'unused' }), killTree: async () => ({ result: 'not-running' }), isAlive: () => true, readResult: () => undefined, wrapRecoverOutbox: skip, wrapReconcileWorkers: skip, wrapApplyCommands: skip, wrapWorkerLiveness: skip }
+    await runTick(db, handle, deps, 1000)
+    expect(db.prepare('SELECT id, status FROM tasks ORDER BY rowid').all().map((row) => [row.id, row.status])).toEqual([['dropped', 'dropped'], ['failed', 'failed'], ['exhausted', 'failed'], ['next', 'progress']])
+  } finally { handle.release(2000); db.close(); rmSync(dir, { recursive: true, force: true }) }
+})

@@ -94,7 +94,8 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
         if (task.status !== 'ready') continue
         const scope = scopeOf(task.scope_json)
         if (!held.some((other) => scopesOverlap(scope, other)) && task.not_before_ms <= nowMs) scheduleAttempt(db, handle, task.id, stateDir, nowMs)
-        held.push(scope)
+        const current = db.prepare('SELECT status FROM tasks WHERE id = ?').get(task.id) as { status: string }
+        if (current.status === 'ready' || current.status === 'progress') held.push(scope)
       }
     })
     await runEffects()
