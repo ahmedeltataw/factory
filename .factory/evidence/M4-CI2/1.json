@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M4-CI2",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "9f4a59593d2e37a07ede934f53a9be13d83def75",
+  "checks": [
+    {
+      "id": "CHK-M4-CI2-a",
+      "command": "review of .github/workflows/ci.yml; effect verified on the next integration push (no mutation job)",
+      "result": "pass",
+      "output": "reviewer gemini-4-argon-high approve"
+    }
+  ],
+  "ended_at": "2026-11-11T12:53:00.786Z"
+}
