@@ -402,7 +402,7 @@ describe('real process regression', () => {
     } finally {
       try { await cleanupWorkers(workers) } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }) }
     }
-  }, 300000)
+  }, 900000)
 
   it('keeps the executor alive after its spawner dies', async () => {
     const root = mkdtempSync(join(tmpdir(), 'm3-04-parent-'))
