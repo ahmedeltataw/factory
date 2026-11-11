@@ -100,6 +100,7 @@ it('CHK-M4-04-b: hang keeps both processes alive beyond three seconds until tree
     expect(alive(w.pid)).toBe(true); expect(alive(w.grandchildPid)).toBe(true)
     expect(existsSync(join(f.run, 'result.json'))).toBe(false)
     const killed = await killTree(w.pid, f.nonce)
+    expect(alive(w.grandchildPid)).toBe(false)
     expect(killed).toEqual({ result: 'killed' })
     await waitForExit(f)
     const deadline = Date.now() + 5000
@@ -124,6 +125,7 @@ it('CHK-M4-04-c: writes deterministic files and rejects traversal, absolute and 
       expect(existsSync(join(f.root, 'outside', 'escape.txt'))).toBe(false)
       expect(existsSync(output(f))).toBe(false)
       expect(existsSync(join(f.run, 'result.json'))).toBe(false)
+      expect(existsSync(join(f.run, 'worker.json'))).toBe(false)
     } finally { await cleanup(f) }
   }
 }, 60000)

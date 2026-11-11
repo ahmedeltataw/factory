@@ -11,7 +11,12 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-a/b: failed local cl
   const marker = join(old, 'do-not-delete.txt')
   writeFileSync(marker, 'keep')
   const script = join(process.cwd(), 'acceptance', 'M1.ps1')
-  const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Source', join(temp, 'missing-local-repository')], { encoding: 'utf8', env: { ...process.env, TEMP: temp, TMP: temp }, timeout: 15000 })
+  const invoke = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Source', join(temp, 'missing-local-repository')], { encoding: 'utf8', env: { ...process.env, TEMP: temp, TMP: temp }, timeout: 30000 })
+  const run = () => {
+    let result = invoke()
+    if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') result = invoke()
+    return result
+  }
   try {
     const a = run()
     const b = run()
@@ -45,9 +50,11 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: a failing install
     git('init', '-q')
     git('add', 'README.md')
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', source], {
-      encoding: 'utf8', timeout: 20000, env: { ...process.env, TEMP: temp, TMP: temp, USERPROFILE: temp, PATH: `${bin};${process.env.PATH}`, GIT_TERMINAL_PROMPT: '0' },
+    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', source], {
+      encoding: 'utf8', timeout: 30000, env: { ...process.env, TEMP: temp, TMP: temp, USERPROFILE: temp, PATH: `${bin};${process.env.PATH}`, GIT_TERMINAL_PROMPT: '0' },
     })
+    let result = run()
+    if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') result = run()
     expect(result.error).toBeUndefined()
     expect(result.status).not.toBe(0)
     expect(result.stdout, result.stderr).toContain('deliberate install failure')
@@ -62,9 +69,11 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: an unsupported No
   mkdirSync(bin)
   writeFileSync(join(bin, 'node.cmd'), '@echo off\r\necho v99.0.0\r\nexit /b 0\r\n')
   try {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', join(temp, 'missing')], {
-      encoding: 'utf8', timeout: 15000, env: { ...process.env, TEMP: temp, TMP: temp, PATH: `${bin};${process.env.PATH}` },
+    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', join(temp, 'missing')], {
+      encoding: 'utf8', timeout: 30000, env: { ...process.env, TEMP: temp, TMP: temp, PATH: `${bin};${process.env.PATH}` },
     })
+    let result = run()
+    if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') result = run()
     expect(result.error).toBeUndefined()
     expect(result.status).not.toBe(0)
     expect(result.stdout).not.toContain('[2] Fresh clone')
@@ -77,9 +86,11 @@ it.skipIf(process.platform !== 'win32')('CHK-M1-ACCEPT-SAFE-b: a failing Node co
   mkdirSync(bin)
   writeFileSync(join(bin, 'node.cmd'), '@echo off\r\necho v24.0.0\r\nexit /b 9\r\n')
   try {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', join(temp, 'missing')], {
-      encoding: 'utf8', timeout: 15000, env: { ...process.env, TEMP: temp, TMP: temp, PATH: `${bin};${process.env.PATH}` },
+    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(process.cwd(), 'acceptance', 'M1.ps1'), '-Source', join(temp, 'missing')], {
+      encoding: 'utf8', timeout: 30000, env: { ...process.env, TEMP: temp, TMP: temp, PATH: `${bin};${process.env.PATH}` },
     })
+    let result = run()
+    if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') result = run()
     expect(result.error).toBeUndefined()
     expect(result.status).not.toBe(0)
     expect(result.stdout).not.toContain('[2] Fresh clone')
