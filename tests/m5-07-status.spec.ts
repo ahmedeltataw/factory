@@ -375,6 +375,80 @@ describe('M5-07 status unit and mutation tests', () => {
       expect(formattedPhases[2]).toContain('مكتملة')
     })
 
+    it('renders phase openedAt, closedAt, and task counts in Arabic view', () => {
+      const dummy: Status = {
+        schemaVersion: 7,
+        recordedCommandCount: 1,
+        lease: null,
+        phases: [
+          {
+            name: 'development',
+            ord: 2,
+            status: 'open',
+            openedAt: '2026-01-01T12:00:00.000Z',
+            closedAt: null,
+            tasks: {
+              ready: 3,
+              progress: 2,
+              blocked: 1,
+              failed: 4,
+              done: 5,
+              dropped: 6,
+            },
+          },
+          {
+            name: 'intake',
+            ord: 1,
+            status: 'done',
+            openedAt: '2026-01-01T00:00:00.000Z',
+            closedAt: '2026-01-01T12:00:00.000Z',
+            tasks: {
+              ready: 0,
+              progress: 0,
+              blocked: 0,
+              failed: 0,
+              done: 1,
+              dropped: 0,
+            },
+          },
+        ],
+      }
+
+      const text = formatStatus(dummy)
+      const lines = text.split(/\r?\n/)
+      const devLine = lines.find(l => l.includes('development'))!
+      expect(devLine).toBe(
+        'المرحلة: development (الترتيب=2)، الحالة=مفتوحة (المرحلة المفتوحة)، وقت الفتح=2026-01-01T12:00:00.000Z، وقت الإغلاق=غير محدد، المهام: جاهزة=3، قيد التقدم=2، محظورة=1، فاشلة=4، مكتملة=5، متروكة=6',
+      )
+
+      const intakeLine = lines.find(l => l.includes('intake'))!
+      expect(intakeLine).toBe(
+        'المرحلة: intake (الترتيب=1)، الحالة=مكتملة، وقت الفتح=2026-01-01T00:00:00.000Z، وقت الإغلاق=2026-01-01T12:00:00.000Z، المهام: جاهزة=0، قيد التقدم=0، محظورة=0، فاشلة=0، مكتملة=1، متروكة=0',
+      )
+    })
+
+    it('handles phase with null dates and default task counts when omitted', () => {
+      const dummy: Status = {
+        schemaVersion: 7,
+        recordedCommandCount: 1,
+        lease: null,
+        phases: [
+          {
+            name: 'qa',
+            ord: 3,
+            status: 'locked',
+            openedAt: null,
+            closedAt: null,
+            tasks: undefined as any,
+          },
+        ],
+      }
+      const text = formatStatus(dummy)
+      expect(text).toContain(
+        'المرحلة: qa (الترتيب=3)، الحالة=مقفلة، وقت الفتح=غير محدد، وقت الإغلاق=غير محدد، المهام: جاهزة=0، قيد التقدم=0، محظورة=0، فاشلة=0، مكتملة=0، متروكة=0',
+      )
+    })
+
     it('renders waiting reason labels with and without target items', () => {
       const reasons = ['phase-locked', 'deps', 'scope', 'backoff', 'custom-reason'] as const
       for (const reason of reasons) {

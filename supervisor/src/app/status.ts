@@ -976,8 +976,18 @@ export function formatStatus(status: Status): string {
   if (phases !== undefined && phases.length > 0) {
     for (const phase of phases) {
       const stateLabel = phaseStatusLabel(phase.status)
+      const openedAt = phase.openedAt ?? 'غير محدد'
+      const closedAt = phase.closedAt ?? 'غير محدد'
+      const counts = phase.tasks ?? {
+        ready: 0,
+        progress: 0,
+        blocked: 0,
+        failed: 0,
+        done: 0,
+        dropped: 0,
+      }
       lines.push(
-        `المرحلة: ${phase.name} (الترتيب=${phase.ord})، الحالة=${stateLabel}${phase.status === 'open' ? ' (المرحلة المفتوحة)' : ''}`,
+        `المرحلة: ${phase.name} (الترتيب=${phase.ord})، الحالة=${stateLabel}${phase.status === 'open' ? ' (المرحلة المفتوحة)' : ''}، وقت الفتح=${openedAt}، وقت الإغلاق=${closedAt}، المهام: جاهزة=${counts.ready}، قيد التقدم=${counts.progress}، محظورة=${counts.blocked}، فاشلة=${counts.failed}، مكتملة=${counts.done}، متروكة=${counts.dropped}`,
       )
     }
   }
