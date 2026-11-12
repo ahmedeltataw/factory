@@ -87,7 +87,7 @@ it('CHK-M5-07-a: phases and task graph are read in order without writes', () => 
 
 it('CHK-M5-07-b: waiting matches dispatch and blockedBy remains progress-only', () => withFixture(dir => {
   const status = readStatus(dir, { nowMs, staleAfterMs: 500 }) as any
-  const plan = planDispatch({ nowMs, phases: phases.map(({ name, status }) => ({ name, status })), tasks: rows.map(row => ({ ...row, deps: [...row.deps], scope: [...row.scope] })) })
+  const plan = planDispatch({ nowMs, phases: phases.map(({ name, status }) => ({ name, status })), tasks: rows.map(row => ({ ...row, deps: [...row.deps].sort(), scope: [...row.scope] })) })
   const expected = [
     { id: 'locked', reason: 'phase-locked', on: ['qa'] },
     { id: 'deps', reason: 'deps', on: ['unfinished-a', 'unfinished-b'] },
@@ -142,4 +142,23 @@ it.each([
   const result = run(dir)
   expect(result.status).toBe(1)
   expect(result.stderr).toContain('بيانات قاعدة البيانات غير صالحة')
+}))
+
+it('CHK-M5-07-d: a phase-less project is valid and waits without the phase rule', () => withFixture(dir => {
+  const db = new DatabaseSync(join(dir, 'state.sqlite'))
+  try {
+    db.exec("DROP TRIGGER phases_no_delete; DELETE FROM phases WHERE project_id = 'p'")
+    db.exec("DROP TRIGGER task_deps_no_delete; DELETE FROM task_deps")
+    db.exec("UPDATE tasks SET phase = 'intake'")
+  } finally { db.close() }
+  const result = run(dir)
+  expect(result.status).toBe(0)
+  const json = JSON.parse(result.stdout)
+  expect(json.phases).toEqual([])
+  for (const task of json.tasks) expect(task).toMatchObject({ phase: 'intake', dependsOn: [] })
+  const status = readStatus(dir, { nowMs, staleAfterMs: 500 }) as any
+  expect(status.phases).toEqual([])
+  expect(status.tasks.find((task: any) => task.id === 'first').waiting).toBeNull()
+  expect(status.tasks.find((task: any) => task.id === 'scope').waiting).toEqual({ reason: 'scope', on: ['first'] })
+  expect(status.tasks.find((task: any) => task.id === 'backoff').waiting).toEqual({ reason: 'backoff', on: [] })
 }))

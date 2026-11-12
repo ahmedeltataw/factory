@@ -60,13 +60,29 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function waitForProcessDeath(pid: number, timeoutMs = 15000): Promise<boolean> {
+function isProcessAliveWithNonce(pid: number, markerOrNonce: string): boolean {
+  if (!isProcessAlive(pid)) return false
+  const cmd = getCommandLineForPid(pid)
+  return typeof cmd === 'string' && cmd.includes(markerOrNonce)
+}
+
+async function waitForProcessDeath(
+  pid: number,
+  timeoutMs = 15000,
+  markerOrNonce?: string,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) return true
+    const alive = markerOrNonce
+      ? isProcessAliveWithNonce(pid, markerOrNonce)
+      : isProcessAlive(pid)
+    if (!alive) return true
     await delay(50)
   }
-  return !isProcessAlive(pid)
+  const alive = markerOrNonce
+    ? isProcessAliveWithNonce(pid, markerOrNonce)
+    : isProcessAlive(pid)
+  return !alive
 }
 
 function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: string }> {
@@ -134,20 +150,28 @@ function collectNoncesFromDatabases(): void {
 }
 
 async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
+  const cleanupFailures: string[] = []
+
   // 1. Terminate tracked supervisors
+  const remainingSupervisors: TrackedSupervisorChild[] = []
   for (const s of spawnedSupervisors) {
-    if (isProcessAlive(s.pid)) {
-      const cmd = getCommandLineForPid(s.pid)
-      if (cmd && cmd.includes(s.marker)) {
+    if (s.pid && isProcessAliveWithNonce(s.pid, s.marker)) {
+      try {
         if (process.platform === 'win32') {
           spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
         } else {
           try { s.child.kill('SIGKILL') } catch {}
         }
+      } catch {}
+      const dead = await waitForProcessDeath(s.pid, 15000, s.marker)
+      if (!dead) {
+        cleanupFailures.push(`Supervisor process ${s.pid} failed to terminate within 15000ms`)
+        remainingSupervisors.push(s)
       }
     }
   }
   spawnedSupervisors.length = 0
+  spawnedSupervisors.push(...remainingSupervisors)
 
   // 2. Collect any remaining nonces from all DBs
   collectNoncesFromDatabases()
@@ -166,14 +190,11 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
         try {
           killRes = await killTree(s.pid, s.nonce)
         } catch {}
-        if (killRes.result !== 'identity-mismatch' && isProcessAlive(s.pid)) {
-          const cmd = getCommandLineForPid(s.pid)
-          if (cmd && cmd.includes(s.nonce)) {
-            if (process.platform === 'win32') {
-              spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
-            } else {
-              try { process.kill(s.pid, 'SIGKILL') } catch {}
-            }
+        if (killRes.result !== 'identity-mismatch' && isProcessAliveWithNonce(s.pid, s.nonce)) {
+          if (process.platform === 'win32') {
+            spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
+          } else {
+            try { process.kill(s.pid, 'SIGKILL') } catch {}
           }
         }
       }
@@ -182,9 +203,14 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
 
     survivors = processesWithNonces(nonces)
     if (survivors.length > 0) {
-      throw new Error(`Cleanup failed to terminate all matching processes for nonces [${nonces.join(', ')}]. Survivors: ${survivors.map(s => s.pid).join(', ')}`)
+      cleanupFailures.push(`Cleanup failed to terminate all matching processes for nonces [${nonces.join(', ')}]. Survivors: ${survivors.map(s => s.pid).join(', ')}`)
+    } else {
+      activeNonces.clear()
     }
-    activeNonces.clear()
+  }
+
+  if (cleanupFailures.length > 0) {
+    throw new Error(`Process cleanup failed:\n${cleanupFailures.join('\n')}`)
   }
 }
 
@@ -815,13 +841,13 @@ describe('M4-06 scope locks and scope enforcement', () => {
           process.kill(sup1.pid!, 'SIGKILL')
         }
 
-        const sup1Dead = await waitForProcessDeath(sup1.pid!, 15000)
+        const sup1Dead = await waitForProcessDeath(sup1.pid!, 15000, stateDir)
         expect(sup1Dead).toBe(true)
 
         // Confirm Supervisor-only death: supervisor is dead, executor and grandchild are still alive
-        expect(isProcessAlive(sup1.pid!)).toBe(false)
-        expect(isProcessAlive(publishedWorker.pid)).toBe(true)
-        expect(isProcessAlive(publishedWorker.grandchildPid)).toBe(true)
+        expect(isProcessAliveWithNonce(sup1.pid!, stateDir)).toBe(false)
+        expect(isProcessAliveWithNonce(publishedWorker.pid, publishedWorker.nonce)).toBe(true)
+        expect(isProcessAliveWithNonce(publishedWorker.grandchildPid, publishedWorker.nonce)).toBe(true)
 
         // Capture heartbeat evidence AFTER supervisor death confirmation
         let lease: { owner_id: string; generation: number; heartbeat_ms: number } | undefined
@@ -974,7 +1000,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
         mkdirSync(join(wtRenSrc, 'factory-fake'), { recursive: true })
         git(wtRenSrc, 'mv', 'tracked-outside.txt', 'factory-fake/renamed-inside.txt')
 
-        await waitForProcessDeath(supRenSrc.pid!, 30000)
+        await waitForProcessDeath(supRenSrc.pid!, 30000, stateDir)
 
         // 2b. Rename SOURCE inside scope, TARGET outside scope (staged porcelain rename R)
         const createRenTgt = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Rename Tgt Outside', '--scope', 'factory-fake'], { cwd: tempCwd })
@@ -1001,7 +1027,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
         const wtRenTgt = join(stateDir, 'worktrees', taskRenTgtId)
         git(wtRenTgt, 'mv', 'factory-fake/tracked-inside.txt', 'escaped-outside.txt')
 
-        await waitForProcessDeath(supRenTgt.pid!, 30000)
+        await waitForProcessDeath(supRenTgt.pid!, 30000, stateDir)
 
         // 3. Deletion of tracked file outside scope (staged deletion D)
         const createDelete = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Delete Outside', '--scope', 'factory-fake'], { cwd: tempCwd })
@@ -1028,7 +1054,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
         const wtDel = join(stateDir, 'worktrees', taskDeleteId)
         git(wtDel, 'rm', 'tracked-outside.txt')
 
-        await waitForProcessDeath(supDel.pid!, 30000)
+        await waitForProcessDeath(supDel.pid!, 30000, stateDir)
 
         // 4. Write inside scope commits normally
         const taskInsideId = randomUUID()
@@ -1126,5 +1152,74 @@ describe('M4-06 scope locks and scope enforcement', () => {
       }
     },
     120000,
+  )
+
+  it(
+    'CHK-M5-QA2-a: real-process task whose scope does not cover factory-fake/<id>.txt ends failed with scope-violation without commit or evidence',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'm5-qa2-a-'))
+      directories.push(root)
+      const repoDir = join(root, 'repo')
+      const stateDir = join(root, 'state')
+      const dbPath = join(stateDir, 'state.sqlite')
+      const tempCwd = join(root, 'cwd')
+      mkdirSync(tempCwd, { recursive: true })
+
+      const { baseSha } = createGitRepo(repoDir)
+      const initRes = runCli(['init', '--state-dir', stateDir, '--repo', repoDir], { cwd: tempCwd })
+      expect(initRes.status).toBe(0)
+
+      const taskId = randomUUID()
+      const createRes = runCli(
+        ['task', 'create', '--state-dir', stateDir, '--title', 'Scope Violation Task', '--scope', 'src', '--command-id', taskId],
+        { cwd: tempCwd },
+      )
+      expect(createRes.status).toBe(0)
+
+      try {
+        const startRes = runCli(
+          ['start', '--state-dir', stateDir, '--exit-when-idle'],
+          {
+            cwd: tempCwd,
+            env: cleanTestEnv(),
+            timeout: 45000,
+          },
+        )
+        expect(startRes.status).toBe(0)
+
+        const db = openStore(dbPath)
+        try {
+          const nonces = db.prepare('SELECT nonce FROM workers').all() as Array<{ nonce: string }>
+          for (const n of nonces) activeNonces.add(n.nonce)
+
+          const taskRow = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId) as { status: string }
+          expect(taskRow.status).toBe('failed')
+
+          const attRow = db.prepare('SELECT id, status, error_class FROM attempts WHERE task_id = ?').get(taskId) as { id: string; status: string; error_class: string }
+          expect(attRow.status).toBe('failed')
+          expect(attRow.error_class).toBe('scope-violation')
+
+          const outboxRow = db.prepare('SELECT status, last_error FROM outbox WHERE idempotency_key = ?').get(`evidence.commit:${attRow.id}`) as { status: string; last_error: string | null }
+          expect(outboxRow.status).toBe('done')
+          expect(outboxRow.last_error).toBeDefined()
+          expect(outboxRow.last_error!.startsWith(`scope-violation: factory-fake/${taskId}.txt`)).toBe(true)
+
+          const branchSha = git(repoDir, 'rev-parse', `factory/task/${taskId}`)
+          expect(branchSha).toBe(baseSha)
+          const revList = git(repoDir, 'rev-list', `${baseSha}..factory/task/${taskId}`)
+          expect(revList).toBe('')
+
+          const evCount = db.prepare('SELECT COUNT(*) as c FROM evidence WHERE attempt_id = ?').get(attRow.id) as { c: number }
+          expect(evCount.c).toBe(0)
+          const totalEv = db.prepare('SELECT COUNT(*) as c FROM evidence').get() as { c: number }
+          expect(totalEv.c).toBe(0)
+        } finally {
+          db.close()
+        }
+      } finally {
+        collectNoncesFromDatabases()
+      }
+    },
+    60000,
   )
 })

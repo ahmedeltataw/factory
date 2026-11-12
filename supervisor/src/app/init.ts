@@ -35,6 +35,10 @@ export function init(stateDir: string, repo: string): void {
         const id = randomUUID()
         const now = new Date().toISOString()
         db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, basename(repoPath) || repoPath, now)
+        const insertPhase = db.prepare('INSERT INTO phases (project_id, name, ord, status, opened_at) VALUES (?, ?, ?, ?, ?)')
+        for (const [index, name] of ['intake', 'development', 'qa', 'devops', 'handover'].entries()) {
+          insertPhase.run(id, name, index + 1, index === 0 ? 'open' : 'locked', index === 0 ? now : null)
+        }
         db.prepare('INSERT INTO project_config (project_id, repo_path, base_ref, created_at) VALUES (?, ?, ?, ?)').run(id, repoPath, baseRef, now)
       })
     } finally { handle.release(Date.now()) }

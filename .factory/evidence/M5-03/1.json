@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M5-03",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "debba82cd3ff4590ba585cd5fd452bacf5774910",
+  "checks": [
+    {
+      "id": "CHK-M5-03-a",
+      "command": "pnpm exec vitest run tests/m5-03-seeding.spec.ts tests/m5-03-init-existing.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "full suite pass; verify run 43108314813 all four cells success; mutation run 43113230377 score 88.20 (init.ts 81.25, store.ts 93.88) >= 80; reviewer gemini-3.8-flash-high approve"
+    },
+    {
+      "id": "CHK-M5-03-b",
+      "command": "pnpm exec vitest run tests/m5-03-seeding.spec.ts tests/m5-03-init-existing.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "full suite pass; verify run 43108314813 all four cells success; mutation run 43113230377 score 88.20 (init.ts 81.25, store.ts 93.88) >= 80; reviewer gemini-3.8-flash-high approve"
+    },
+    {
+      "id": "CHK-M5-03-c",
+      "command": "pnpm exec vitest run tests/m5-03-seeding.spec.ts tests/m5-03-init-existing.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "full suite pass; verify run 43108314813 all four cells success; mutation run 43113230377 score 88.20 (init.ts 81.25, store.ts 93.88) >= 80; reviewer gemini-3.8-flash-high approve"
+    },
+    {
+      "id": "CHK-M5-03-d",
+      "command": "pnpm exec vitest run tests/m5-03-seeding.spec.ts tests/m5-03-init-existing.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "full suite pass; verify run 43108314813 all four cells success; mutation run 43113230377 score 88.20 (init.ts 81.25, store.ts 93.88) >= 80; reviewer gemini-3.8-flash-high approve"
+    }
+  ],
+  "ended_at": "2026-11-11T23:08:26.745Z"
+}

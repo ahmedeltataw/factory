@@ -14,7 +14,7 @@ function directory(): string { const dir = mkdtempSync(join(tmpdir(), 'factory-s
 function seed(dir: string): void {
   const db = new DatabaseSync(join(dir, 'state.sqlite'))
   try {
-    db.exec("CREATE TABLE commands (id TEXT PRIMARY KEY, payload_json TEXT); INSERT INTO commands VALUES ('c1', 'private-payload'), ('c2', '{}'); CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT); PRAGMA user_version = 6")
+    db.exec("CREATE TABLE commands (id TEXT PRIMARY KEY, payload_json TEXT); INSERT INTO commands VALUES ('c1', 'private-payload'), ('c2', '{}'); CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT); PRAGMA user_version = 7")
   } finally { db.close() }
 }
 function hash(path: string): string { return createHash('sha256').update(readFileSync(path)).digest('hex') }
@@ -26,12 +26,12 @@ it('CHK-M2-04-a/c: reports observations without inventing live state or exposing
   const options = { nowMs: 2000, staleAfterMs: 500 }
   const path = join(dir, 'state.sqlite')
   const before = hash(path)
-  expect(readStatus(dir, options)).toEqual({ phases: [], schemaVersion: 6, recordedCommandCount: 2, lease: null })
+  expect(readStatus(dir, options)).toEqual({ phases: [], schemaVersion: 7, recordedCommandCount: 2, lease: null })
   expect(hash(path)).toBe(before)
   const db = new DatabaseSync(path)
   try { db.exec("INSERT INTO supervisor_lease VALUES (1, 'owner', 3, 1800, 'active')") } finally { db.close() }
   const status = readStatus(dir, options)
-  expect(status).toEqual({ phases: [], schemaVersion: 6, recordedCommandCount: 2, lease: { ownerId: 'owner', generation: 3, heartbeatMs: 1800, state: 'active', freshness: 'fresh' } })
+  expect(status).toEqual({ phases: [], schemaVersion: 7, recordedCommandCount: 2, lease: { ownerId: 'owner', generation: 3, heartbeatMs: 1800, state: 'active', freshness: 'fresh' } })
   expect(JSON.stringify(status)).not.toContain('private-payload')
   const arabic = formatStatus(status)
   expect(arabic).toMatch(/[\u0600-\u06ff]/)
@@ -70,7 +70,7 @@ it('CHK-M2-04-b: does not create missing DBs and rejects incompatible and malfor
   expect(() => readStatus(dir, { nowMs: 2000, staleAfterMs: 0 })).toThrow()
   expect(hash(path)).toBe(before)
   const malformed = new DatabaseSync(path)
-  try { malformed.exec("PRAGMA user_version = 6; INSERT INTO supervisor_lease VALUES (1, '', 0, -1, 'unknown')") } finally { malformed.close() }
+  try { malformed.exec("PRAGMA user_version = 7; INSERT INTO supervisor_lease VALUES (1, '', 0, -1, 'unknown')") } finally { malformed.close() }
   const malformedHash = hash(path)
   expect(() => readStatus(dir, { nowMs: 2000, staleAfterMs: 500 })).toThrow()
   expect(hash(path)).toBe(malformedHash)
@@ -85,7 +85,7 @@ it('CHK-M2-04-a: reads the real migrated store while a supervisor owns it', () =
     const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 1000 })
     try {
       const status = readStatus(dir, { nowMs: 1200, staleAfterMs: 1000 })
-      expect(status).toMatchObject({ schemaVersion: 6, recordedCommandCount: 1, lease: { ownerId: handle.ownerId, generation: handle.generation, state: 'active', freshness: 'fresh' } })
+      expect(status).toMatchObject({ schemaVersion: 7, recordedCommandCount: 1, lease: { ownerId: handle.ownerId, generation: handle.generation, state: 'active', freshness: 'fresh' } })
       expect(JSON.stringify(status)).not.toContain('hidden')
     } finally { handle.release(1200) }
     expect(readStatus(dir, { nowMs: 1200, staleAfterMs: 1000 }).lease?.state).toBe('released')

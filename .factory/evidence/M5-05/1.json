@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M5-05",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "a284905c27e1c43cb9efc84d5aebcd6051240f81",
+  "checks": [
+    {
+      "id": "CHK-M5-05-a",
+      "command": "pnpm exec vitest run tests/protected/m5-commands.spec.ts tests/protected/m5-commands-property.spec.ts tests/m5-05-*.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 920/920; verify run 43123052261 all four cells success; mutation run 43123062435 score 88.64 (apply-commands.ts 90.41, commands.ts 82.72) >= 80; reviewer gemini-3.8-flash-high: no code findings (only finding was contract drift from integration, resolved by merge); contract amended 5137687 and 866447e (phase-less projects, Muse #20)"
+    },
+    {
+      "id": "CHK-M5-05-b",
+      "command": "pnpm exec vitest run tests/protected/m5-commands.spec.ts tests/protected/m5-commands-property.spec.ts tests/m5-05-*.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 920/920; verify run 43123052261 all four cells success; mutation run 43123062435 score 88.64 (apply-commands.ts 90.41, commands.ts 82.72) >= 80; reviewer gemini-3.8-flash-high: no code findings (only finding was contract drift from integration, resolved by merge); contract amended 5137687 and 866447e (phase-less projects, Muse #20)"
+    },
+    {
+      "id": "CHK-M5-05-c",
+      "command": "pnpm exec vitest run tests/protected/m5-commands.spec.ts tests/protected/m5-commands-property.spec.ts tests/m5-05-*.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 920/920; verify run 43123052261 all four cells success; mutation run 43123062435 score 88.64 (apply-commands.ts 90.41, commands.ts 82.72) >= 80; reviewer gemini-3.8-flash-high: no code findings (only finding was contract drift from integration, resolved by merge); contract amended 5137687 and 866447e (phase-less projects, Muse #20)"
+    },
+    {
+      "id": "CHK-M5-05-d",
+      "command": "pnpm exec vitest run tests/protected/m5-commands.spec.ts tests/protected/m5-commands-property.spec.ts tests/m5-05-*.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 920/920; verify run 43123052261 all four cells success; mutation run 43123062435 score 88.64 (apply-commands.ts 90.41, commands.ts 82.72) >= 80; reviewer gemini-3.8-flash-high: no code findings (only finding was contract drift from integration, resolved by merge); contract amended 5137687 and 866447e (phase-less projects, Muse #20)"
+    },
+    {
+      "id": "CHK-M5-05-e",
+      "command": "pnpm exec vitest run tests/protected/m5-commands.spec.ts tests/protected/m5-commands-property.spec.ts tests/m5-05-*.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 920/920; verify run 43123052261 all four cells success; mutation run 43123062435 score 88.64 (apply-commands.ts 90.41, commands.ts 82.72) >= 80; reviewer gemini-3.8-flash-high: no code findings (only finding was contract drift from integration, resolved by merge); contract amended 5137687 and 866447e (phase-less projects, Muse #20)"
+    }
+  ],
+  "ended_at": "2026-11-12T00:26:37.553Z"
+}

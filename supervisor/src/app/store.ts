@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 const ASCII_WHITESPACE = 'char(32, 9, 10, 13, 12, 11)'
 const MIGRATIONS: Readonly<Record<number, string | readonly string[]>> = {
   1: 'CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL)',
@@ -52,6 +52,16 @@ const MIGRATIONS: Readonly<Record<number, string | readonly string[]>> = {
     `ALTER TABLE tasks ADD COLUMN not_before_ms INTEGER NOT NULL DEFAULT 0 CHECK (not_before_ms >= 0)`,
     `ALTER TABLE attempts ADD COLUMN deadline_ms INTEGER CHECK (deadline_ms IS NULL OR deadline_ms >= 0)`,
   ],
+  7: [
+    `CREATE TABLE phases (project_id TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL CHECK (name IN ('intake','development','qa','devops','handover')), ord INTEGER NOT NULL CHECK (ord BETWEEN 1 AND 5), status TEXT NOT NULL CHECK (status IN ('locked','open','done')), opened_at TEXT, closed_at TEXT, PRIMARY KEY (project_id, name), UNIQUE (project_id, ord), CHECK (ord = CASE name WHEN 'intake' THEN 1 WHEN 'development' THEN 2 WHEN 'qa' THEN 3 WHEN 'devops' THEN 4 WHEN 'handover' THEN 5 END))`,
+    `CREATE UNIQUE INDEX phases_one_open ON phases(project_id) WHERE status = 'open'`,
+    `CREATE TRIGGER phases_no_delete BEFORE DELETE ON phases BEGIN SELECT RAISE(ABORT, 'phases are permanent'); END`,
+    `ALTER TABLE tasks ADD COLUMN phase TEXT NOT NULL DEFAULT 'intake' CHECK (phase IN ('intake','development','qa','devops','handover'))`,
+    `CREATE TABLE task_deps (task_id TEXT NOT NULL REFERENCES tasks(id), depends_on TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY (task_id, depends_on), CHECK (task_id <> depends_on))`,
+    `CREATE TRIGGER task_deps_no_update BEFORE UPDATE ON task_deps BEGIN SELECT RAISE(ABORT, 'task_deps are immutable'); END`,
+    `CREATE TRIGGER task_deps_no_delete BEFORE DELETE ON task_deps BEGIN SELECT RAISE(ABORT, 'task_deps are immutable'); END`,
+    `INSERT INTO phases (project_id, name, ord, status, opened_at) SELECT projects.id, phase.name, phase.ord, CASE WHEN phase.ord = 1 THEN 'open' ELSE 'locked' END, CASE WHEN phase.ord = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE NULL END FROM projects CROSS JOIN (SELECT 'intake' AS name, 1 AS ord UNION ALL SELECT 'development', 2 UNION ALL SELECT 'qa', 3 UNION ALL SELECT 'devops', 4 UNION ALL SELECT 'handover', 5) AS phase`,
+  ],
 }
 
 function version(db: DatabaseSync): number {
@@ -80,18 +90,22 @@ function migrate(db: DatabaseSync): void {
 
 /** Open and migrate the storage database; the caller owns and closes the connection. */
 export function openStore(path: string): DatabaseSync {
-  const db = new DatabaseSync(path)
-  try {
-    db.exec('PRAGMA foreign_keys = ON')
-    db.exec('PRAGMA busy_timeout = 5000')
-    const current = version(db)
-    if (current > SCHEMA_VERSION) throw new Error(`store: unsupported schema version ${current}`)
-    const journal = db.prepare('PRAGMA journal_mode = WAL').get() as { journal_mode?: string } | undefined
-    if (journal?.journal_mode !== 'wal') throw new Error('store: WAL journal mode is required')
-    migrate(db)
-    return db
-  } catch (error) {
-    db.close()
-    throw error
+  for (let attempt = 1; ; attempt++) {
+    let db: DatabaseSync | undefined
+    try {
+      db = new DatabaseSync(path)
+      db.exec('PRAGMA foreign_keys = ON')
+      db.exec('PRAGMA busy_timeout = 5000')
+      const current = version(db)
+      if (current > SCHEMA_VERSION) throw new Error(`store: unsupported schema version ${current}`)
+      const journal = db.prepare('PRAGMA journal_mode = WAL').get() as { journal_mode?: string } | undefined
+      if (journal?.journal_mode !== 'wal') throw new Error('store: WAL journal mode is required')
+      migrate(db)
+      return db
+    } catch (error) {
+      try { db?.close() } catch { /* Preserve the original opening error. */ }
+      if ((((error as { errcode?: number } | null)?.errcode ?? 0) & 0xff) !== 10 || attempt === 5) throw error
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200)
+    }
   }
 }
