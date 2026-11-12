@@ -8,7 +8,34 @@ import { createEffectHandlers, runDue } from './outbox.ts'
 import { failExhaustedEffects, finishAttempt, readWorker, reconcileWorkers, retryTask, scheduleAttempt, stateDirectory, type RecoveryDeps } from './recovery.ts'
 import type { SupervisorLeaseHandle } from './supervisor-lease.ts'
 import type { EnsureWorktreeConfig } from './worktree.ts'
-import { parseScope, scopesOverlap } from '../core/scope.ts'
+import { parseScope } from '../core/scope.ts'
+import { planDispatch, type DispatchInput } from '../core/graph.ts'
+
+function dispatchInput(db: DatabaseSync, nowMs: number): DispatchInput {
+  const rows = db.prepare("SELECT id, project_id, status, phase, scope_json, not_before_ms FROM tasks WHERE status IN ('ready', 'progress') OR id IN (SELECT depends_on FROM task_deps) ORDER BY created_at, rowid").all() as Array<{ id: string; project_id: string; status: string; phase: string; scope_json: string; not_before_ms: number }>
+  const phases = db.prepare('SELECT project_id, name, status FROM phases').all() as Array<{ project_id: string; name: string; status: string }>
+  const projectsWithPhases = new Set(phases.map((phase) => phase.project_id))
+  const phaseKey = (project: string, phase: string) => JSON.stringify([project, phase])
+  const dependencies = db.prepare('SELECT task_id, depends_on FROM task_deps ORDER BY depends_on').all() as Array<{ task_id: string; depends_on: string }>
+  const depsByTask = new Map<string, string[]>()
+  for (const dep of dependencies) {
+    const list = depsByTask.get(dep.task_id) ?? []
+    list.push(dep.depends_on)
+    depsByTask.set(dep.task_id, list)
+  }
+  const phaseInfo = phases.map((phase) => ({ name: phaseKey(phase.project_id, phase.name), status: phase.status }))
+  for (const row of rows) {
+    if (!projectsWithPhases.has(row.project_id)) phaseInfo.push({ name: phaseKey(row.project_id, row.phase), status: 'open' })
+  }
+  return {
+    nowMs, phases: phaseInfo,
+    tasks: rows.map((row) => {
+      const parsed = parseScope(JSON.parse(row.scope_json))
+      if (!parsed.ok) throw new Error(`invalid task scope: ${parsed.reason}`)
+      return { id: row.id, status: row.status, phase: phaseKey(row.project_id, row.phase), deps: depsByTask.get(row.id) ?? [], scope: parsed.scope, notBeforeMs: row.not_before_ms }
+    }),
+  }
+}
 
 export { MAX_ATTEMPTS } from './recovery.ts'
 export interface WorkerCompletionRecord { exitCode: number }
@@ -83,20 +110,19 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
     // Kill commands applied this tick before creating any new work.
     await runEffects()
     fencedWrite(db, handle, () => {
-      const tasks = db.prepare("SELECT id, status, scope_json, not_before_ms FROM tasks WHERE status IN ('ready', 'progress') ORDER BY created_at, rowid").all() as Array<{ id: string; status: string; scope_json: string; not_before_ms: number }>
-      const scopeOf = (json: string) => {
-        const parsed = parseScope(JSON.parse(json))
-        if (!parsed.ok) throw new Error(`invalid task scope: ${parsed.reason}`)
-        return parsed.scope
-      }
-      const held = tasks.filter((task) => task.status === 'progress').map((task) => scopeOf(task.scope_json))
-      for (const task of tasks) {
-        if (task.status !== 'ready') continue
-        const scope = scopeOf(task.scope_json)
-        if (!held.some((other) => scopesOverlap(scope, other)) && task.not_before_ms <= nowMs) scheduleAttempt(db, handle, task.id, stateDir, nowMs)
-        const current = db.prepare('SELECT status FROM tasks WHERE id = ?').get(task.id) as { status: string }
-        if (current.status === 'ready' || current.status === 'progress') held.push(scope)
-      }
+      let released: boolean
+      do {
+        released = false
+        const plan = planDispatch(dispatchInput(db, nowMs))
+        for (const id of plan.block) {
+          db.prepare("UPDATE tasks SET status = 'blocked', updated_at = ? WHERE id = ? AND status = 'ready'").run(new Date(nowMs).toISOString(), id)
+        }
+        for (const id of plan.schedule) {
+          scheduleAttempt(db, handle, id, stateDir, nowMs)
+          const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id) as { status: string }
+          if (task.status === 'failed') released = true
+        }
+      } while (released)
     })
     await runEffects()
   })
@@ -142,6 +168,12 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
     fencedWrite(db, handle, () => db.prepare("UPDATE tasks SET status = 'done', updated_at = ? WHERE status = 'progress' AND EXISTS (SELECT 1 FROM attempts a JOIN evidence e ON e.attempt_id = a.id WHERE a.task_id = tasks.id AND a.status = 'succeeded')").run(new Date(nowMs).toISOString()))
   })
   await phase('lease-heartbeat', deps.wrapLeaseHeartbeat, () => handle.heartbeat(nowMs))
-  const pending = db.prepare("SELECT 1 FROM tasks WHERE status IN ('ready','progress') UNION ALL SELECT 1 FROM outbox WHERE status = 'pending' UNION ALL SELECT 1 FROM commands c WHERE NOT EXISTS (SELECT 1 FROM command_outcomes o WHERE o.command_id = c.id) LIMIT 1").get()
-  return { idle: !pending }
+  const pending = db.prepare("SELECT 1 FROM tasks WHERE status = 'progress' UNION ALL SELECT 1 FROM outbox WHERE status = 'pending' UNION ALL SELECT 1 FROM commands c WHERE NOT EXISTS (SELECT 1 FROM command_outcomes o WHERE o.command_id = c.id) LIMIT 1").get()
+  const input = dispatchInput(db, nowMs)
+  const plan = planDispatch(input)
+  const byId = new Map(input.tasks.map((task) => [task.id, task]))
+  const busy = plan.schedule.length > 0 || plan.block.length > 0 || plan.wait.some((wait) =>
+    wait.reason === 'scope' || wait.reason === 'backoff' ||
+    (wait.reason === 'deps' && wait.on.some((id) => ['ready', 'progress'].includes(byId.get(id)?.status ?? ''))))
+  return { idle: !pending && !busy }
 }
