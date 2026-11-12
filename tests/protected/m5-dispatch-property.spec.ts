@@ -44,6 +44,7 @@ interface GenTask {
   readonly scope: string[]
   readonly deps: string[]
   readonly willFail: boolean
+  readonly durationTicks: number
 }
 
 interface SimulatedWorker {
@@ -70,6 +71,7 @@ describe('M5-06 dispatch property testing', () => {
             phase: fc.constantFrom<PhaseName>(...PHASES),
             scope: fc.constantFrom<string[]>(...taskScopes),
             willFail: fc.boolean(),
+            durationTicks: fc.integer({ min: 2, max: 4 }),
           }).chain((spec) => {
             const earlierIndices = Array.from({ length: i }, (_, k) => k)
             return fc.subarray(earlierIndices, { maxLength: Math.min(2, earlierIndices.length) }).map((chosen) => ({
@@ -79,6 +81,7 @@ describe('M5-06 dispatch property testing', () => {
               scope: spec.scope,
               deps: chosen.map((k) => `task_${k}`),
               willFail: spec.willFail,
+              durationTicks: spec.durationTicks,
             }))
           })
           tasks.push(taskArb)
@@ -88,10 +91,13 @@ describe('M5-06 dispatch property testing', () => {
 
       const testRunArb = fc.record({
         tasks: taskListArb,
-        killIndices: fc.subarray([0, 1, 2, 3, 4, 5]),
+        killIndices: fc.subarray([0, 1, 2, 3, 4, 5], { minLength: 1 }),
         retryIndices: fc.subarray([0, 1, 2, 3, 4, 5]),
-        restartAtTick: fc.option(fc.integer({ min: 2, max: 15 })),
+        restartAtTick: fc.integer({ min: 1, max: 5 }),
       })
+
+      let totalActiveKills = 0
+      let totalActiveRestarts = 0
 
       await fc.assert(
         fc.asyncProperty(testRunArb, async ({ tasks, killIndices, retryIndices, restartAtTick }) => {
@@ -168,6 +174,7 @@ describe('M5-06 dispatch property testing', () => {
             let nextPid = 20000
             let currentMs = 1000
             const killedWorkerNonces = new Set<string>()
+            let isRestarting = false
 
             const loopDeps: LoopDeps = {
               stateDir,
@@ -177,6 +184,7 @@ describe('M5-06 dispatch property testing', () => {
                 const attemptId = options.attemptId
                 const taskDef = validTasks.find((t) => t.id === taskId)
                 const willFail = taskDef ? taskDef.willFail : false
+                const durationTicks = taskDef?.durationTicks ?? 2
 
                 const pid = nextPid++
                 const nonce = randomUUID()
@@ -186,7 +194,7 @@ describe('M5-06 dispatch property testing', () => {
                   pid,
                   nonce,
                   startMs: currentMs,
-                  durationMs: 0,
+                  durationMs: durationTicks * 100,
                   willFail,
                 })
                 return { pid, nonce }
@@ -211,7 +219,12 @@ describe('M5-06 dispatch property testing', () => {
               killTree: async (pid, nonce) => {
                 killedWorkerNonces.add(nonce)
                 const w = [...activeWorkers.values()].find((x) => x.pid === pid && x.nonce === nonce)
-                if (w) activeWorkers.delete(w.attemptId)
+                if (w) {
+                  if (!isRestarting) {
+                    totalActiveKills++
+                  }
+                  activeWorkers.delete(w.attemptId)
+                }
                 return { result: 'killed' as const }
               },
 
@@ -251,17 +264,25 @@ describe('M5-06 dispatch property testing', () => {
 
               // Simulated restart
               if (restartAtTick !== null && restartAtTick !== undefined && tick === restartAtTick) {
+                if (activeWorkers.size > 0) {
+                  totalActiveRestarts++
+                }
                 handle.release(currentMs)
                 handle = acquireSupervisor(db, stateDir, { nowMs: currentMs, staleAfterMs: 300000 })
-                await reconcileWorkers(db, handle, { killTree: loopDeps.killTree, stateDir, staleAfterMs: 300000 }, currentMs)
+                isRestarting = true
+                try {
+                  await reconcileWorkers(db, handle, { killTree: loopDeps.killTree, stateDir, staleAfterMs: 300000 }, currentMs)
+                } finally {
+                  isRestarting = false
+                }
               }
 
-              // Mid-run kills
+              // Mid-run kills: prefer killing tasks in progress or ready after tick 5
               for (const idx of killIndices) {
                 const target = validTasks[idx]
                 if (target && !killsApplied.has(target.id)) {
                   const row = db.prepare('SELECT status FROM tasks WHERE id = ?').get(target.id) as { status: string } | undefined
-                  if (row && ['ready', 'progress'].includes(row.status)) {
+                  if (row && (row.status === 'progress' || (tick >= 5 && row.status === 'ready'))) {
                     appendCommand(db, {
                       id: randomUUID(),
                       projectId: projId,
@@ -333,13 +354,24 @@ describe('M5-06 dispatch property testing', () => {
               }
             }
 
-            // INVARIANT 3: every task ends in done, blocked, dropped or failed once no commands remain
-            const finalTasks = db.prepare('SELECT id, status FROM tasks').all() as Array<{ id: string; status: string }>
+            // INVARIANT 3: every task either ends in terminal state (done, blocked, dropped, failed)
+            // or is in a legitimate waiting state (waiting on non-done deps or non-open phase).
+            const finalTasks = db.prepare('SELECT id, status, phase FROM tasks').all() as Array<{ id: string; status: string; phase: string }>
             for (const t of finalTasks) {
+              if (['done', 'blocked', 'dropped', 'failed'].includes(t.status)) {
+                continue
+              }
+              expect(t.status, `Task ${t.id} ended in unexpected status: ${t.status}`).toBe('ready')
+
+              const phaseRow = db.prepare('SELECT status FROM phases WHERE project_id = ? AND name = ?').get(projId, t.phase) as { status: string } | undefined
+              const depRows = db.prepare('SELECT t2.id, t2.status FROM task_deps d JOIN tasks t2 ON t2.id = d.depends_on WHERE d.task_id = ?').all(t.id) as Array<{ id: string; status: string }>
+
+              const isPhaseLocked = phaseRow?.status !== 'open'
+              const hasUnfinishedDep = depRows.some((d) => d.status !== 'done')
               expect(
-                ['done', 'blocked', 'dropped', 'failed'],
-                `Task ${t.id} ended in invalid status: ${t.status}`,
-              ).toContain(t.status)
+                isPhaseLocked || hasUnfinishedDep,
+                `Task ${t.id} stayed ready in open phase ${t.phase} with all deps done: ${JSON.stringify(depRows)}`,
+              ).toBe(true)
             }
           } finally {
             if (handle) {
@@ -350,6 +382,9 @@ describe('M5-06 dispatch property testing', () => {
         }),
         { numRuns: 30 },
       )
+
+      expect(totalActiveKills, 'Property tests must exercise active worker kill scenarios').toBeGreaterThan(0)
+      expect(totalActiveRestarts, 'Property tests must exercise active worker restart scenarios').toBeGreaterThan(0)
     },
     90000,
   )

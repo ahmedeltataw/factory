@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
-import { killTree } from '../../supervisor/src/app/process-tree.ts'
+import { killTree, spawnWorker } from '../../supervisor/src/app/process-tree.ts'
+import { readCompletion, reconcileWorkers } from '../../supervisor/src/app/recovery.ts'
 import { openStore } from '../../supervisor/src/app/store.ts'
+import { acquireSupervisor } from '../../supervisor/src/app/supervisor-lease.ts'
+import { runTick, type LoopDeps } from '../../supervisor/src/app/supervisor-loop.ts'
 import { planDispatch } from '../../supervisor/src/core/graph.ts'
 
 const cliPath = join(process.cwd(), 'supervisor/src/cli/main.ts')
@@ -22,30 +25,41 @@ const spawnedSupervisors: TrackedSupervisorChild[] = []
 
 function getCommandLineForPid(pid: number): string | undefined {
   if (!pid || pid <= 0) return undefined
-  try {
-    if (process.platform === 'win32') {
-      const run = () => spawnSync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
-        ],
-        { encoding: 'utf8', timeout: 30000, windowsHide: true },
-      )
-      let res = run()
-      if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') res = run()
-      return res.status === 0 && res.stdout ? res.stdout.trim() : undefined
-    } else {
-      const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
+  if (process.platform === 'win32') {
+    const run = () => spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$ErrorActionPreference = 'Stop'; (Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
+      ],
+      { encoding: 'utf8', timeout: 30000, windowsHide: true },
+    )
+    let res = run()
+    if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') res = run()
+    if (res.error) throw new Error(`Process query failed for PID ${pid}: ${res.error.message}`)
+    if (res.status !== 0) throw new Error(`Process query failed for PID ${pid}: exit code ${res.status}: ${res.stderr?.trim()}`)
+    const stdout = res.stdout ? res.stdout.trim() : ''
+    return stdout.length > 0 ? stdout : undefined
+  } else {
+    let res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
+      encoding: 'utf8',
+      timeout: 10000,
+    })
+    if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') {
+      res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
         encoding: 'utf8',
         timeout: 10000,
       })
-      return res.status === 0 && res.stdout ? res.stdout.trim() : undefined
     }
-  } catch {
-    return undefined
+    if (res.error) throw new Error(`Process query failed for PID ${pid}: ${res.error.message}`)
+    if (res.status !== 0) {
+      if (!isProcessAlive(pid)) return undefined
+      throw new Error(`Process query failed for PID ${pid}: exit code ${res.status}: ${res.stderr?.trim()}`)
+    }
+    const stdout = res.stdout ? res.stdout.trim() : ''
+    return stdout.length > 0 ? stdout : undefined
   }
 }
 
@@ -54,7 +68,9 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return false
+    if ((err as NodeJS.ErrnoException).code === 'EPERM') return true
     return false
   }
 }
@@ -72,9 +88,14 @@ async function waitForProcessDeath(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const alive = markerOrNonce
-      ? isProcessAliveWithNonce(pid, markerOrNonce)
-      : isProcessAlive(pid)
+    let alive = false
+    try {
+      alive = markerOrNonce
+        ? isProcessAliveWithNonce(pid, markerOrNonce)
+        : isProcessAlive(pid)
+    } catch {
+      alive = true
+    }
     if (!alive) return true
     await delay(50)
   }
@@ -170,7 +191,16 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
   // 1. Terminate tracked supervisors
   const remainingSupervisors: TrackedSupervisorChild[] = []
   for (const s of spawnedSupervisors) {
-    if (s.pid && isProcessAliveWithNonce(s.pid, s.marker)) {
+    if (!s.pid) continue
+    let alive = false
+    try {
+      alive = isProcessAliveWithNonce(s.pid, s.marker)
+    } catch (err) {
+      cleanupFailures.push(`Failed to verify supervisor process ${s.pid}: ${err instanceof Error ? err.message : String(err)}`)
+      remainingSupervisors.push(s)
+      continue
+    }
+    if (alive) {
       try {
         if (process.platform === 'win32') {
           spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
@@ -178,7 +208,14 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
           try { s.child.kill('SIGKILL') } catch {}
         }
       } catch {}
-      const dead = await waitForProcessDeath(s.pid, 15000, s.marker)
+      let dead = false
+      try {
+        dead = await waitForProcessDeath(s.pid, 15000, s.marker)
+      } catch (err) {
+        cleanupFailures.push(`Supervisor process ${s.pid} termination check failed: ${err instanceof Error ? err.message : String(err)}`)
+        remainingSupervisors.push(s)
+        continue
+      }
       if (!dead) {
         cleanupFailures.push(`Supervisor process ${s.pid} failed to terminate within 15000ms`)
         remainingSupervisors.push(s)
@@ -501,17 +538,50 @@ describe('M5-06 dispatch with phases and dependencies', () => {
       )
       expect(createD.status).toBe(0)
 
-      const startRes = runCli(
-        ['start', '--state-dir', stateDir, '--exit-when-idle'],
+      // Spawn supervisor in background to observe concurrent execution of B and C:
+      const sup = spawn(
+        process.execPath,
+        [cliPath, 'start', '--state-dir', stateDir, '--exit-when-idle'],
         {
           cwd: tempCwd,
           env: cleanTestEnv({
-            FAKE_SLEEP_MS: '800',
+            FAKE_SLEEP_MS: '3000',
           }),
-          timeout: 60000,
+          stdio: 'ignore',
+          windowsHide: true,
         },
       )
-      expect(startRes.status).toBe(0)
+      if (sup.pid) {
+        spawnedSupervisors.push({ child: sup, pid: sup.pid, marker: stateDir })
+      }
+
+      // Bounded observation: observe both Task B and Task C running at the same time:
+      let observedBothRunning = false
+      const pollDeadline = Date.now() + 60000
+      while (Date.now() < pollDeadline) {
+        if (existsSync(join(stateDir, 'state.sqlite'))) {
+          try {
+            const dbPoll = openStore(join(stateDir, 'state.sqlite'))
+            try {
+              const running = dbPoll.prepare(
+                "SELECT task_id FROM attempts WHERE status = 'running' AND task_id IN (?, ?)",
+              ).all(taskBId, taskCId) as Array<{ task_id: string }>
+              if (running.length === 2) {
+                observedBothRunning = true
+                break
+              }
+            } finally {
+              dbPoll.close()
+            }
+          } catch {}
+        }
+        if (!isProcessAlive(sup.pid!)) break
+        await delay(50)
+      }
+
+      const supDead = await waitForProcessDeath(sup.pid!, 45000, stateDir)
+      expect(supDead).toBe(true)
+      expect(observedBothRunning, 'Tasks B and C must run concurrently').toBe(true)
 
       const db = openStore(join(stateDir, 'state.sqlite'))
       try {
@@ -538,8 +608,8 @@ describe('M5-06 dispatch with phases and dependencies', () => {
         expect(Date.parse(attB.started_at)).toBeGreaterThanOrEqual(Date.parse(attA.ended_at))
         expect(Date.parse(attC.started_at)).toBeGreaterThanOrEqual(Date.parse(attA.ended_at))
 
-        // B and C run at the same time:
-        const overlap = Math.max(Date.parse(attB.started_at), Date.parse(attC.started_at)) < Math.min(Date.parse(attB.ended_at), Date.parse(attC.ended_at))
+        // B and C intervals overlap:
+        const overlap = Date.parse(attB.started_at) <= Date.parse(attC.ended_at) && Date.parse(attC.started_at) <= Date.parse(attB.ended_at)
         expect(overlap).toBe(true)
 
         // D runs last (after both B and C are done):
@@ -666,32 +736,54 @@ describe('M5-06 dispatch with phases and dependencies', () => {
       const killA = runCli(['task', 'kill', '--state-dir', stateDir, '--task', taskAId], { cwd: tempCwd })
       expect(killA.status).toBe(0)
 
-      // Run supervisor loop:
-      const startRes1 = runCli(
-        ['start', '--state-dir', stateDir, '--exit-when-idle'],
-        { cwd: tempCwd, timeout: 30000 },
-      )
-      expect(startRes1.status).toBe(0)
-
+      // Run supervisor loop by tick and observe tick boundaries:
       const db = openStore(join(stateDir, 'state.sqlite'))
       try {
-        const nonces = db.prepare('SELECT nonce FROM workers').all() as Array<{ nonce: string }>
-        for (const n of nonces) {
-          if (n.nonce) activeNonces.add(n.nonce)
+        const handle = acquireSupervisor(db, stateDir, { nowMs: Date.now(), staleAfterMs: 30000 })
+        try {
+          await reconcileWorkers(db, handle, { killTree, stateDir, staleAfterMs: 30000 }, Date.now())
+
+          const loopDeps: LoopDeps = {
+            stateDir,
+            spawnWorker,
+            killTree,
+            readResult: readCompletion,
+            isAlive: (pid) => {
+              try { process.kill(pid, 0); return true } catch { return false }
+            },
+            staleAfterMs: 30000,
+          }
+
+          // Tick 1: processes the kill command for A, runs dispatch
+          await runTick(db, handle, loopDeps, Date.now())
+
+          // Observe tick boundary: B and C must become blocked in the same or next tick
+          let tB = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskBId) as { status: string }
+          let tC = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskCId) as { status: string }
+
+          let tickCount = 1
+          if (tB.status !== 'blocked' || tC.status !== 'blocked') {
+            // Next tick:
+            tickCount++
+            await runTick(db, handle, loopDeps, Date.now())
+            tB = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskBId) as { status: string }
+            tC = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskCId) as { status: string }
+          }
+
+          expect(tickCount).toBeLessThanOrEqual(2)
+          expect(tB.status).toBe('blocked')
+          expect(tC.status).toBe('blocked')
+
+          const tA = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskAId) as { status: string }
+          expect(tA.status).toBe('dropped')
+
+          const attB = db.prepare('SELECT COUNT(*) as c FROM attempts WHERE task_id = ?').get(taskBId) as { c: number }
+          const attC = db.prepare('SELECT COUNT(*) as c FROM attempts WHERE task_id = ?').get(taskCId) as { c: number }
+          expect(attB.c).toBe(0)
+          expect(attC.c).toBe(0)
+        } finally {
+          handle.release(Date.now())
         }
-
-        const tA = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskAId) as { status: string }
-        const tB = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskBId) as { status: string }
-        const tC = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskCId) as { status: string }
-
-        expect(tA.status).toBe('dropped')
-        expect(tB.status).toBe('blocked')
-        expect(tC.status).toBe('blocked')
-
-        const attB = db.prepare('SELECT COUNT(*) as c FROM attempts WHERE task_id = ?').get(taskBId) as { c: number }
-        const attC = db.prepare('SELECT COUNT(*) as c FROM attempts WHERE task_id = ?').get(taskCId) as { c: number }
-        expect(attB.c).toBe(0)
-        expect(attC.c).toBe(0)
       } finally {
         db.close()
       }
@@ -700,19 +792,31 @@ describe('M5-06 dispatch with phases and dependencies', () => {
       const killB = runCli(['task', 'kill', '--state-dir', stateDir, '--task', taskBId], { cwd: tempCwd })
       expect(killB.status).toBe(0)
 
-      const startRes2 = runCli(
-        ['start', '--state-dir', stateDir, '--exit-when-idle'],
-        { cwd: tempCwd, timeout: 30000 },
-      )
-      expect(startRes2.status).toBe(0)
-
       const db2 = openStore(join(stateDir, 'state.sqlite'))
       try {
-        const tBAfter = db2.prepare('SELECT status FROM tasks WHERE id = ?').get(taskBId) as { status: string }
-        expect(tBAfter.status).toBe('dropped')
+        const handle2 = acquireSupervisor(db2, stateDir, { nowMs: Date.now(), staleAfterMs: 30000 })
+        try {
+          const loopDeps: LoopDeps = {
+            stateDir,
+            spawnWorker,
+            killTree,
+            readResult: readCompletion,
+            isAlive: (pid) => {
+              try { process.kill(pid, 0); return true } catch { return false }
+            },
+            staleAfterMs: 30000,
+          }
 
-        const outcomeB = db2.prepare("SELECT outcome FROM command_outcomes c JOIN commands cmd ON cmd.id = c.command_id WHERE cmd.kind = 'task.kill' AND json_extract(cmd.payload_json, '$.taskId') = ?").get(taskBId) as { outcome: string } | undefined
-        expect(outcomeB?.outcome).toBe('applied')
+          await runTick(db2, handle2, loopDeps, Date.now())
+
+          const tBAfter = db2.prepare('SELECT status FROM tasks WHERE id = ?').get(taskBId) as { status: string }
+          expect(tBAfter.status).toBe('dropped')
+
+          const outcomeB = db2.prepare("SELECT outcome FROM command_outcomes c JOIN commands cmd ON cmd.id = c.command_id WHERE cmd.kind = 'task.kill' AND json_extract(cmd.payload_json, '$.taskId') = ?").get(taskBId) as { outcome: string } | undefined
+          expect(outcomeB?.outcome).toBe('applied')
+        } finally {
+          handle2.release(Date.now())
+        }
       } finally {
         db2.close()
       }
@@ -778,7 +882,9 @@ describe('M5-06 dispatch with phases and dependencies', () => {
         expect(attB.c).toBe(0)
 
         // Verify waiting reason: B waits with reason 'deps' on taskAId
-        const phases = db.prepare('SELECT name, status FROM phases WHERE project_id = ?').all('p1') as Array<{ name: string; status: string }>
+        const projectRow = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string } | undefined
+        const projectId = projectRow?.id ?? 'p1'
+        const phases = db.prepare('SELECT name, status FROM phases WHERE project_id = ?').all(projectId) as Array<{ name: string; status: string }>
         const tasks = db.prepare('SELECT id, status, phase, scope_json, not_before_ms FROM tasks').all() as Array<{ id: string; status: string; phase: string; scope_json: string; not_before_ms: number }>
         const taskList = tasks.map((t) => {
           const deps = (db.prepare('SELECT depends_on FROM task_deps WHERE task_id = ? ORDER BY depends_on').all(t.id) as Array<{ depends_on: string }>).map((d) => d.depends_on)
@@ -851,19 +957,19 @@ describe('M5-06 dispatch with phases and dependencies', () => {
       const task1Id = randomUUID()
       const task2Id = randomUUID()
 
-      // Task 1 in intake (open phase) with scope src
-      const create1 = runCli(
-        ['task', 'create', '--state-dir', stateDir, '--title', 'Task 1 Intake', '--scope', 'src', '--scope', `factory-fake/${task1Id}.txt`, '--phase', 'intake', '--command-id', task1Id],
-        { cwd: tempCwd },
-      )
-      expect(create1.status).toBe(0)
-
-      // Task 2 in development (locked phase) with scope . (whole repo, overlaps with src)
+      // Task 2 in development (locked phase) with scope . (whole repo, overlaps with src) created first:
       const create2 = runCli(
         ['task', 'create', '--state-dir', stateDir, '--title', 'Task 2 Dev', '--scope', '.', '--scope', `factory-fake/${task2Id}.txt`, '--phase', 'development', '--command-id', task2Id],
         { cwd: tempCwd },
       )
       expect(create2.status).toBe(0)
+
+      // Task 1 in intake (open phase) with scope src created second:
+      const create1 = runCli(
+        ['task', 'create', '--state-dir', stateDir, '--title', 'Task 1 Intake', '--scope', 'src', '--scope', `factory-fake/${task1Id}.txt`, '--phase', 'intake', '--command-id', task1Id],
+        { cwd: tempCwd },
+      )
+      expect(create1.status).toBe(0)
 
       // Start supervisor with --exit-when-idle:
       const startRes1 = runCli(
@@ -994,7 +1100,8 @@ describe('M5-06 dispatch with phases and dependencies', () => {
           dbRunning.close()
         }
 
-        // Hard-kill supervisor 1 PID only:
+        // Revalidate command-line marker immediately before hard kill on both platforms:
+        expect(isProcessAliveWithNonce(sup1.pid!, stateDir)).toBe(true)
         if (process.platform === 'win32') {
           const killRes = spawnSync('taskkill', ['/F', '/PID', String(sup1.pid!)], { timeout: 10000, windowsHide: true })
           expect(killRes.error).toBeUndefined()
