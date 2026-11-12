@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M5-08",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "d2771af6f16ab0efc59403ca59cafd70906a1a1d",
+  "checks": [
+    {
+      "id": "CHK-M5-08-a",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File acceptance/M5.ps1; verify dispatch",
+      "result": "pass",
+      "output": "Lead ran acceptance/M5.ps1 outside the sandbox from the card branch: steps 1-8 PASS (clone, install, typecheck, all tests, build, manifest, imports), demos 10-14 PASS (init, graph chain+diamond, block, phase, crash with takeover), 0 leaked processes; step 9 (evidence) fails only until this record exists; verify run 43193535760 all four cells success; builder gemini-3.8-flash-high (lane change after three terra patch-tool failures), reviewer gpt-6.1-sol: 7 findings across 2 rounds, all fixed"
+    },
+    {
+      "id": "CHK-M5-08-b",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File acceptance/M5.ps1; verify dispatch",
+      "result": "pass",
+      "output": "Lead ran acceptance/M5.ps1 outside the sandbox from the card branch: steps 1-8 PASS (clone, install, typecheck, all tests, build, manifest, imports), demos 10-14 PASS (init, graph chain+diamond, block, phase, crash with takeover), 0 leaked processes; step 9 (evidence) fails only until this record exists; verify run 43193535760 all four cells success; builder gemini-3.8-flash-high (lane change after three terra patch-tool failures), reviewer gpt-6.1-sol: 7 findings across 2 rounds, all fixed"
+    },
+    {
+      "id": "CHK-M5-08-c",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File acceptance/M5.ps1; verify dispatch",
+      "result": "pass",
+      "output": "Lead ran acceptance/M5.ps1 outside the sandbox from the card branch: steps 1-8 PASS (clone, install, typecheck, all tests, build, manifest, imports), demos 10-14 PASS (init, graph chain+diamond, block, phase, crash with takeover), 0 leaked processes; step 9 (evidence) fails only until this record exists; verify run 43193535760 all four cells success; builder gemini-3.8-flash-high (lane change after three terra patch-tool failures), reviewer gpt-6.1-sol: 7 findings across 2 rounds, all fixed"
+    },
+    {
+      "id": "CHK-M5-08-d",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File acceptance/M5.ps1; verify dispatch",
+      "result": "pass",
+      "output": "Lead ran acceptance/M5.ps1 outside the sandbox from the card branch: steps 1-8 PASS (clone, install, typecheck, all tests, build, manifest, imports), demos 10-14 PASS (init, graph chain+diamond, block, phase, crash with takeover), 0 leaked processes; step 9 (evidence) fails only until this record exists; verify run 43193535760 all four cells success; builder gemini-3.8-flash-high (lane change after three terra patch-tool failures), reviewer gpt-6.1-sol: 7 findings across 2 rounds, all fixed"
+    },
+    {
+      "id": "CHK-M5-08-e",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File acceptance/M5.ps1; verify dispatch",
+      "result": "pass",
+      "output": "Lead ran acceptance/M5.ps1 outside the sandbox from the card branch: steps 1-8 PASS (clone, install, typecheck, all tests, build, manifest, imports), demos 10-14 PASS (init, graph chain+diamond, block, phase, crash with takeover), 0 leaked processes; step 9 (evidence) fails only until this record exists; verify run 43193535760 all four cells success; builder gemini-3.8-flash-high (lane change after three terra patch-tool failures), reviewer gpt-6.1-sol: 7 findings across 2 rounds, all fixed"
+    },
+    {
+      "id": "CHK-M5-08-f",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File acceptance/M5.ps1; verify dispatch",
+      "result": "pass",
+      "output": "Lead ran acceptance/M5.ps1 outside the sandbox from the card branch: steps 1-8 PASS (clone, install, typecheck, all tests, build, manifest, imports), demos 10-14 PASS (init, graph chain+diamond, block, phase, crash with takeover), 0 leaked processes; step 9 (evidence) fails only until this record exists; verify run 43193535760 all four cells success; builder gemini-3.8-flash-high (lane change after three terra patch-tool failures), reviewer gpt-6.1-sol: 7 findings across 2 rounds, all fixed"
+    }
+  ],
+  "ended_at": "2026-11-12T09:52:01.363Z"
+}
