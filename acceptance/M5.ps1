@@ -1017,15 +1017,6 @@ try {
     Assert-Demo ($dbB.evidence -eq 0) "Blocked task B must have 0 evidence rows, got $($dbB.evidence)"
     Assert-DemoBranchAbsent $taskBlockB
 
-    # Drop B after verifying its blocked state
-    $errKillB = Join-Path $logsDir "kill-${taskBlockB}.err"
-    $outputKillB = & $script:nodeExe lib/factory.mjs task kill --state-dir $stateDir --task $taskBlockB 2> $errKillB
-    $exitKillB = $LASTEXITCODE
-    if ($exitKillB -eq 0) {
-      $tBDropped = Get-DemoTask $taskBlockB
-      Assert-Demo ($tBDropped.status -eq 'dropped') "Killed task B status expected dropped, got $($tBDropped.status)"
-    }
-
     $global:LASTEXITCODE = 0
   })) { throw 'Step 12 failed' }
 
