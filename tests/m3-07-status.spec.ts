@@ -146,6 +146,9 @@ describe('M3-07 Status Reader and Formatter', () => {
           timeoutMs: null,
           notBeforeMs: 0,
           blockedBy: [],
+          phase: 'intake',
+          dependsOn: [],
+          waiting: null,
           attempts: [
             {
               no: 1,
@@ -414,6 +417,7 @@ describe('M3-07 Status Reader and Formatter', () => {
     expect(status).toEqual({
       schemaVersion: 7,
       recordedCommandCount: 2,
+      phases: [],
       lease: {
         ownerId: 'legacy-owner',
         generation: 1,
