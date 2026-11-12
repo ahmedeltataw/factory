@@ -26,12 +26,12 @@ it('CHK-M2-04-a/c: reports observations without inventing live state or exposing
   const options = { nowMs: 2000, staleAfterMs: 500 }
   const path = join(dir, 'state.sqlite')
   const before = hash(path)
-  expect(readStatus(dir, options)).toEqual({ schemaVersion: 7, recordedCommandCount: 2, lease: null })
+  expect(readStatus(dir, options)).toEqual({ phases: [], schemaVersion: 7, recordedCommandCount: 2, lease: null })
   expect(hash(path)).toBe(before)
   const db = new DatabaseSync(path)
   try { db.exec("INSERT INTO supervisor_lease VALUES (1, 'owner', 3, 1800, 'active')") } finally { db.close() }
   const status = readStatus(dir, options)
-  expect(status).toEqual({ schemaVersion: 7, recordedCommandCount: 2, lease: { ownerId: 'owner', generation: 3, heartbeatMs: 1800, state: 'active', freshness: 'fresh' } })
+  expect(status).toEqual({ phases: [], schemaVersion: 7, recordedCommandCount: 2, lease: { ownerId: 'owner', generation: 3, heartbeatMs: 1800, state: 'active', freshness: 'fresh' } })
   expect(JSON.stringify(status)).not.toContain('private-payload')
   const arabic = formatStatus(status)
   expect(arabic).toMatch(/[\u0600-\u06ff]/)
