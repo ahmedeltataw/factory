@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M5-06",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "173ede1c0cae8a7a76d821327aeca4a1362f74dd",
+  "checks": [
+    {
+      "id": "CHK-M5-06-a",
+      "command": "pnpm exec vitest run tests/protected/m5-dispatch.spec.ts tests/protected/m5-dispatch-property.spec.ts tests/m5-06-dispatch.spec.ts tests/m5-06-idle.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 929/929, 0 leaked processes; verify run 43136859004 all four cells success; mutation run 43139478183 supervisor-loop.ts 86.48 >= 80; protected tests by gemini-3.8-flash-high approved by gpt-6.1-sol (round 4); implementation by gpt-6.1-terra approved by gemini-3.8-flash-high; round 2 tests only"
+    },
+    {
+      "id": "CHK-M5-06-b",
+      "command": "pnpm exec vitest run tests/protected/m5-dispatch.spec.ts tests/protected/m5-dispatch-property.spec.ts tests/m5-06-dispatch.spec.ts tests/m5-06-idle.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 929/929, 0 leaked processes; verify run 43136859004 all four cells success; mutation run 43139478183 supervisor-loop.ts 86.48 >= 80; protected tests by gemini-3.8-flash-high approved by gpt-6.1-sol (round 4); implementation by gpt-6.1-terra approved by gemini-3.8-flash-high; round 2 tests only"
+    },
+    {
+      "id": "CHK-M5-06-c",
+      "command": "pnpm exec vitest run tests/protected/m5-dispatch.spec.ts tests/protected/m5-dispatch-property.spec.ts tests/m5-06-dispatch.spec.ts tests/m5-06-idle.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 929/929, 0 leaked processes; verify run 43136859004 all four cells success; mutation run 43139478183 supervisor-loop.ts 86.48 >= 80; protected tests by gemini-3.8-flash-high approved by gpt-6.1-sol (round 4); implementation by gpt-6.1-terra approved by gemini-3.8-flash-high; round 2 tests only"
+    },
+    {
+      "id": "CHK-M5-06-d",
+      "command": "pnpm exec vitest run tests/protected/m5-dispatch.spec.ts tests/protected/m5-dispatch-property.spec.ts tests/m5-06-dispatch.spec.ts tests/m5-06-idle.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 929/929, 0 leaked processes; verify run 43136859004 all four cells success; mutation run 43139478183 supervisor-loop.ts 86.48 >= 80; protected tests by gemini-3.8-flash-high approved by gpt-6.1-sol (round 4); implementation by gpt-6.1-terra approved by gemini-3.8-flash-high; round 2 tests only"
+    },
+    {
+      "id": "CHK-M5-06-e",
+      "command": "pnpm exec vitest run tests/protected/m5-dispatch.spec.ts tests/protected/m5-dispatch-property.spec.ts tests/m5-06-dispatch.spec.ts tests/m5-06-idle.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 929/929, 0 leaked processes; verify run 43136859004 all four cells success; mutation run 43139478183 supervisor-loop.ts 86.48 >= 80; protected tests by gemini-3.8-flash-high approved by gpt-6.1-sol (round 4); implementation by gpt-6.1-terra approved by gemini-3.8-flash-high; round 2 tests only"
+    },
+    {
+      "id": "CHK-M5-06-f",
+      "command": "pnpm exec vitest run tests/protected/m5-dispatch.spec.ts tests/protected/m5-dispatch-property.spec.ts tests/m5-06-dispatch.spec.ts tests/m5-06-idle.spec.ts; pnpm test; verify + mutation dispatch",
+      "result": "pass",
+      "output": "outside sandbox full suite 929/929, 0 leaked processes; verify run 43136859004 all four cells success; mutation run 43139478183 supervisor-loop.ts 86.48 >= 80; protected tests by gemini-3.8-flash-high approved by gpt-6.1-sol (round 4); implementation by gpt-6.1-terra approved by gemini-3.8-flash-high; round 2 tests only"
+    }
+  ],
+  "ended_at": "2026-11-12T02:28:11.987Z"
+}
