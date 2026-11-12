@@ -565,8 +565,9 @@ const db = new DatabaseSync(join(process.env.FACTORY_STATE_DIR, 'state.sqlite'),
 try {
   const task = db.prepare('SELECT attempt_base FROM tasks WHERE id = ?').get(process.env.FACTORY_TASK_ID);
   const evidence = db.prepare('SELECT count(*) AS n FROM evidence JOIN attempts ON attempts.id = evidence.attempt_id WHERE attempts.task_id = ?').get(process.env.FACTORY_TASK_ID);
+  const attempts = db.prepare('SELECT attempt_no, status, started_at, ended_at FROM attempts WHERE task_id = ? ORDER BY attempt_no').all(process.env.FACTORY_TASK_ID);
   if (!task) throw new Error('task missing');
-  process.stdout.write(JSON.stringify({ attemptBase: task.attempt_base, evidence: evidence.n }));
+  process.stdout.write(JSON.stringify({ attemptBase: task.attempt_base, evidence: evidence.n, attempts }));
 } finally { db.close(); }
 '@
   [System.IO.File]::WriteAllText($helper, $code, (New-Object System.Text.UTF8Encoding $false))
@@ -579,6 +580,29 @@ try {
     if ($exitCode -ne 0) { throw "Database read failed ($exitCode): $(Get-Content $errFile -Raw)" }
     try { return (($raw -join "`n") | ConvertFrom-Json) } catch { throw "Invalid database JSON: $raw" }
   } finally { Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue }
+}
+function Get-DemoCommandOutcome([string]$cmdId) {
+  $helper = Join-Path $helpersDir 'read-command-outcome.mjs'
+  $code = @'
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+const db = new DatabaseSync(join(process.env.FACTORY_STATE_DIR, 'state.sqlite'), { readOnly: true });
+try {
+  const row = db.prepare('SELECT outcome, reason FROM command_outcomes WHERE command_id = ?').get(process.env.FACTORY_COMMAND_ID);
+  if (!row) throw new Error('command outcome missing');
+  process.stdout.write(JSON.stringify(row));
+} finally { db.close(); }
+'@
+  [System.IO.File]::WriteAllText($helper, $code, (New-Object System.Text.UTF8Encoding $false))
+  $env:FACTORY_STATE_DIR = $stateDir
+  $env:FACTORY_COMMAND_ID = $cmdId
+  try {
+    $errFile = Join-Path $logsDir "cmd-$cmdId.err"
+    $raw = & $script:nodeExe $helper 2> $errFile
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) { throw "Command outcome read failed ($exitCode): $(Get-Content $errFile -Raw)" }
+    try { return (($raw -join "`n") | ConvertFrom-Json) } catch { throw "Invalid command outcome JSON: $raw" }
+  } finally { Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_COMMAND_ID -ErrorAction SilentlyContinue }
 }
 function Assert-DemoCommits([string]$taskId, [int]$expected) {
   $errFile = Join-Path $logsDir "git-$taskId.err"
@@ -716,7 +740,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "git init failed: $($outInit -join ' ')" }
     $outCo = & git -C $tempRepo checkout -B main -q 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git checkout failed: $($outCo -join ' ')" }
-    $outName = & git -C $tempRepo config user.name "M4 Acceptance" 2>&1
+    $outName = & git -C $tempRepo config user.name "M5 Acceptance" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git config user.name failed: $($outName -join ' ')" }
     $outEmail = & git -C $tempRepo config user.email "acceptance@factory.local" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git config user.email failed: $($outEmail -join ' ')" }
@@ -745,121 +769,337 @@ try {
     }
   })) { throw 'Step 10 failed' }
 
-  # M5 demonstrations are not yet implemented; never report a false acceptance.
-  throw 'M5 demonstrations are not implemented'
+  # M5 demonstrations
 
-  # M4 demonstrations (reference only; unreachable until replaced)
 
-  if (-not (Step 11 'Retry and timeout' {
+
+
+  # CHK-M5-08-b: graph demo: chain A -> B and diamond (B, C after A; D after B and C)
+  if (-not (Step 11 'Graph demo: chain and diamond run in dependency order' {
     $ErrorActionPreference = 'Continue'
-    $retryId = [guid]::NewGuid().ToString()
-    New-DemoTask $retryId @('--max-attempts', '2')
-    $env:FAKE_FAIL_UNTIL_ATTEMPT = '1'
-    try { $proc = Start-DemoSupervisor 'retry' } finally { Remove-Item env:FAKE_FAIL_UNTIL_ATTEMPT -ErrorAction SilentlyContinue }
-    Wait-DemoSupervisor $proc 'retry'
-    $task = Get-DemoTask $retryId; $attempts = @($task.attempts); $db = Get-DemoDatabase $retryId
-    Assert-Demo ($task.status -eq 'done' -and $attempts.Count -eq 2 -and $attempts[0].errorClass -eq 'transient' -and $attempts[1].status -eq 'succeeded' -and $db.evidence -eq 1) "Retry mismatch: $($task | ConvertTo-Json -Depth 10 -Compress), evidence=$($db.evidence)"
+    $chainA = [guid]::NewGuid().ToString()
+    $chainB = [guid]::NewGuid().ToString()
+    $diaA = [guid]::NewGuid().ToString()
+    $diaB = [guid]::NewGuid().ToString()
+    $diaC = [guid]::NewGuid().ToString()
+    $diaD = [guid]::NewGuid().ToString()
 
-    $timeoutId = [guid]::NewGuid().ToString()
-    New-DemoTask $timeoutId @('--timeout-ms', '2000', '--max-attempts', '2')
-    $env:FAKE_HANG = '1'
-    try { $proc = Start-DemoSupervisor 'timeout' } finally { Remove-Item env:FAKE_HANG -ErrorAction SilentlyContinue }
-    Wait-DemoSupervisor $proc 'timeout'
-    $task = Get-DemoTask $timeoutId; $attempts = @($task.attempts)
-    Assert-Demo ($task.status -eq 'failed' -and $attempts.Count -eq 2 -and @($attempts | Where-Object { $_.errorClass -eq 'timeout' }).Count -eq 2) "Timeout mismatch: $($task | ConvertTo-Json -Depth 10 -Compress)"
-    $workers = @(Get-ChildItem -LiteralPath (Join-Path $stateDir 'runs') -Filter worker.json -Recurse | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
-    foreach ($worker in $workers) {
-      if ($worker.nonce) {
-        if (-not $script:trackedWorkerNonces.Contains($worker.nonce)) { $script:trackedWorkerNonces.Add($worker.nonce) }
-        $live = @(Get-CimInstance Win32_Process -Property ProcessId, CommandLine | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($worker.nonce) })
-        Assert-Demo ($live.Count -eq 0) "Worker nonce $($worker.nonce) still has $($live.Count) processes"
-      }
+    # Chain: A -> B
+    New-DemoTask $chainA @('--scope', 'src/chainA', '--scope', "factory-fake/${chainA}.txt")
+    New-DemoTask $chainB @('--scope', 'src/chainB', '--scope', "factory-fake/${chainB}.txt", '--after', $chainA)
+
+    # Diamond: diaA -> (diaB, diaC) -> diaD
+    New-DemoTask $diaA @('--scope', 'src/diaA', '--scope', "factory-fake/${diaA}.txt")
+    New-DemoTask $diaB @('--scope', 'src/diaB', '--scope', "factory-fake/${diaB}.txt", '--after', $diaA)
+    New-DemoTask $diaC @('--scope', 'src/diaC', '--scope', "factory-fake/${diaC}.txt", '--after', $diaA)
+    New-DemoTask $diaD @('--scope', 'src/diaD', '--scope', "factory-fake/${diaD}.txt", '--after', $diaB, '--after', $diaC)
+
+    $allGraphTaskIds = @($chainA, $chainB, $diaA, $diaB, $diaC, $diaD)
+
+    $env:FAKE_SLEEP_MS = '2500'
+    try {
+      $proc = Start-DemoSupervisor 'graph'
+    } finally {
+      Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue
     }
-    $errFile = Join-Path $logsDir 'retry-command.err'
-    $output = & $script:nodeExe lib/factory.mjs task retry --state-dir $stateDir --task $timeoutId 2> $errFile
-    $exitCode = $LASTEXITCODE
-    Assert-Demo ($exitCode -eq 0) "Retry command failed ($exitCode): $output"
-    $proc = Start-DemoSupervisor 'retry-command'; Wait-DemoSupervisor $proc 'retry-command'
-    $db = Get-DemoDatabase $timeoutId
-    Assert-Demo ($db.attemptBase -eq 2) "attempt_base expected 2, got $($db.attemptBase)"
-    $global:LASTEXITCODE = 0
-  })) { throw 'Step 11 failed' }
 
-  if (-not (Step 12 'Scope locks' {
-    $ErrorActionPreference = 'Continue'
-    $a = [guid]::NewGuid().ToString(); $b = [guid]::NewGuid().ToString(); $c = [guid]::NewGuid().ToString()
-    $shared = @('--scope', "factory-fake/$a.txt", '--scope', "factory-fake/$b.txt")
-    New-DemoTask $a $shared; New-DemoTask $b $shared
-    New-DemoTask $c @('--scope', "factory-fake/$c.txt")
-    $env:FAKE_SLEEP_MS = '6000'
-    try { $proc = Start-DemoSupervisor 'locks' } finally { Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue }
-    $watch = [Diagnostics.Stopwatch]::StartNew(); $overlap = $false; $last = ''
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $observedDiamondOverlap = $false
+    $lastStatusText = ''
+
     while ($watch.Elapsed.TotalSeconds -lt 90) {
       $snapshot = Invoke-FactoryStatus $stateDir
-      $tasks = @($snapshot.tasks | Where-Object { $_.id -in @($a, $b, $c) })
-      $ta = @($tasks | Where-Object { $_.id -eq $a }); $tb = @($tasks | Where-Object { $_.id -eq $b }); $tc = @($tasks | Where-Object { $_.id -eq $c })
-      if ($tasks.Count -eq 3) {
-        $last = "A=$($ta[0].status), B=$($tb[0].status), C=$($tc[0].status)"
-        Assert-Demo (-not ($ta[0].status -eq 'progress' -and $tb[0].status -eq 'progress')) "Overlapping tasks ran together: $last"
-        if ($ta[0].status -eq 'progress' -and $tc[0].status -eq 'progress') { $overlap = $true }
-        if (@($tasks | Where-Object { $_.status -eq 'done' }).Count -eq 3) { break }
+      $tasks = @($snapshot.tasks | Where-Object { $_.id -in $allGraphTaskIds })
+      if ($tasks.Count -eq 6) {
+        $tChainA = @($tasks | Where-Object { $_.id -eq $chainA })[0]
+        $tChainB = @($tasks | Where-Object { $_.id -eq $chainB })[0]
+        $tDiaA = @($tasks | Where-Object { $_.id -eq $diaA })[0]
+        $tDiaB = @($tasks | Where-Object { $_.id -eq $diaB })[0]
+        $tDiaC = @($tasks | Where-Object { $_.id -eq $diaC })[0]
+        $tDiaD = @($tasks | Where-Object { $_.id -eq $diaD })[0]
+
+        $lastStatusText = "ChainA=$($tChainA.status), ChainB=$($tChainB.status), DiaA=$($tDiaA.status), DiaB=$($tDiaB.status), DiaC=$($tDiaC.status), DiaD=$($tDiaD.status)"
+
+        # Dependency order invariant: Chain B must not run before Chain A is done
+        if ($tChainA.status -ne 'done') {
+          Assert-Demo ($tChainB.status -ne 'progress' -and $tChainB.status -ne 'done') "Chain B ran before Chain A completed: $lastStatusText"
+        }
+
+        # Dependency order invariant: Dia B, C, D must not run before Dia A is done
+        if ($tDiaA.status -ne 'done') {
+          Assert-Demo ($tDiaB.status -ne 'progress' -and $tDiaB.status -ne 'done') "Dia B ran before Dia A completed: $lastStatusText"
+          Assert-Demo ($tDiaC.status -ne 'progress' -and $tDiaC.status -ne 'done') "Dia C ran before Dia A completed: $lastStatusText"
+          Assert-Demo ($tDiaD.status -ne 'progress' -and $tDiaD.status -ne 'done') "Dia D ran before Dia A completed: $lastStatusText"
+        }
+
+        # Concurrency in diamond: Dia B and Dia C running concurrently
+        if ($tDiaB.status -eq 'progress' -and $tDiaC.status -eq 'progress') {
+          $observedDiamondOverlap = $true
+        }
+
+        # Dependency order invariant: Dia D must not run before both Dia B and Dia C are done
+        if ($tDiaB.status -ne 'done' -or $tDiaC.status -ne 'done') {
+          Assert-Demo ($tDiaD.status -ne 'progress' -and $tDiaD.status -ne 'done') "Dia D ran before Dia B and Dia C completed: $lastStatusText"
+        }
+
+        # Register worker nonces for cleanup tracking
+        $workers = @(Get-ChildItem -LiteralPath (Join-Path $stateDir 'runs') -Filter worker.json -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
+        foreach ($w in $workers) {
+          if ($w.nonce -and -not $script:trackedWorkerNonces.Contains($w.nonce)) {
+            $script:trackedWorkerNonces.Add($w.nonce)
+          }
+        }
+
+        if (@($tasks | Where-Object { $_.status -eq 'done' }).Count -eq 6) {
+          break
+        }
       }
       if ($proc.HasExited) { break }
       Start-Sleep -Milliseconds 100
     }
-    Wait-DemoSupervisor $proc 'locks'
+
+    Wait-DemoSupervisor $proc 'graph'
+
     $snapshot = Invoke-FactoryStatus $stateDir
-    $tasks = @($snapshot.tasks | Where-Object { $_.id -in @($a, $b, $c) })
-    Assert-Demo ($tasks.Count -eq 3 -and @($tasks | Where-Object { $_.status -eq 'done' }).Count -eq 3 -and $overlap) "Lock demonstration failed: $last, disjoint overlap=$overlap"
-    foreach ($taskId in @($a, $b, $c)) { Assert-DemoCommits $taskId 1 }
+    $tasks = @($snapshot.tasks | Where-Object { $_.id -in $allGraphTaskIds })
+    Assert-Demo ($tasks.Count -eq 6 -and @($tasks | Where-Object { $_.status -eq 'done' }).Count -eq 6) "Graph demo failed: $lastStatusText"
+    Assert-Demo ($observedDiamondOverlap) "Diamond branches Dia B and Dia C did not run concurrently"
+
+    # Verify attempt timestamps confirm dependency order
+    $dbChainA = Get-DemoDatabase $chainA
+    $dbChainB = Get-DemoDatabase $chainB
+    $dbDiaA = Get-DemoDatabase $diaA
+    $dbDiaB = Get-DemoDatabase $diaB
+    $dbDiaC = Get-DemoDatabase $diaC
+    $dbDiaD = Get-DemoDatabase $diaD
+
+    $endChainA = [DateTimeOffset]::Parse($dbChainA.attempts[0].ended_at).ToUnixTimeMilliseconds()
+    $startChainB = [DateTimeOffset]::Parse($dbChainB.attempts[0].started_at).ToUnixTimeMilliseconds()
+    Assert-Demo ($startChainB -ge $endChainA) "Chain B started ($startChainB) before Chain A ended ($endChainA)"
+
+    $endDiaA = [DateTimeOffset]::Parse($dbDiaA.attempts[0].ended_at).ToUnixTimeMilliseconds()
+    $startDiaB = [DateTimeOffset]::Parse($dbDiaB.attempts[0].started_at).ToUnixTimeMilliseconds()
+    $startDiaC = [DateTimeOffset]::Parse($dbDiaC.attempts[0].started_at).ToUnixTimeMilliseconds()
+    Assert-Demo ($startDiaB -ge $endDiaA) "Dia B started ($startDiaB) before Dia A ended ($endDiaA)"
+    Assert-Demo ($startDiaC -ge $endDiaA) "Dia C started ($startDiaC) before Dia A ended ($endDiaA)"
+
+    $endDiaB = [DateTimeOffset]::Parse($dbDiaB.attempts[0].ended_at).ToUnixTimeMilliseconds()
+    $endDiaC = [DateTimeOffset]::Parse($dbDiaC.attempts[0].ended_at).ToUnixTimeMilliseconds()
+    $latestDiaBC = [Math]::Max($endDiaB, $endDiaC)
+    $startDiaD = [DateTimeOffset]::Parse($dbDiaD.attempts[0].started_at).ToUnixTimeMilliseconds()
+    Assert-Demo ($startDiaD -ge $latestDiaBC) "Dia D started ($startDiaD) before Dia B ($endDiaB) and Dia C ($endDiaC) ended"
+
+    # Assert exactly one commit each
+    foreach ($taskId in $allGraphTaskIds) {
+      Assert-DemoCommits $taskId 1
+    }
+
+    $global:LASTEXITCODE = 0
+  })) { throw 'Step 11 failed' }
+
+  # CHK-M5-08-c: block demo: task after killed task becomes blocked with no attempts
+  if (-not (Step 12 'Block demo: task after killed task becomes blocked with no attempts' {
+    $ErrorActionPreference = 'Continue'
+    $taskKillA = [guid]::NewGuid().ToString()
+    $taskBlockB = [guid]::NewGuid().ToString()
+
+    New-DemoTask $taskKillA @('--scope', 'src/killA', '--scope', "factory-fake/${taskKillA}.txt")
+    New-DemoTask $taskBlockB @('--scope', 'src/blockB', '--scope', "factory-fake/${taskBlockB}.txt", '--after', $taskKillA)
+
+    $errFile = Join-Path $logsDir "kill-${taskKillA}.err"
+    $output = & $script:nodeExe lib/factory.mjs task kill --state-dir $stateDir --task $taskKillA 2> $errFile
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+      $errContent = if (Test-Path -LiteralPath $errFile) { Get-Content $errFile -Raw } else { '' }
+      throw "task kill failed ($exitCode): $output $errContent"
+    }
+
+    $proc = Start-DemoSupervisor 'block'
+    Wait-DemoSupervisor $proc 'block'
+
+    $tA = Get-DemoTask $taskKillA
+    $tB = Get-DemoTask $taskBlockB
+    Assert-Demo ($tA.status -eq 'dropped') "Killed task A status expected dropped, got $($tA.status)"
+    Assert-Demo ($tB.status -eq 'blocked') "Dependent task B status expected blocked, got $($tB.status)"
+    Assert-Demo (@($tB.attempts).Count -eq 0) "Blocked task B must never get an attempt from status, got $(@($tB.attempts).Count)"
+
+    $dbB = Get-DemoDatabase $taskBlockB
+    Assert-Demo (@($dbB.attempts).Count -eq 0) "Blocked task B must never get an attempt in DB, got $(@($dbB.attempts).Count)"
+    Assert-Demo ($dbB.evidence -eq 0) "Blocked task B must have 0 evidence rows, got $($dbB.evidence)"
+    Assert-DemoCommits $taskBlockB 0
+
     $global:LASTEXITCODE = 0
   })) { throw 'Step 12 failed' }
 
-  if (-not (Step 13 'Scope violation' {
+  # CHK-M5-08-d: phase demo
+  if (-not (Step 13 'Phase demo: qa task waits while earlier phases have work, advance rejected while unfinished, then runs' {
     $ErrorActionPreference = 'Continue'
-    $taskId = [guid]::NewGuid().ToString()
-    New-DemoTask $taskId @('--scope', 'factory-fake')
-    $env:FAKE_WRITE = 'outside.txt'
-    try { $proc = Start-DemoSupervisor 'violation' } finally { Remove-Item env:FAKE_WRITE -ErrorAction SilentlyContinue }
-    Wait-DemoSupervisor $proc 'violation'
-    $task = Get-DemoTask $taskId; $attempts = @($task.attempts)
-    Assert-Demo ($task.status -eq 'failed' -and $attempts.Count -eq 1 -and $attempts[0].errorClass -eq 'scope-violation') "Violation mismatch: $($task | ConvertTo-Json -Depth 10 -Compress)"
-    Assert-DemoCommits $taskId 0
+    $taskIntake = [guid]::NewGuid().ToString()
+    $taskDev = [guid]::NewGuid().ToString()
+    $taskQa = [guid]::NewGuid().ToString()
+
+    New-DemoTask $taskIntake @('--phase', 'intake', '--scope', 'src/pIntake', '--scope', "factory-fake/${taskIntake}.txt")
+    New-DemoTask $taskDev @('--phase', 'development', '--scope', 'src/pDev', '--scope', "factory-fake/${taskDev}.txt")
+    New-DemoTask $taskQa @('--phase', 'qa', '--scope', 'src/pQa', '--scope', "factory-fake/${taskQa}.txt")
+
+    # 1. Assert initial states: qa task is ready with waiting reason 'phase-locked'
+    $tQa0 = Get-DemoTask $taskQa
+    Assert-Demo ($tQa0.status -eq 'ready' -and $null -ne $tQa0.waiting -and $tQa0.waiting.reason -eq 'phase-locked' -and @($tQa0.waiting.on) -contains 'qa') "Task QA expected ready and phase-locked on qa"
+
+    # 2. Advance phase intake while taskIntake is unfinished -> must be rejected
+    $advCmd1 = [guid]::NewGuid().ToString()
+    $errAdv1 = Join-Path $logsDir "adv1.err"
+    $rawAdv1 = & $script:nodeExe lib/factory.mjs phase advance --state-dir $stateDir --phase intake --command-id $advCmd1 2> $errAdv1
+    Assert-Demo ($LASTEXITCODE -eq 0) "phase advance command submission failed: $rawAdv1"
+
+    # Start supervisor: applies advCmd1 (rejected: phase has unfinished tasks), runs taskIntake to done, leaves taskDev and taskQa phase-locked
+    $proc1 = Start-DemoSupervisor 'phase-intake'
+    Wait-DemoSupervisor $proc1 'phase-intake'
+
+    $outcome1 = Get-DemoCommandOutcome $advCmd1
+    Assert-Demo ($outcome1.outcome -eq 'rejected' -and $outcome1.reason -eq 'phase has unfinished tasks') "phase advance with unfinished tasks must be rejected, got: $($outcome1 | ConvertTo-Json)"
+
+    $tIntake1 = Get-DemoTask $taskIntake
+    Assert-Demo ($tIntake1.status -eq 'done') "Task intake expected done, got $($tIntake1.status)"
+
+    # While intake was running and finished, taskQa stayed ready and phase-locked
+    $tQa1 = Get-DemoTask $taskQa
+    Assert-Demo ($tQa1.status -eq 'ready' -and $null -ne $tQa1.waiting -and $tQa1.waiting.reason -eq 'phase-locked' -and @($tQa1.attempts).Count -eq 0) "Task QA must stay ready with 0 attempts while intake had work"
+
+    # 3. Advance phase intake to development now that intake tasks are done
+    $advCmd2 = [guid]::NewGuid().ToString()
+    $errAdv2 = Join-Path $logsDir "adv2.err"
+    $rawAdv2 = & $script:nodeExe lib/factory.mjs phase advance --state-dir $stateDir --phase intake --command-id $advCmd2 2> $errAdv2
+    Assert-Demo ($LASTEXITCODE -eq 0) "phase advance intake submission failed: $rawAdv2"
+
+    # Start supervisor: applies advCmd2, runs taskDev to done, leaves taskQa phase-locked
+    $proc2 = Start-DemoSupervisor 'phase-dev'
+    Wait-DemoSupervisor $proc2 'phase-dev'
+
+    $outcome2 = Get-DemoCommandOutcome $advCmd2
+    Assert-Demo ($outcome2.outcome -eq 'applied') "phase advance intake must be applied, got $($outcome2.outcome)"
+
+    $tDev2 = Get-DemoTask $taskDev
+    Assert-Demo ($tDev2.status -eq 'done') "Task dev expected done, got $($tDev2.status)"
+
+    # While development had work and finished, taskQa stayed ready and phase-locked
+    $tQa2 = Get-DemoTask $taskQa
+    Assert-Demo ($tQa2.status -eq 'ready' -and $null -ne $tQa2.waiting -and $tQa2.waiting.reason -eq 'phase-locked' -and @($tQa2.attempts).Count -eq 0) "Task QA must stay ready with 0 attempts while development had work"
+
+    # 4. Advance phase development to qa now that development tasks are done
+    $advCmd3 = [guid]::NewGuid().ToString()
+    $errAdv3 = Join-Path $logsDir "adv3.err"
+    $rawAdv3 = & $script:nodeExe lib/factory.mjs phase advance --state-dir $stateDir --phase development --command-id $advCmd3 2> $errAdv3
+    Assert-Demo ($LASTEXITCODE -eq 0) "phase advance dev submission failed: $rawAdv3"
+
+    # Start supervisor: applies advCmd3, qa phase opens, taskQa runs and ends done
+    $proc3 = Start-DemoSupervisor 'phase-qa'
+    Wait-DemoSupervisor $proc3 'phase-qa'
+
+    $outcome3 = Get-DemoCommandOutcome $advCmd3
+    Assert-Demo ($outcome3.outcome -eq 'applied') "phase advance development must be applied, got $($outcome3.outcome)"
+
+    $tQa3 = Get-DemoTask $taskQa
+    Assert-Demo ($tQa3.status -eq 'done' -and @($tQa3.attempts).Count -eq 1) "Task QA expected done with 1 attempt, got $($tQa3.status)"
+
+    Assert-DemoCommits $taskIntake 1
+    Assert-DemoCommits $taskDev 1
+    Assert-DemoCommits $taskQa 1
+
     $global:LASTEXITCODE = 0
   })) { throw 'Step 13 failed' }
 
-  if (-not (Step 14 'Restart during backoff' {
+  # CHK-M5-08-e: crash demo
+  if (-not (Step 14 'Crash demo: Supervisor stopped while A runs and B waits, restarted with takeover' {
     $ErrorActionPreference = 'Continue'
-    $taskId = [guid]::NewGuid().ToString()
-    New-DemoTask $taskId @('--max-attempts', '2')
-    $env:FAKE_FAIL_UNTIL_ATTEMPT = '1'
-    try { $proc = Start-DemoSupervisor 'crash' } finally { Remove-Item env:FAKE_FAIL_UNTIL_ATTEMPT -ErrorAction SilentlyContinue }
-    $watch = [Diagnostics.Stopwatch]::StartNew(); $boundary = $null; $last = 'no snapshot'
+    $crashA = [guid]::NewGuid().ToString()
+    $crashB = [guid]::NewGuid().ToString()
+
+    New-DemoTask $crashA @('--scope', 'src/crashA', '--scope', "factory-fake/${crashA}.txt")
+    New-DemoTask $crashB @('--scope', 'src/crashB', '--scope', "factory-fake/${crashB}.txt", '--after', $crashA)
+
+    $env:FAKE_SLEEP_MS = '30000'
+    try {
+      $proc = Start-DemoSupervisor 'crash'
+    } finally {
+      Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue
+    }
+
+    # Bounded wait to observe boundary state: A is progress, B is ready waiting on deps
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $boundaryObserved = $false
+    $boundaryDetails = 'no snapshot'
     while ($watch.Elapsed.TotalSeconds -lt 30 -and -not $proc.HasExited) {
       $snapshot = Invoke-FactoryStatus $stateDir
-      $found = @($snapshot.tasks | Where-Object { $_.id -eq $taskId })
-      if ($found.Count -eq 1) {
-        $last = $found[0] | ConvertTo-Json -Depth 10 -Compress
-        $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        if ($found[0].status -eq 'ready' -and @($found[0].attempts).Count -eq 1 -and @($found[0].attempts)[0].errorClass -eq 'transient' -and $found[0].notBeforeMs -gt $now) { $boundary = $found[0]; break }
+      $tA = @($snapshot.tasks | Where-Object { $_.id -eq $crashA })
+      $tB = @($snapshot.tasks | Where-Object { $_.id -eq $crashB })
+      if ($tA.Count -eq 1 -and $tB.Count -eq 1) {
+        $boundaryDetails = "A=$($tA[0].status), B=$($tB[0].status)"
+        if ($tA[0].status -eq 'progress' -and $tB[0].status -eq 'ready' -and $null -ne $tB[0].waiting -and $tB[0].waiting.reason -eq 'deps') {
+          $boundaryObserved = $true
+          break
+        }
       }
       Start-Sleep -Milliseconds 50
     }
-    Assert-Demo ($null -ne $boundary) "Did not observe backoff before crash: $last"
+    Assert-Demo ($boundaryObserved) "Did not reach crash boundary state: $boundaryDetails"
+
+    # Register worker nonces before stopping supervisor
+    $workers = @(Get-ChildItem -LiteralPath (Join-Path $stateDir 'runs') -Filter worker.json -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
+    foreach ($w in $workers) {
+      if ($w.nonce -and -not $script:trackedWorkerNonces.Contains($w.nonce)) {
+        $script:trackedWorkerNonces.Add($w.nonce)
+      }
+    }
+
     $proc.Kill()
-    Assert-Demo ($proc.WaitForExit(10000)) 'Supervisor did not stop at backoff boundary'
+    Assert-Demo ($proc.WaitForExit(10000)) 'Supervisor did not stop at crash boundary'
+
     $snapshot = Invoke-FactoryStatus $stateDir
-    $boundaryTask = @($snapshot.tasks | Where-Object { $_.id -eq $taskId })[0]
-    Assert-Demo ($boundaryTask.status -eq 'ready' -and @($boundaryTask.attempts).Count -eq 1) "Backoff changed before stop: $($boundaryTask | ConvertTo-Json -Depth 10 -Compress)"
     $takeover = $snapshot.lease.takeover
     Assert-Demo (-not [string]::IsNullOrWhiteSpace($takeover)) 'Missing takeover token'
+
+    # Wait for lease staleness
     $delay = [Math]::Max(0, [long]$snapshot.lease.heartbeatMs + 2500 - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
     if ($delay -gt 0) { Start-Sleep -Milliseconds $delay }
-    $proc2 = Start-DemoSupervisor 'crash-restart' $takeover
-    Wait-DemoSupervisor $proc2 'crash-restart'
-    $task = Get-DemoTask $taskId; $attempts = @($task.attempts); $db = Get-DemoDatabase $taskId
-    Assert-Demo ($task.status -eq 'done' -and $attempts.Count -eq 2 -and $attempts[0].errorClass -eq 'transient' -and $attempts[1].no -eq 2 -and $attempts[1].status -eq 'succeeded' -and $db.evidence -eq 1) "Restart mismatch: $($task | ConvertTo-Json -Depth 10 -Compress), evidence=$($db.evidence)"
-    Assert-DemoCommits $taskId 1
+
+    # Set short sleep for re-attempt and task B
+    $env:FAKE_SLEEP_MS = '200'
+    try {
+      $proc2 = Start-DemoSupervisor 'crash-restart' $takeover
+      Wait-DemoSupervisor $proc2 'crash-restart'
+    } finally {
+      Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue
+    }
+
+    $tA = Get-DemoTask $crashA
+    $tB = Get-DemoTask $crashB
+    Assert-Demo ($tA.status -eq 'done') "Task A expected done, got $($tA.status)"
+    Assert-Demo ($tB.status -eq 'done') "Task B expected done, got $($tB.status)"
+
+    $dbA = Get-DemoDatabase $crashA
+    $dbB = Get-DemoDatabase $crashB
+
+    # Task A had attempt 1 interrupted, attempt 2 succeeded
+    Assert-Demo (@($dbA.attempts).Count -eq 2) "Task A expected 2 attempts, got $(@($dbA.attempts).Count)"
+    Assert-Demo ($dbA.attempts[0].status -eq 'interrupted') "Task A attempt 1 expected interrupted, got $($dbA.attempts[0].status)"
+    Assert-Demo ($dbA.attempts[1].status -eq 'succeeded') "Task A attempt 2 expected succeeded, got $($dbA.attempts[1].status)"
+
+    # Task B had 1 attempt succeeded
+    Assert-Demo (@($dbB.attempts).Count -eq 1 -and $dbB.attempts[0].status -eq 'succeeded') "Task B expected 1 succeeded attempt"
+
+    # B starts only after A is done
+    $endA2 = [DateTimeOffset]::Parse($dbA.attempts[1].ended_at).ToUnixTimeMilliseconds()
+    $startB1 = [DateTimeOffset]::Parse($dbB.attempts[0].started_at).ToUnixTimeMilliseconds()
+    Assert-Demo ($startB1 -ge $endA2) "Task B start ($startB1) must be >= Task A re-attempt end ($endA2)"
+
+    # Exactly one evidence row each
+    Assert-Demo ($dbA.evidence -eq 1) "Task A evidence expected 1, got $($dbA.evidence)"
+    Assert-Demo ($dbB.evidence -eq 1) "Task B evidence expected 1, got $($dbB.evidence)"
+
+    Assert-DemoCommits $crashA 1
+    Assert-DemoCommits $crashB 1
+
     $global:LASTEXITCODE = 0
   })) { throw 'Step 14 failed' }
 
@@ -921,7 +1161,7 @@ try {
 
   # Restore environment variables
   try {
-    Remove-Item env:FAKE_SLEEP_MS, env:FAKE_HANG, env:FAKE_FAIL_UNTIL_ATTEMPT, env:FAKE_WRITE, env:FACTORY_FAULT, env:FACTORY_WT_DIR, env:FACTORY_HEAD_SHA, env:FACTORY_FILES_JSON, env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID, env:FACTORY_RUN_DIR -ErrorAction SilentlyContinue
+    Remove-Item env:FAKE_SLEEP_MS, env:FAKE_HANG, env:FAKE_FAIL_UNTIL_ATTEMPT, env:FAKE_WRITE, env:FACTORY_FAULT, env:FACTORY_WT_DIR, env:FACTORY_HEAD_SHA, env:FACTORY_FILES_JSON, env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID, env:FACTORY_COMMAND_ID, env:FACTORY_RUN_DIR -ErrorAction SilentlyContinue
   } catch {}
 
   # Restore console and output encodings
