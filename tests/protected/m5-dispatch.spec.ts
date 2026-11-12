@@ -33,7 +33,7 @@ function getCommandLineForPid(pid: number): string | undefined {
         '-NonInteractive',
         '-Command',
         `$ErrorActionPreference = 'Stop'; $records = @(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' -Property ProcessId,ParentProcessId,CreationDate,CommandLine | ForEach-Object {
-          $command = if ($null -eq $_.CommandLine) { '' } else { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_.CommandLine)) }
+          $command = if ([string]::IsNullOrWhiteSpace($_.CommandLine)) { '' } else { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_.CommandLine)) }
           @{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; CreationDate = $_.CreationDate.ToUniversalTime().Ticks.ToString(); CommandLine = $command }
         }); ConvertTo-Json -InputObject $records -Compress`,
       ],
@@ -52,13 +52,19 @@ function getCommandLineForPid(pid: number): string | undefined {
     try {
       procs = parseWindowsProcesses(stdout, pid)
     } catch (err) {
+      if (!isProcessAlive(pid)) return undefined
       throw new Error(`Failed to parse process records for PID ${pid}: ${err instanceof Error ? err.message : String(err)}`)
     }
     if (procs.length === 0) {
       if (!isProcessAlive(pid)) return undefined
       throw new Error(`Process query returned no records for living PID ${pid}`)
     }
-    return procs[0]?.command
+    const cmd = procs[0]?.command
+    if (!cmd || cmd.trim().length === 0) {
+      if (!isProcessAlive(pid)) return undefined
+      throw new Error(`Process query returned empty or unreadable command line for living PID ${pid}`)
+    }
+    return cmd
   } else {
     let res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
       encoding: 'utf8',
@@ -76,7 +82,7 @@ function getCommandLineForPid(pid: number): string | undefined {
       throw new Error(`Process query failed for PID ${pid}: exit code ${res.status}: ${res.stderr?.trim()}`)
     }
     const stdout = res.stdout ? res.stdout.trim() : ''
-    if (stdout.length === 0) {
+    if (stdout.trim().length === 0) {
       if (!isProcessAlive(pid)) return undefined
       throw new Error(`Process query returned empty command for living PID ${pid}`)
     }
@@ -99,7 +105,7 @@ function isProcessAlive(pid: number): boolean {
 function isProcessAliveWithNonce(pid: number, markerOrNonce: string): boolean {
   if (!isProcessAlive(pid)) return false
   const cmd = getCommandLineForPid(pid)
-  if (cmd === undefined) {
+  if (cmd === undefined || cmd.trim().length === 0) {
     if (!isProcessAlive(pid)) return false
     throw new Error(`Unable to read command line for living process ${pid}`)
   }
@@ -124,9 +130,14 @@ async function waitForProcessDeath(
     if (!alive) return true
     await delay(50)
   }
-  const alive = markerOrNonce
-    ? isProcessAliveWithNonce(pid, markerOrNonce)
-    : isProcessAlive(pid)
+  let alive = false
+  try {
+    alive = markerOrNonce
+      ? isProcessAliveWithNonce(pid, markerOrNonce)
+      : isProcessAlive(pid)
+  } catch {
+    alive = isProcessAlive(pid)
+  }
   return !alive
 }
 
@@ -217,15 +228,35 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
   const remainingSupervisors: TrackedSupervisorChild[] = []
   for (const s of spawnedSupervisors) {
     if (!s.pid) continue
-    let alive = false
+    if (!isProcessAlive(s.pid)) continue
+
+    let verified = false
+    let unreadable = false
+    let unreadableReason = ''
     try {
-      alive = isProcessAliveWithNonce(s.pid, s.marker)
+      verified = isProcessAliveWithNonce(s.pid, s.marker)
     } catch (err) {
-      cleanupFailures.push(`Failed to verify supervisor process ${s.pid}: ${err instanceof Error ? err.message : String(err)}`)
-      remainingSupervisors.push(s)
+      unreadable = true
+      unreadableReason = err instanceof Error ? err.message : String(err)
+    }
+
+    if (unreadable) {
+      // A living PID whose command line is null, empty or unreadable is unreadable identity:
+      // keep tracking it and report a cleanup failure if it is still alive after the wait; never treat it as gone.
+      let dead = false
+      try {
+        dead = await waitForProcessDeath(s.pid, 15000)
+      } catch {
+        dead = !isProcessAlive(s.pid)
+      }
+      if (!dead && isProcessAlive(s.pid)) {
+        cleanupFailures.push(`Supervisor process ${s.pid} has unreadable identity (${unreadableReason}) and is still alive after 15000ms wait`)
+        remainingSupervisors.push(s)
+      }
       continue
     }
-    if (alive) {
+
+    if (verified) {
       try {
         if (process.platform === 'win32') {
           spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
