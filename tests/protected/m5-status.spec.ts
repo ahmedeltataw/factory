@@ -78,7 +78,7 @@ it('CHK-M5-07-a: phases and task graph are read in order without writes', () => 
   expect(json.phases).toEqual(expected)
   for (const row of rows) {
     expect(status.tasks.find((t: any) => t.id === row.id)).toMatchObject({ phase: row.phase, dependsOn: [...row.deps].sort(), waiting: row.status === 'ready' && row.id !== 'first' ? expect.anything() : null })
-    expect(json.tasks.find((t: any) => t.id === row.id)).toMatchObject({ phase: row.phase, dependsOn: [...row.deps].sort() })
+    expect(json.tasks.find((t: any) => t.id === row.id)).toMatchObject({ phase: row.phase, dependsOn: [...row.deps].sort(), waiting: row.status === 'ready' && row.id !== 'first' ? expect.anything() : null })
   }
   expect(hash(path)).toBe(before)
   const db = new DatabaseSync(path, { readOnly: true })
@@ -112,7 +112,9 @@ it('CHK-M5-07-c: Arabic view shows phases, open phase, task phase and dependenci
   expect(openLine.replace('development', '')).not.toBe(lockedLine.replace('devops', ''))
   status.tasks = [status.tasks.find((task: any) => task.id === 'deps')]
   const taskView = formatStatus(status as Status)
-  for (const fact of ['deps', 'development', 'unfinished-a', 'unfinished-b', 'done-z']) expect(taskView).toContain(fact)
+  const taskLine = taskView.split(/\r?\n/).find(line => line.includes('deps')) ?? ''
+  expect(taskLine).toContain('development')
+  for (const fact of ['deps', 'unfinished-a', 'unfinished-b', 'done-z']) expect(taskView).toContain(fact)
 }))
 
 it('CHK-M5-07-c: waiting reasons have distinct Arabic labels', () => withFixture(dir => {
