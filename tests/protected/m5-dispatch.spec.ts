@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
-import { killTree, spawnWorker } from '../../supervisor/src/app/process-tree.ts'
+import { killTree, parseWindowsProcesses, spawnWorker } from '../../supervisor/src/app/process-tree.ts'
 import { readCompletion, reconcileWorkers } from '../../supervisor/src/app/recovery.ts'
 import { openStore } from '../../supervisor/src/app/store.ts'
 import { acquireSupervisor } from '../../supervisor/src/app/supervisor-lease.ts'
@@ -32,7 +32,10 @@ function getCommandLineForPid(pid: number): string | undefined {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        `$ErrorActionPreference = 'Stop'; (Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
+        `$ErrorActionPreference = 'Stop'; $records = @(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' -Property ProcessId,ParentProcessId,CreationDate,CommandLine | ForEach-Object {
+          $command = if ($null -eq $_.CommandLine) { '' } else { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_.CommandLine)) }
+          @{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; CreationDate = $_.CreationDate.ToUniversalTime().Ticks.ToString(); CommandLine = $command }
+        }); ConvertTo-Json -InputObject $records -Compress`,
       ],
       { encoding: 'utf8', timeout: 30000, windowsHide: true },
     )
@@ -41,7 +44,21 @@ function getCommandLineForPid(pid: number): string | undefined {
     if (res.error) throw new Error(`Process query failed for PID ${pid}: ${res.error.message}`)
     if (res.status !== 0) throw new Error(`Process query failed for PID ${pid}: exit code ${res.status}: ${res.stderr?.trim()}`)
     const stdout = res.stdout ? res.stdout.trim() : ''
-    return stdout.length > 0 ? stdout : undefined
+    if (!stdout) {
+      if (!isProcessAlive(pid)) return undefined
+      throw new Error(`Process query returned empty output for living PID ${pid}`)
+    }
+    let procs
+    try {
+      procs = parseWindowsProcesses(stdout, pid)
+    } catch (err) {
+      throw new Error(`Failed to parse process records for PID ${pid}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    if (procs.length === 0) {
+      if (!isProcessAlive(pid)) return undefined
+      throw new Error(`Process query returned no records for living PID ${pid}`)
+    }
+    return procs[0]?.command
   } else {
     let res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
       encoding: 'utf8',
@@ -59,7 +76,11 @@ function getCommandLineForPid(pid: number): string | undefined {
       throw new Error(`Process query failed for PID ${pid}: exit code ${res.status}: ${res.stderr?.trim()}`)
     }
     const stdout = res.stdout ? res.stdout.trim() : ''
-    return stdout.length > 0 ? stdout : undefined
+    if (stdout.length === 0) {
+      if (!isProcessAlive(pid)) return undefined
+      throw new Error(`Process query returned empty command for living PID ${pid}`)
+    }
+    return stdout
   }
 }
 
@@ -78,7 +99,11 @@ function isProcessAlive(pid: number): boolean {
 function isProcessAliveWithNonce(pid: number, markerOrNonce: string): boolean {
   if (!isProcessAlive(pid)) return false
   const cmd = getCommandLineForPid(pid)
-  return typeof cmd === 'string' && cmd.includes(markerOrNonce)
+  if (cmd === undefined) {
+    if (!isProcessAlive(pid)) return false
+    throw new Error(`Unable to read command line for living process ${pid}`)
+  }
+  return cmd.includes(markerOrNonce)
 }
 
 async function waitForProcessDeath(
@@ -539,23 +564,25 @@ describe('M5-06 dispatch with phases and dependencies', () => {
       expect(createD.status).toBe(0)
 
       // Spawn supervisor in background to observe concurrent execution of B and C:
+      const supMarker = `factory-supervisor-${randomUUID()}`
       const sup = spawn(
         process.execPath,
-        [cliPath, 'start', '--state-dir', stateDir, '--exit-when-idle'],
+        [`--title=${supMarker}`, cliPath, 'start', '--state-dir', stateDir, '--exit-when-idle'],
         {
           cwd: tempCwd,
           env: cleanTestEnv({
             FAKE_SLEEP_MS: '3000',
+            FACTORY_SUPERVISOR_MARKER: supMarker,
           }),
           stdio: 'ignore',
           windowsHide: true,
         },
       )
       if (sup.pid) {
-        spawnedSupervisors.push({ child: sup, pid: sup.pid, marker: stateDir })
+        spawnedSupervisors.push({ child: sup, pid: sup.pid, marker: supMarker })
       }
 
-      // Bounded observation: observe both Task B and Task C running at the same time:
+      // Bounded observation: observe both Task B and Task C workers alive at the same time:
       let observedBothRunning = false
       const pollDeadline = Date.now() + 60000
       while (Date.now() < pollDeadline) {
@@ -563,12 +590,26 @@ describe('M5-06 dispatch with phases and dependencies', () => {
           try {
             const dbPoll = openStore(join(stateDir, 'state.sqlite'))
             try {
-              const running = dbPoll.prepare(
-                "SELECT task_id FROM attempts WHERE status = 'running' AND task_id IN (?, ?)",
-              ).all(taskBId, taskCId) as Array<{ task_id: string }>
-              if (running.length === 2) {
-                observedBothRunning = true
-                break
+              const runningWorkers = dbPoll.prepare(
+                `SELECT a.task_id, w.pid, w.nonce
+                 FROM workers w
+                 JOIN attempts a ON a.id = w.attempt_id
+                 WHERE a.status = 'running' AND w.state = 'running' AND a.task_id IN (?, ?)`
+              ).all(taskBId, taskCId) as Array<{ task_id: string; pid: number; nonce: string }>
+
+              const bWorker = runningWorkers.find((w) => w.task_id === taskBId)
+              const cWorker = runningWorkers.find((w) => w.task_id === taskCId)
+
+              if (bWorker && cWorker && bWorker.pid && cWorker.pid && bWorker.nonce && cWorker.nonce) {
+                activeNonces.add(bWorker.nonce)
+                activeNonces.add(cWorker.nonce)
+                if (
+                  isProcessAliveWithNonce(bWorker.pid, bWorker.nonce) &&
+                  isProcessAliveWithNonce(cWorker.pid, cWorker.nonce)
+                ) {
+                  observedBothRunning = true
+                  break
+                }
               }
             } finally {
               dbPoll.close()
@@ -579,7 +620,7 @@ describe('M5-06 dispatch with phases and dependencies', () => {
         await delay(50)
       }
 
-      const supDead = await waitForProcessDeath(sup.pid!, 45000, stateDir)
+      const supDead = await waitForProcessDeath(sup.pid!, 45000, supMarker)
       expect(supDead).toBe(true)
       expect(observedBothRunning, 'Tasks B and C must run concurrently').toBe(true)
 
@@ -1063,9 +1104,11 @@ describe('M5-06 dispatch with phases and dependencies', () => {
       const runsDir = join(stateDir, 'runs')
 
       // Spawn supervisor 1 in background:
+      const sup1Marker = `factory-supervisor-${randomUUID()}`
       const sup1 = spawn(
         process.execPath,
         [
+          `--title=${sup1Marker}`,
           cliPath,
           'start',
           '--state-dir', stateDir,
@@ -1076,13 +1119,14 @@ describe('M5-06 dispatch with phases and dependencies', () => {
           cwd: tempCwd,
           env: cleanTestEnv({
             FAKE_SLEEP_MS: '30000',
+            FACTORY_SUPERVISOR_MARKER: sup1Marker,
           }),
           stdio: 'ignore',
           windowsHide: true,
         },
       )
       if (sup1.pid) {
-        spawnedSupervisors.push({ child: sup1, pid: sup1.pid, marker: stateDir })
+        spawnedSupervisors.push({ child: sup1, pid: sup1.pid, marker: sup1Marker })
       }
 
       try {
@@ -1101,7 +1145,7 @@ describe('M5-06 dispatch with phases and dependencies', () => {
         }
 
         // Revalidate command-line marker immediately before hard kill on both platforms:
-        expect(isProcessAliveWithNonce(sup1.pid!, stateDir)).toBe(true)
+        expect(isProcessAliveWithNonce(sup1.pid!, sup1Marker)).toBe(true)
         if (process.platform === 'win32') {
           const killRes = spawnSync('taskkill', ['/F', '/PID', String(sup1.pid!)], { timeout: 10000, windowsHide: true })
           expect(killRes.error).toBeUndefined()
@@ -1110,11 +1154,11 @@ describe('M5-06 dispatch with phases and dependencies', () => {
           process.kill(sup1.pid!, 'SIGKILL')
         }
 
-        const sup1Dead = await waitForProcessDeath(sup1.pid!, 15000, stateDir)
+        const sup1Dead = await waitForProcessDeath(sup1.pid!, 15000, sup1Marker)
         expect(sup1Dead).toBe(true)
 
         // Confirm supervisor dead, worker still alive:
-        expect(isProcessAliveWithNonce(sup1.pid!, stateDir)).toBe(false)
+        expect(isProcessAliveWithNonce(sup1.pid!, sup1Marker)).toBe(false)
         expect(isProcessAliveWithNonce(publishedWorker.pid, publishedWorker.nonce)).toBe(true)
 
         // Capture lease takeover evidence:
