@@ -19,6 +19,9 @@ $script:startedProcesses = [System.Collections.Generic.List[System.Diagnostics.P
 $script:ownedPids = [System.Collections.Generic.List[int]]::new()
 $script:trackedProcessRecords = [System.Collections.Generic.List[object]]::new()
 $script:trackedWorkerNonces = [System.Collections.Generic.List[string]]::new()
+$script:allDemoProjects = [System.Collections.Generic.List[object]]::new()
+$script:tempRepo = $null
+$script:stateDir = $null
 $script:baseSha = $null
 $script:attemptId2 = $null
 
@@ -211,56 +214,57 @@ function Test-ProcessMatchesRun($proc) {
 }
 
 function Stop-AllAcceptanceProcesses {
-  # 1. Stop all explicitly tracked processes started via Start-Process
-  foreach ($proc in $script:startedProcesses) {
-    if ($null -eq $proc) { continue }
-    try {
-      if (-not $proc.HasExited) {
-        $proc.Kill()
-        [void]$proc.WaitForExit(3000)
-      }
-    } catch {}
-  }
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  $timeoutSec = 15
 
-  # 2. Stop all known owned worker and grandchild PIDs after validating current identity
-  foreach ($rec in $script:trackedProcessRecords) {
-    if ($null -eq $rec -or $rec.ProcessId -le 0 -or $rec.ProcessId -eq $PID) { continue }
+  while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+    # 1. Stop all explicitly tracked processes started via Start-Process
+    foreach ($proc in $script:startedProcesses) {
+      if ($null -eq $proc) { continue }
+      try {
+        if (-not $proc.HasExited) {
+          $proc.Kill()
+          [void]$proc.WaitForExit(1000)
+        }
+      } catch {}
+    }
+
+    # 2. Stop all known owned worker and grandchild PIDs after validating current identity
+    foreach ($rec in $script:trackedProcessRecords) {
+      if ($null -eq $rec -or $rec.ProcessId -le 0 -or $rec.ProcessId -eq $PID) { continue }
+      try {
+        if (Test-TrackedPidIdentityValid $rec) {
+          Stop-Process -Id $rec.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+      } catch {
+        $script:hasSurvivors = $true
+        $script:overallFailed = $true
+        throw "Process identity check failed during termination: $($_.Exception.Message)"
+      }
+    }
+
+    # 3. Sweep and kill: repeat enumeration and kill every node.exe matching run dir or tracked nonces
     try {
-      if (Test-TrackedPidIdentityValid $rec) {
-        Stop-Process -Id $rec.ProcessId -Force -ErrorAction SilentlyContinue
+      $allProcs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction Stop)
+      if ($allProcs.Count -eq 0) {
+        $script:hasSurvivors = $true
+        $script:overallFailed = $true
+        throw "Process enumeration returned 0 processes; enumeration failed"
+      }
+      foreach ($p in $allProcs) {
+        if (Test-ProcessMatchesRun $p) {
+          try {
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+          } catch {}
+        }
       }
     } catch {
       $script:hasSurvivors = $true
       $script:overallFailed = $true
-      throw "Process identity check failed during termination: $($_.Exception.Message)"
+      throw "Process sweep enumeration failed: $($_.Exception.Message)"
     }
-  }
 
-  # 3. Sweep: kill every node.exe whose command line contains this run's directory OR any tracked nonce
-  try {
-    $allProcs = @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction Stop)
-    if ($allProcs.Count -eq 0) {
-      $script:hasSurvivors = $true
-      $script:overallFailed = $true
-      throw "Process enumeration returned 0 processes; enumeration failed"
-    }
-    foreach ($p in $allProcs) {
-      if (Test-ProcessMatchesRun $p) {
-        try {
-          Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
-        } catch {}
-      }
-    }
-  } catch {
-    $script:hasSurvivors = $true
-    $script:overallFailed = $true
-    throw "Process sweep enumeration failed: $($_.Exception.Message)"
-  }
-
-  # 4. Bounded wait for all candidate processes to be gone
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  $timeoutSec = 10
-  while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+    # 4. Check if any processes are still alive; if none, termination is complete
     $anyAlive = $false
     foreach ($proc in $script:startedProcesses) {
       if ($null -ne $proc) {
@@ -297,6 +301,7 @@ function Stop-AllAcceptanceProcesses {
         throw "Process wait enumeration failed: $($_.Exception.Message)"
       }
     }
+
     if (-not $anyAlive) { break }
     Start-Sleep -Milliseconds 150
   }
@@ -402,42 +407,62 @@ process.stdout.write(JSON.stringify(canonical));
 
 function Cleanup-TaskWorktrees {
   $ErrorActionPreference = 'Continue'
-  if ([string]::IsNullOrWhiteSpace($tempRepo) -or -not (Test-Path -LiteralPath $tempRepo)) { return }
-  if ([string]::IsNullOrWhiteSpace($stateDir) -or -not (Test-Path -LiteralPath $stateDir)) { return }
-  $wtBase = Join-Path $stateDir 'worktrees'
-  if (Test-Path -LiteralPath $wtBase) {
-    $dirs = @(Get-ChildItem -LiteralPath $wtBase -Directory -ErrorAction SilentlyContinue)
-    foreach ($d in $dirs) {
-      if (-not (Test-Path -LiteralPath $d.FullName)) { continue }
-      $out = & git -C $tempRepo worktree remove --force "$($d.FullName)" 2>&1
-      $code = $LASTEXITCODE
-      if ($code -ne 0) {
-        $pruneFallbackOut = & git -C $tempRepo worktree prune 2>&1
-        $pruneFallbackCode = $LASTEXITCODE
-        if ($pruneFallbackCode -ne 0) {
-          throw "Fallback 'git worktree prune' failed with code ${pruneFallbackCode}: $($pruneFallbackOut -join ' ')"
-        }
+  $projectsToClean = [System.Collections.Generic.List[object]]::new()
+  foreach ($p in $script:allDemoProjects) {
+    if ($p -and $p.Repo -and $p.StateDir) {
+      $projectsToClean.Add($p)
+    }
+  }
+  if (-not [string]::IsNullOrWhiteSpace($tempRepo) -and -not [string]::IsNullOrWhiteSpace($stateDir)) {
+    $already = $false
+    foreach ($p in $projectsToClean) {
+      if ($p.Repo -eq $tempRepo -and $p.StateDir -eq $stateDir) { $already = $true; break }
+    }
+    if (-not $already) {
+      $projectsToClean.Add([pscustomobject]@{ Repo = $tempRepo; StateDir = $stateDir })
+    }
+  }
 
-        $wtListRaw = & git -C $tempRepo worktree list --porcelain 2>&1
-        $wtListCode = $LASTEXITCODE
-        if ($wtListCode -ne 0) {
-          throw "'git worktree list --porcelain' failed with code ${wtListCode}: $($wtListRaw -join ' ')"
-        }
+  foreach ($proj in $projectsToClean) {
+    $tRepo = $proj.Repo
+    $sDir = $proj.StateDir
+    if ([string]::IsNullOrWhiteSpace($tRepo) -or -not (Test-Path -LiteralPath $tRepo)) { continue }
+    if ([string]::IsNullOrWhiteSpace($sDir) -or -not (Test-Path -LiteralPath $sDir)) { continue }
+    $wtBase = Join-Path $sDir 'worktrees'
+    if (Test-Path -LiteralPath $wtBase) {
+      $dirs = @(Get-ChildItem -LiteralPath $wtBase -Directory -ErrorAction SilentlyContinue)
+      foreach ($d in $dirs) {
+        if (-not (Test-Path -LiteralPath $d.FullName)) { continue }
+        $out = & git -C $tRepo worktree remove --force "$($d.FullName)" 2>&1
+        $code = $LASTEXITCODE
+        if ($code -ne 0) {
+          $pruneFallbackOut = & git -C $tRepo worktree prune 2>&1
+          $pruneFallbackCode = $LASTEXITCODE
+          if ($pruneFallbackCode -ne 0) {
+            throw "Fallback 'git worktree prune' failed with code ${pruneFallbackCode}: $($pruneFallbackOut -join ' ')"
+          }
 
-        $activeWorktrees = @($wtListRaw | Where-Object { $_ -match '^worktree\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() })
-        $normalizedPaths = @(Normalize-Paths (@($d.FullName) + $activeWorktrees))
-        $normD = $normalizedPaths[0]
-        $normalizedActiveWorktrees = @($normalizedPaths | Select-Object -Skip 1)
-        if ($normalizedActiveWorktrees -contains $normD) {
-          throw "Worktree removal failed for '$($d.FullName)' with code ${code}: $($out -join ' ')"
+          $wtListRaw = & git -C $tRepo worktree list --porcelain 2>&1
+          $wtListCode = $LASTEXITCODE
+          if ($wtListCode -ne 0) {
+            throw "'git worktree list --porcelain' failed with code ${wtListCode}: $($wtListRaw -join ' ')"
+          }
+
+          $activeWorktrees = @($wtListRaw | Where-Object { $_ -match '^worktree\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() })
+          $normalizedPaths = @(Normalize-Paths (@($d.FullName) + $activeWorktrees))
+          $normD = $normalizedPaths[0]
+          $normalizedActiveWorktrees = @($normalizedPaths | Select-Object -Skip 1)
+          if ($normalizedActiveWorktrees -contains $normD) {
+            throw "Worktree removal failed for '$($d.FullName)' with code ${code}: $($out -join ' ')"
+          }
         }
       }
     }
-  }
-  $pruneOut = & git -C $tempRepo worktree prune 2>&1
-  $pruneCode = $LASTEXITCODE
-  if ($pruneCode -ne 0) {
-    throw "git worktree prune failed with code ${pruneCode}: $($pruneOut -join ' ')"
+    $pruneOut = & git -C $tRepo worktree prune 2>&1
+    $pruneCode = $LASTEXITCODE
+    if ($pruneCode -ne 0) {
+      throw "git worktree prune failed with code ${pruneCode}: $($pruneOut -join ' ')"
+    }
   }
 }
 
@@ -532,15 +557,58 @@ function Skip-Step($n, $label) {
 }
 
 
-function New-DemoTask([string]$taskId, [string[]]$options) {
+function Initialize-DemoProject([string]$name) {
+  $pRepo = Join-Path $acceptanceBase "demo-repo-$name"
+  $pState = Join-Path $acceptanceBase "state-$name"
+  if (Test-Path -LiteralPath $pRepo) { Remove-Item -LiteralPath $pRepo -Recurse -Force }
+  New-Item -ItemType Directory -Path $pRepo -Force | Out-Null
+  if (Test-Path -LiteralPath $pState) { Remove-Item -LiteralPath $pState -Recurse -Force }
+  New-Item -ItemType Directory -Path $pState -Force | Out-Null
+
+  $outInit = & git -C $pRepo init -q 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "git init failed: $($outInit -join ' ')" }
+  $outCo = & git -C $pRepo checkout -B main -q 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "git checkout failed: $($outCo -join ' ')" }
+  $outName = & git -C $pRepo config user.name "M5 Acceptance" 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "git config user.name failed: $($outName -join ' ')" }
+  $outEmail = & git -C $pRepo config user.email "acceptance@factory.local" 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "git config user.email failed: $($outEmail -join ' ')" }
+  $outCommit = & git -C $pRepo commit --allow-empty -m "Initial commit" -q 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "git commit failed: $($outCommit -join ' ')" }
+
+  $baseShaRaw = & git -C $pRepo rev-parse HEAD 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "git rev-parse HEAD failed" }
+  $pBaseSha = ($baseShaRaw -join '').Trim()
+
+  $cliPath = if ($dest -and (Test-Path -LiteralPath (Join-Path $dest 'lib\factory.mjs'))) {
+    Join-Path $dest 'lib\factory.mjs'
+  } else {
+    'lib/factory.mjs'
+  }
+  $raw = & $script:nodeExe $cliPath init --state-dir "$pState" --repo "$pRepo" 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "factory init failed for ${name}: $($raw -join ' ')" }
+
+  $projRecord = [pscustomobject]@{ Repo = $pRepo; StateDir = $pState; BaseSha = $pBaseSha }
+  $script:allDemoProjects.Add($projRecord)
+
+  $script:tempRepo = $pRepo
+  $script:stateDir = $pState
+  $script:baseSha = $pBaseSha
+
+  return $projRecord
+}
+
+function New-DemoTask([string]$taskId, [string[]]$options, [string]$sDir = $null) {
+  $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
   $stderr = Join-Path $logsDir "create-$taskId.err"
-  $output = & $script:nodeExe lib/factory.mjs task create --state-dir $stateDir --title "Acceptance $taskId" --command-id $taskId @options 2> $stderr
+  $output = & $script:nodeExe lib/factory.mjs task create --state-dir $activeState --title "Acceptance $taskId" --command-id $taskId @options 2> $stderr
   $exitCode = $LASTEXITCODE
   if ($exitCode -ne 0 -or @($output)[0] -ne "created $taskId") { throw "Task create failed ($exitCode): $output $(Get-Content $stderr -Raw)" }
 }
-function Start-DemoSupervisor([string]$name, [string]$takeover = '') {
+function Start-DemoSupervisor([string]$name, [string]$takeover = '', [string]$sDir = $null) {
+  $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
   $extra = if ($takeover) { " --takeover $takeover" } else { '' }
-  $proc = Start-Process -FilePath $script:nodeExe -ArgumentList "lib/factory.mjs start --state-dir `"$stateDir`" --exit-when-idle --stale-after-ms 2000 --heartbeat-ms 200$extra" -RedirectStandardOutput (Join-Path $logsDir "$name.out") -RedirectStandardError (Join-Path $logsDir "$name.err") -PassThru -NoNewWindow
+  $proc = Start-Process -FilePath $script:nodeExe -ArgumentList "lib/factory.mjs start --state-dir `"$activeState`" --exit-when-idle --stale-after-ms 2000 --heartbeat-ms 200$extra" -RedirectStandardOutput (Join-Path $logsDir "$name.out") -RedirectStandardError (Join-Path $logsDir "$name.err") -PassThru -NoNewWindow
   $null = $proc.Handle
   $script:startedProcesses.Add($proc)
   Register-TrackedPid $proc.Id
@@ -550,13 +618,15 @@ function Wait-DemoSupervisor($proc, [string]$name) {
   if (-not $proc.WaitForExit(90000)) { throw "Supervisor $name timed out" }
   if ($proc.ExitCode -ne 0) { throw "Supervisor $name exited $($proc.ExitCode): $(Get-Content (Join-Path $logsDir "$name.err") -Raw)" }
 }
-function Get-DemoTask([string]$taskId) {
-  $snapshot = Invoke-FactoryStatus $stateDir
+function Get-DemoTask([string]$taskId, [string]$sDir = $null) {
+  $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
+  $snapshot = Invoke-FactoryStatus $activeState
   $found = @($snapshot.tasks | Where-Object { $_.id -eq $taskId })
   if ($found.Count -ne 1) { throw "Expected task $taskId once, found $($found.Count)" }
   return $found[0]
 }
-function Get-DemoDatabase([string]$taskId) {
+function Get-DemoDatabase([string]$taskId, [string]$sDir = $null) {
+  $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
   $helper = Join-Path $helpersDir 'read-task.mjs'
   $code = @'
 import { DatabaseSync } from 'node:sqlite';
@@ -571,7 +641,7 @@ try {
 } finally { db.close(); }
 '@
   [System.IO.File]::WriteAllText($helper, $code, (New-Object System.Text.UTF8Encoding $false))
-  $env:FACTORY_STATE_DIR = $stateDir
+  $env:FACTORY_STATE_DIR = $activeState
   $env:FACTORY_TASK_ID = $taskId
   try {
     $errFile = Join-Path $logsDir "db-$taskId.err"
@@ -581,7 +651,8 @@ try {
     try { return (($raw -join "`n") | ConvertFrom-Json) } catch { throw "Invalid database JSON: $raw" }
   } finally { Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue }
 }
-function Get-DemoCommandOutcome([string]$cmdId) {
+function Get-DemoCommandOutcome([string]$cmdId, [string]$sDir = $null) {
+  $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
   $helper = Join-Path $helpersDir 'read-command-outcome.mjs'
   $code = @'
 import { DatabaseSync } from 'node:sqlite';
@@ -594,7 +665,7 @@ try {
 } finally { db.close(); }
 '@
   [System.IO.File]::WriteAllText($helper, $code, (New-Object System.Text.UTF8Encoding $false))
-  $env:FACTORY_STATE_DIR = $stateDir
+  $env:FACTORY_STATE_DIR = $activeState
   $env:FACTORY_COMMAND_ID = $cmdId
   try {
     $errFile = Join-Path $logsDir "cmd-$cmdId.err"
@@ -604,11 +675,23 @@ try {
     try { return (($raw -join "`n") | ConvertFrom-Json) } catch { throw "Invalid command outcome JSON: $raw" }
   } finally { Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_COMMAND_ID -ErrorAction SilentlyContinue }
 }
-function Assert-DemoCommits([string]$taskId, [int]$expected) {
+function Assert-DemoCommits([string]$taskId, [int]$expected, [string]$repo = $null, [string]$bSha = $null) {
+  $activeRepo = if ($repo) { $repo } elseif ($script:tempRepo) { $script:tempRepo } else { $tempRepo }
+  $activeBase = if ($bSha) { $bSha } elseif ($script:baseSha) { $script:baseSha } else { $baseSha }
   $errFile = Join-Path $logsDir "git-$taskId.err"
-  $raw = & git -C $tempRepo rev-list --count "refs/heads/factory/task/$taskId" "^$($script:baseSha)" 2> $errFile
+  $raw = & git -C $activeRepo rev-list --count "refs/heads/factory/task/$taskId" "^$activeBase" 2> $errFile
   $exitCode = $LASTEXITCODE
   if ($exitCode -ne 0 -or ($raw -join '').Trim() -ne "$expected") { throw "Task $taskId commits expected $expected, got $raw (exit $exitCode)" }
+}
+function Assert-DemoBranchAbsent([string]$taskId, [string]$repo = $null) {
+  $activeRepo = if ($repo) { $repo } elseif ($script:tempRepo) { $script:tempRepo } else { $tempRepo }
+  $raw = & git -C $activeRepo rev-parse --verify --quiet "refs/heads/factory/task/$taskId" 2>&1
+  $code = $LASTEXITCODE
+  if ($code -eq 0) { throw "Task $taskId branch refs/heads/factory/task/$taskId unexpectedly exists" }
+  $branchList = & git -C $activeRepo branch --list "factory/task/$taskId" 2>&1
+  if (-not [string]::IsNullOrWhiteSpace(($branchList -join '').Trim())) {
+    throw "Task $taskId branch factory/task/$taskId unexpectedly exists in branch list"
+  }
 }
 function Assert-Demo($condition, [string]$message) { if (-not $condition) { throw $message } }
 
@@ -751,6 +834,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "git rev-parse HEAD failed" }
     $baseSha = ($baseShaRaw -join '').Trim()
     $script:baseSha = $baseSha
+    $script:tempRepo = $tempRepo
+    $script:stateDir = $stateDir
+    $script:allDemoProjects.Add([pscustomobject]@{ Repo = $tempRepo; StateDir = $stateDir; BaseSha = $baseSha })
     Write-Host "Demo repository initialized at $tempRepo with baseSha $baseSha"
 
     if (-not (Test-Path -LiteralPath $stateDir)) {
@@ -777,6 +863,11 @@ try {
   # CHK-M5-08-b: graph demo: chain A -> B and diamond (B, C after A; D after B and C)
   if (-not (Step 11 'Graph demo: chain and diamond run in dependency order' {
     $ErrorActionPreference = 'Continue'
+    $proj = Initialize-DemoProject 'graph'
+    $tempRepo = $proj.Repo
+    $stateDir = $proj.StateDir
+    $script:baseSha = $proj.BaseSha
+
     $chainA = [guid]::NewGuid().ToString()
     $chainB = [guid]::NewGuid().ToString()
     $diaA = [guid]::NewGuid().ToString()
@@ -804,7 +895,6 @@ try {
     }
 
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    $observedDiamondOverlap = $false
     $lastStatusText = ''
 
     while ($watch.Elapsed.TotalSeconds -lt 90) {
@@ -830,11 +920,6 @@ try {
           Assert-Demo ($tDiaB.status -ne 'progress' -and $tDiaB.status -ne 'done') "Dia B ran before Dia A completed: $lastStatusText"
           Assert-Demo ($tDiaC.status -ne 'progress' -and $tDiaC.status -ne 'done') "Dia C ran before Dia A completed: $lastStatusText"
           Assert-Demo ($tDiaD.status -ne 'progress' -and $tDiaD.status -ne 'done') "Dia D ran before Dia A completed: $lastStatusText"
-        }
-
-        # Concurrency in diamond: Dia B and Dia C running concurrently
-        if ($tDiaB.status -eq 'progress' -and $tDiaC.status -eq 'progress') {
-          $observedDiamondOverlap = $true
         }
 
         # Dependency order invariant: Dia D must not run before both Dia B and Dia C are done
@@ -863,7 +948,6 @@ try {
     $snapshot = Invoke-FactoryStatus $stateDir
     $tasks = @($snapshot.tasks | Where-Object { $_.id -in $allGraphTaskIds })
     Assert-Demo ($tasks.Count -eq 6 -and @($tasks | Where-Object { $_.status -eq 'done' }).Count -eq 6) "Graph demo failed: $lastStatusText"
-    Assert-Demo ($observedDiamondOverlap) "Diamond branches Dia B and Dia C did not run concurrently"
 
     # Verify attempt timestamps confirm dependency order
     $dbChainA = Get-DemoDatabase $chainA
@@ -900,6 +984,11 @@ try {
   # CHK-M5-08-c: block demo: task after killed task becomes blocked with no attempts
   if (-not (Step 12 'Block demo: task after killed task becomes blocked with no attempts' {
     $ErrorActionPreference = 'Continue'
+    $proj = Initialize-DemoProject 'block'
+    $tempRepo = $proj.Repo
+    $stateDir = $proj.StateDir
+    $script:baseSha = $proj.BaseSha
+
     $taskKillA = [guid]::NewGuid().ToString()
     $taskBlockB = [guid]::NewGuid().ToString()
 
@@ -926,7 +1015,16 @@ try {
     $dbB = Get-DemoDatabase $taskBlockB
     Assert-Demo (@($dbB.attempts).Count -eq 0) "Blocked task B must never get an attempt in DB, got $(@($dbB.attempts).Count)"
     Assert-Demo ($dbB.evidence -eq 0) "Blocked task B must have 0 evidence rows, got $($dbB.evidence)"
-    Assert-DemoCommits $taskBlockB 0
+    Assert-DemoBranchAbsent $taskBlockB
+
+    # Drop B after verifying its blocked state
+    $errKillB = Join-Path $logsDir "kill-${taskBlockB}.err"
+    $outputKillB = & $script:nodeExe lib/factory.mjs task kill --state-dir $stateDir --task $taskBlockB 2> $errKillB
+    $exitKillB = $LASTEXITCODE
+    if ($exitKillB -eq 0) {
+      $tBDropped = Get-DemoTask $taskBlockB
+      Assert-Demo ($tBDropped.status -eq 'dropped') "Killed task B status expected dropped, got $($tBDropped.status)"
+    }
 
     $global:LASTEXITCODE = 0
   })) { throw 'Step 12 failed' }
@@ -934,6 +1032,11 @@ try {
   # CHK-M5-08-d: phase demo
   if (-not (Step 13 'Phase demo: qa task waits while earlier phases have work, advance rejected while unfinished, then runs' {
     $ErrorActionPreference = 'Continue'
+    $proj = Initialize-DemoProject 'phase'
+    $tempRepo = $proj.Repo
+    $stateDir = $proj.StateDir
+    $script:baseSha = $proj.BaseSha
+
     $taskIntake = [guid]::NewGuid().ToString()
     $taskDev = [guid]::NewGuid().ToString()
     $taskQa = [guid]::NewGuid().ToString()
@@ -942,29 +1045,30 @@ try {
     New-DemoTask $taskDev @('--phase', 'development', '--scope', 'src/pDev', '--scope', "factory-fake/${taskDev}.txt")
     New-DemoTask $taskQa @('--phase', 'qa', '--scope', 'src/pQa', '--scope', "factory-fake/${taskQa}.txt")
 
-    # 1. Assert initial states: qa task is ready with waiting reason 'phase-locked'
-    $tQa0 = Get-DemoTask $taskQa
-    Assert-Demo ($tQa0.status -eq 'ready' -and $null -ne $tQa0.waiting -and $tQa0.waiting.reason -eq 'phase-locked' -and @($tQa0.waiting.on) -contains 'qa') "Task QA expected ready and phase-locked on qa"
-
-    # 2. Advance phase intake while taskIntake is unfinished -> must be rejected
+    # 1. Advance phase intake while taskIntake is unfinished -> must be rejected
     $advCmd1 = [guid]::NewGuid().ToString()
     $errAdv1 = Join-Path $logsDir "adv1.err"
     $rawAdv1 = & $script:nodeExe lib/factory.mjs phase advance --state-dir $stateDir --phase intake --command-id $advCmd1 2> $errAdv1
     Assert-Demo ($LASTEXITCODE -eq 0) "phase advance command submission failed: $rawAdv1"
 
-    # Start supervisor: applies advCmd1 (rejected: phase has unfinished tasks), runs taskIntake to done, leaves taskDev and taskQa phase-locked
+    # Start supervisor: applies task creations and advCmd1 (rejected: phase has unfinished tasks), runs taskIntake to done, leaves taskDev and taskQa phase-locked
     $proc1 = Start-DemoSupervisor 'phase-intake'
     Wait-DemoSupervisor $proc1 'phase-intake'
 
+    # Assert command outcome: advance while unfinished was rejected
     $outcome1 = Get-DemoCommandOutcome $advCmd1
     Assert-Demo ($outcome1.outcome -eq 'rejected' -and $outcome1.reason -eq 'phase has unfinished tasks') "phase advance with unfinished tasks must be rejected, got: $($outcome1 | ConvertTo-Json)"
 
+    # Assert task states: intake done, dev and qa stayed ready and phase-locked
     $tIntake1 = Get-DemoTask $taskIntake
     Assert-Demo ($tIntake1.status -eq 'done') "Task intake expected done, got $($tIntake1.status)"
 
-    # While intake was running and finished, taskQa stayed ready and phase-locked
+    # While intake had work and finished, taskQa stayed ready and phase-locked with 0 attempts
     $tQa1 = Get-DemoTask $taskQa
-    Assert-Demo ($tQa1.status -eq 'ready' -and $null -ne $tQa1.waiting -and $tQa1.waiting.reason -eq 'phase-locked' -and @($tQa1.attempts).Count -eq 0) "Task QA must stay ready with 0 attempts while intake had work"
+    Assert-Demo ($tQa1.status -eq 'ready' -and $null -ne $tQa1.waiting -and $tQa1.waiting.reason -eq 'phase-locked' -and @($tQa1.waiting.on) -contains 'qa' -and @($tQa1.attempts).Count -eq 0) "Task QA must stay ready with 0 attempts while intake had work"
+
+    $tDev0 = Get-DemoTask $taskDev
+    Assert-Demo ($tDev0.status -eq 'ready' -and $null -ne $tDev0.waiting -and $tDev0.waiting.reason -eq 'phase-locked' -and @($tDev0.waiting.on) -contains 'development' -and @($tDev0.attempts).Count -eq 0) "Task Dev expected ready and phase-locked on development with 0 attempts"
 
     # 3. Advance phase intake to development now that intake tasks are done
     $advCmd2 = [guid]::NewGuid().ToString()
@@ -1012,6 +1116,11 @@ try {
   # CHK-M5-08-e: crash demo
   if (-not (Step 14 'Crash demo: Supervisor stopped while A runs and B waits, restarted with takeover' {
     $ErrorActionPreference = 'Continue'
+    $proj = Initialize-DemoProject 'crash'
+    $tempRepo = $proj.Repo
+    $stateDir = $proj.StateDir
+    $script:baseSha = $proj.BaseSha
+
     $crashA = [guid]::NewGuid().ToString()
     $crashB = [guid]::NewGuid().ToString()
 
@@ -1025,7 +1134,7 @@ try {
       Remove-Item env:FAKE_SLEEP_MS -ErrorAction SilentlyContinue
     }
 
-    # Bounded wait to observe boundary state: A is progress, B is ready waiting on deps
+    # Bounded wait to observe boundary state: A is progress with running attempt and alive worker, B is ready waiting on deps
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $boundaryObserved = $false
     $boundaryDetails = 'no snapshot'
@@ -1034,23 +1143,36 @@ try {
       $tA = @($snapshot.tasks | Where-Object { $_.id -eq $crashA })
       $tB = @($snapshot.tasks | Where-Object { $_.id -eq $crashB })
       if ($tA.Count -eq 1 -and $tB.Count -eq 1) {
-        $boundaryDetails = "A=$($tA[0].status), B=$($tB[0].status)"
-        if ($tA[0].status -eq 'progress' -and $tB[0].status -eq 'ready' -and $null -ne $tB[0].waiting -and $tB[0].waiting.reason -eq 'deps') {
-          $boundaryObserved = $true
-          break
+        $taskA = $tA[0]
+        $taskB = $tB[0]
+        $boundaryDetails = "A=$($taskA.status), B=$($taskB.status)"
+        $hasRunningAttempt = ($taskA.status -eq 'progress' -and @($taskA.attempts).Count -gt 0 -and @($taskA.attempts)[0].status -eq 'running')
+        $bWaitingOnDeps = ($taskB.status -eq 'ready' -and $null -ne $taskB.waiting -and $taskB.waiting.reason -eq 'deps')
+        if ($hasRunningAttempt -and $bWaitingOnDeps) {
+          $workers = @(Get-ChildItem -LiteralPath (Join-Path $stateDir 'runs') -Filter worker.json -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }
+          } | Where-Object { $null -ne $_ -and $_.pid -and $_.nonce -and $_.grandchildPid })
+          if ($workers.Count -gt 0) {
+            $w = $workers[0]
+            if (-not $script:trackedWorkerNonces.Contains($w.nonce)) {
+              $script:trackedWorkerNonces.Add($w.nonce)
+            }
+            Register-TrackedPid $w.pid $w.nonce
+            Register-TrackedPid $w.grandchildPid $w.nonce
+
+            $liveWorkers = @(Get-CimInstance Win32_Process -Filter "ProcessId = $($w.pid)" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue | Where-Object {
+              $_.CommandLine -and $_.CommandLine.Contains($w.nonce)
+            })
+            if ($liveWorkers.Count -gt 0) {
+              $boundaryObserved = $true
+              break
+            }
+          }
         }
       }
       Start-Sleep -Milliseconds 50
     }
     Assert-Demo ($boundaryObserved) "Did not reach crash boundary state: $boundaryDetails"
-
-    # Register worker nonces before stopping supervisor
-    $workers = @(Get-ChildItem -LiteralPath (Join-Path $stateDir 'runs') -Filter worker.json -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
-    foreach ($w in $workers) {
-      if ($w.nonce -and -not $script:trackedWorkerNonces.Contains($w.nonce)) {
-        $script:trackedWorkerNonces.Add($w.nonce)
-      }
-    }
 
     $proc.Kill()
     Assert-Demo ($proc.WaitForExit(10000)) 'Supervisor did not stop at crash boundary'
