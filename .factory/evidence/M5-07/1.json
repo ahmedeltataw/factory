@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M5-07",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "99cca90468f07a224b9d3ae44d63719b952881b0",
+  "checks": [
+    {
+      "id": "CHK-M5-07-a",
+      "command": "pnpm exec vitest run tests/protected/m5-status.spec.ts tests/protected/m4-status.spec.ts tests/protected/m3-status.spec.ts tests/protected/m2-status.spec.ts tests/m5-07-status.spec.ts; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43136441930 all four cells success; mutation run 43136432475 status.ts 93.95 >= 80; protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (findings fixed round 3; round 4 added M5-07 fields to m4-schema/m5-schema exact expectations); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (one P2 finding, Arabic phase facts, fixed round 2 and checked by Lead); round 3 tests only"
+    },
+    {
+      "id": "CHK-M5-07-b",
+      "command": "pnpm exec vitest run tests/protected/m5-status.spec.ts tests/protected/m4-status.spec.ts tests/protected/m3-status.spec.ts tests/protected/m2-status.spec.ts tests/m5-07-status.spec.ts; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43136441930 all four cells success; mutation run 43136432475 status.ts 93.95 >= 80; protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (findings fixed round 3; round 4 added M5-07 fields to m4-schema/m5-schema exact expectations); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (one P2 finding, Arabic phase facts, fixed round 2 and checked by Lead); round 3 tests only"
+    },
+    {
+      "id": "CHK-M5-07-c",
+      "command": "pnpm exec vitest run tests/protected/m5-status.spec.ts tests/protected/m4-status.spec.ts tests/protected/m3-status.spec.ts tests/protected/m2-status.spec.ts tests/m5-07-status.spec.ts; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43136441930 all four cells success; mutation run 43136432475 status.ts 93.95 >= 80; protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (findings fixed round 3; round 4 added M5-07 fields to m4-schema/m5-schema exact expectations); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (one P2 finding, Arabic phase facts, fixed round 2 and checked by Lead); round 3 tests only"
+    },
+    {
+      "id": "CHK-M5-07-d",
+      "command": "pnpm exec vitest run tests/protected/m5-status.spec.ts tests/protected/m4-status.spec.ts tests/protected/m3-status.spec.ts tests/protected/m2-status.spec.ts tests/m5-07-status.spec.ts; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43136441930 all four cells success; mutation run 43136432475 status.ts 93.95 >= 80; protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (findings fixed round 3; round 4 added M5-07 fields to m4-schema/m5-schema exact expectations); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (one P2 finding, Arabic phase facts, fixed round 2 and checked by Lead); round 3 tests only"
+    }
+  ],
+  "ended_at": "2026-11-12T01:53:32.758Z"
+}
