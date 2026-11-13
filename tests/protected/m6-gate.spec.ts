@@ -118,6 +118,64 @@ function makeGhEvent(overrides: Partial<GhEvent> = {}): GhEvent {
 }
 
 describe('M6-01 GitHub event model, sanitizer, gate', () => {
+  it.each([
+    ['non-string type', makeIssuesPayload({ type: 123 })],
+    ['null payload', makeIssuesPayload({ payload: null })],
+    ['non-string action', makeIssuesPayload({ payload: { action: 123 } })],
+    ['null issue', makeIssuesPayload({ payload: { action: 'opened', issue: null } })],
+    ['non-numeric id', makeIssuesPayload({ id: 'x123' })],
+    ['extra repo segment', makeIssuesPayload({ repo: { id: 50, name: 'owner/repo/extra' } })],
+    ['leading repo segment', makeIssuesPayload({ repo: { id: 50, name: 'x/owner/repo' } })],
+  ])('CHK-M6-01-a: rejects malformed event without throwing (%s)', (_label, payload) => {
+    expect(normalizeEvent(payload)).toEqual({ ok: false, reason: 'malformed' })
+  })
+
+  it('CHK-M6-01-b: trims whitespace before and after truncation', () => {
+    expect(sanitizeLine(' ' + 'x'.repeat(250))).toBe('x'.repeat(200))
+    expect(sanitizeLine('x'.repeat(199) + ' ' + 'y'.repeat(50))).toBe('x'.repeat(199))
+  })
+
+  it('CHK-M6-01-c: admits an indented command line', () => {
+    const { policy } = getValidPolicy()
+    const result = gate(policy, makeGhEvent({ text: '  /factory task Fix bug' }))
+    expect(result.admit).toBe(true)
+    if (result.admit) expect(result.title).toBe('Fix bug')
+  })
+
+  it.each(['', '\n\n', '/factory tasker Fix bug', '/factory taskX Fix bug'])(
+    'CHK-M6-01-c: rejects blank or non-command text without throwing (%s)',
+    (text) => {
+      const { policy } = getValidPolicy()
+      expect(gate(policy, makeGhEvent({ text }))).toEqual({ admit: false, reason: 'no-command' })
+    },
+  )
+
+  it.each([null, [], 'x', 123])('CHK-M6-01-e: rejects non-object policy without throwing (%s)', (input) => {
+    expect(parsePolicy(input)).toEqual({ ok: false, reason: 'policy' })
+  })
+
+  it('CHK-M6-01-e: policy hash is stable with all object keys reversed', () => {
+    const normal = makePolicyInput()
+    const reversed = {
+      maxPendingPerRepo: 10,
+      command: '/factory task',
+      actors: [
+        { login: 'alice', id: 100 },
+        { login: 'bob', id: 200 },
+      ],
+      repos: [
+        { scope: ['src/core', 'docs'], labels: ['factory', 'bug'], name: 'owner/repo' },
+        { scope: ['.'], labels: ['task'], name: 'owner/other' },
+      ],
+      version: 1,
+    }
+    const normalResult = parsePolicy(normal)
+    const reversedResult = parsePolicy(reversed)
+    expect(normalResult.ok).toBe(true)
+    expect(reversedResult.ok).toBe(true)
+    if (normalResult.ok && reversedResult.ok) expect(reversedResult.hash).toBe(normalResult.hash)
+  })
+
   it('CHK-M6-01-a: normalizeEvent accepts valid IssuesEvent opened with exact GhEvent shape', () => {
     const raw = makeIssuesPayload()
     const result = normalizeEvent(raw)
