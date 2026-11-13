@@ -10,6 +10,9 @@ import type { SupervisorLeaseHandle } from './supervisor-lease.ts'
 import type { EnsureWorktreeConfig } from './worktree.ts'
 import { parseScope } from '../core/scope.ts'
 import { planDispatch, type DispatchInput } from '../core/graph.ts'
+import { parsePolicy } from '../sources/github/gate.ts'
+import { createIngestState, ingestPoll, type IngestState } from '../sources/github/ingest.ts'
+import type { GitHubPort, PollResult } from '../sources/github/ports.ts'
 
 function dispatchInput(db: DatabaseSync, nowMs: number): DispatchInput {
   const rows = db.prepare("SELECT id, project_id, status, phase, scope_json, not_before_ms FROM tasks WHERE status IN ('ready', 'progress') OR id IN (SELECT depends_on FROM task_deps) ORDER BY created_at, rowid").all() as Array<{ id: string; project_id: string; status: string; phase: string; scope_json: string; not_before_ms: number }>
@@ -41,6 +44,7 @@ export { MAX_ATTEMPTS } from './recovery.ts'
 export interface WorkerCompletionRecord { exitCode: number }
 type Wrapper = <T>(fn: () => Promise<T> | T) => Promise<T> | T
 export interface LoopDeps extends RecoveryDeps {
+  github?: { port: GitHubPort; policyPath: string; pollTimeoutMs?: number }
   spawnWorker: (options: { runDir: string; cwd: string; taskId: string; attemptId: string; env?: Record<string, string> }) => Promise<{ pid: number; nonce: string }> | { pid: number; nonce: string }
   isAlive: (pid: number, nonce: string) => Promise<boolean> | boolean
   readResult: (runDir: string) => Promise<WorkerCompletionRecord | undefined> | WorkerCompletionRecord | undefined
@@ -49,6 +53,49 @@ export interface LoopDeps extends RecoveryDeps {
   isProcessAlive?: (pid: number) => boolean
   wrapRecoverOutbox?: Wrapper; wrapReconcileWorkers?: Wrapper; wrapApplyCommands?: Wrapper
   wrapDispatchTasks?: Wrapper; wrapWorkerLiveness?: Wrapper; wrapLeaseHeartbeat?: Wrapper
+}
+const ingestStates = new WeakMap<LoopDeps, IngestState>()
+
+async function pollGitHub(db: DatabaseSync, handle: SupervisorLeaseHandle, deps: LoopDeps, nowMs: number, fault?: FaultName): Promise<boolean> {
+  const github = deps.github!
+  const project = db.prepare('SELECT project_id FROM project_config LIMIT 1').get() as { project_id: string } | undefined
+  if (!project) return false
+  let contents: string
+  try { contents = readFileSync(github.policyPath, 'utf8') } catch (error) {
+    const reason = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable'
+    fencedWrite(db, handle, () => db.prepare('UPDATE github_cursor SET error = ? WHERE project_id = ?').run(`policy: ${reason}`, project.project_id))
+    return false
+  }
+  let input: unknown
+  try { input = JSON.parse(contents) } catch {
+    fencedWrite(db, handle, () => db.prepare('UPDATE github_cursor SET error = ? WHERE project_id = ?').run('policy: invalid json', project.project_id))
+    return false
+  }
+  const parsed = parsePolicy(input)
+  if (!parsed.ok) {
+    fencedWrite(db, handle, () => db.prepare('UPDATE github_cursor SET error = ? WHERE project_id = ?').run(`policy: ${parsed.reason}`, project.project_id))
+    return false
+  }
+  let state = ingestStates.get(deps)
+  if (!state) { state = createIngestState(); ingestStates.set(deps, state) }
+  let polled = false
+  for (const repo of parsed.policy.repos) {
+    if (state.stopped.has(repo.name)) continue
+    const cursor = db.prepare('SELECT etag, next_poll_ms FROM github_cursor WHERE project_id = ? AND repo = ?').get(project.project_id, repo.name) as { etag: string | null; next_poll_ms: number } | undefined
+    if (cursor && cursor.next_poll_ms > nowMs) continue
+    polled = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let result: PollResult
+    try {
+      result = await Promise.race([
+        Promise.resolve().then(() => github.port.poll({ repo: repo.name, etag: cursor?.etag ?? null })).catch((): PollResult => ({ kind: 'error', retryable: true, message: 'poll failed' })),
+        new Promise<PollResult>((resolve) => { timer = setTimeout(() => resolve({ kind: 'error', retryable: true, message: 'poll timeout' }), github.pollTimeoutMs ?? 20000) }),
+      ])
+    } finally { if (timer !== undefined) clearTimeout(timer) }
+    if (fault === 'github-after-poll' && result.kind === 'events') triggerFault(fault)
+    fencedWrite(db, handle, () => ingestPoll(db, project.project_id, parsed.policy, repo.name, result, nowMs, state!))
+  }
+  return polled
 }
 export interface RunTickResult { idle: boolean }
 export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, deps: LoopDeps, nowMs: number, options?: { fault?: FaultName }): Promise<RunTickResult> {
@@ -106,6 +153,7 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
   await phase('recover-outbox', deps.wrapRecoverOutbox, runEffects)
   await phase('reconcile-workers', deps.wrapReconcileWorkers, () => reconcileWorkers(db, handle, { killTree: deps.killTree, stateDir, staleAfterMs: deps.staleAfterMs }, nowMs))
   await phase('apply-commands', deps.wrapApplyCommands, () => applyPendingCommands(db, handle))
+  const polled = deps.github ? await pollGitHub(db, handle, deps, nowMs, options?.fault) : false
   await phase('dispatch-tasks', deps.wrapDispatchTasks, async () => {
     // Kill commands applied this tick before creating any new work.
     await runEffects()
@@ -175,5 +223,5 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
   const busy = plan.schedule.length > 0 || plan.block.length > 0 || plan.wait.some((wait) =>
     wait.reason === 'scope' || wait.reason === 'backoff' ||
     (wait.reason === 'deps' && wait.on.some((id) => ['ready', 'progress'].includes(byId.get(id)?.status ?? ''))))
-  return { idle: !pending && !busy }
+  return { idle: !polled && !pending && !busy }
 }

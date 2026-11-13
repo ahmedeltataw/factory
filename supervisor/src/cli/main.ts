@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { readStatus, formatStatus, type Status } from '../app/status.ts'
@@ -345,6 +345,23 @@ async function runStart(argv: readonly string[]): Promise<number> {
   try {
     const stateDir = values['--state-dir']!
     if (!existsSync(join(stateDir, 'state.sqlite'))) throw new Error('missing database')
+    const policyPath = join(stateDir, 'github-policy.json')
+    let github: import('../app/supervisor-loop.ts').LoopDeps['github']
+    if (existsSync(policyPath)) {
+      const token = process.env.FACTORY_GITHUB_TOKEN
+      if (!token) { process.stderr.write('\u0645\u062a\u063a\u064a\u0631 FACTORY_GITHUB_TOKEN \u0645\u0637\u0644\u0648\u0628\n'); return 1 }
+      let policyInput: unknown
+      try { policyInput = JSON.parse(readFileSync(policyPath, 'utf8')) } catch {
+        process.stderr.write('\u062a\u0639\u0630\u0631\u062a \u0642\u0631\u0627\u0621\u0629 \u0633\u064a\u0627\u0633\u0629 GitHub\n'); return 1
+      }
+      const { parsePolicy } = await import('../sources/github/gate.ts')
+      const parsed = parsePolicy(policyInput)
+      if (!parsed.ok) { process.stderr.write(`\u0633\u064a\u0627\u0633\u0629 GitHub \u063a\u064a\u0631 \u0635\u0627\u0644\u062d\u0629: ${parsed.reason}\n`); return 1 }
+      try {
+        const { createGitHubClient } = await import('../sources/github/client.ts')
+        github = { port: createGitHubClient({ token, apiUrl: process.env.FACTORY_GITHUB_API_URL }), policyPath }
+      } catch { process.stderr.write('\u0639\u0646\u0648\u0627\u0646 GitHub \u063a\u064a\u0631 \u0635\u0627\u0644\u062d\n'); return 1 }
+    }
     const { openStore } = await import('../app/store.ts')
     const { acquireSupervisor } = await import('../app/supervisor-lease.ts')
     const { runTick } = await import('../app/supervisor-loop.ts')
@@ -355,9 +372,10 @@ async function runStart(argv: readonly string[]): Promise<number> {
       const handle = acquireSupervisor(db, stateDir, { nowMs: Date.now(), staleAfterMs, takeover })
       try {
         await reconcileWorkers(db, handle, { killTree, stateDir, staleAfterMs }, Date.now())
+        const deps: import('../app/supervisor-loop.ts').LoopDeps = { spawnWorker, killTree, stateDir, staleAfterMs, readResult: readCompletion, isAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } }, github }
         while (true) {
           try {
-            const result = await runTick(db, handle, { spawnWorker, killTree, stateDir, staleAfterMs, readResult: readCompletion, isAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } } }, Date.now(), { fault })
+            const result = await runTick(db, handle, deps, Date.now(), { fault })
             if (idle && result.idle) break
           } catch (error) {
             if (typeof error !== 'object' || error === null || !('errcode' in error) || (error.errcode !== 5 && error.errcode !== 6)) throw error
