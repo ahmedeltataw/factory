@@ -20,8 +20,16 @@ export function spawnWorker(options: { runDir: string; cwd: string; taskId: stri
       .map((path) => fileURLToPath(new URL(path, import.meta.url)))
       .find((path) => existsSync(path))
     if (!executor) throw new Error('Fake executor not found')
+    const baseEnv = options.env ?? process.env
+    const childEnv: NodeJS.ProcessEnv = {}
+    for (const key of Object.keys(baseEnv)) {
+      const upper = key.toUpperCase()
+      if (upper !== 'FACTORY_GITHUB_TOKEN' && upper !== 'GITHUB_TOKEN' && upper !== 'GH_TOKEN' && upper !== 'GITHUB_PAT') {
+        childEnv[key] = baseEnv[key]
+      }
+    }
     const child = spawn(process.execPath, [executor, options.taskId, nonce, runDir], {
-      cwd: options.cwd, env: options.env ?? process.env, stdio: ['ignore', stdout, stderr],
+      cwd: options.cwd, env: childEnv, stdio: ['ignore', stdout, stderr],
       detached: true, windowsHide: true,
     })
     child.on('error', () => {})
