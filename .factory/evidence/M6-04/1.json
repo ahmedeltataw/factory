@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M6-04",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "943920988268fba1a8107982024dcbf97c091d7a",
+  "checks": [
+    {
+      "id": "CHK-M6-04-a",
+      "command": "pnpm exec vitest run tests/protected/m6-commands.spec.ts tests/protected/m6-commands-property.spec.ts; full suite 1135 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43450775111 all four cells success; mutation run 43450781915 apply-commands.ts 86.03 >= 80 (commands.ts unchanged by this card, covered by earlier mutation); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (2 rounds, approve); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, no findings)"
+    },
+    {
+      "id": "CHK-M6-04-b",
+      "command": "pnpm exec vitest run tests/protected/m6-commands.spec.ts tests/protected/m6-commands-property.spec.ts; full suite 1135 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43450775111 all four cells success; mutation run 43450781915 apply-commands.ts 86.03 >= 80 (commands.ts unchanged by this card, covered by earlier mutation); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (2 rounds, approve); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, no findings)"
+    },
+    {
+      "id": "CHK-M6-04-c",
+      "command": "pnpm exec vitest run tests/protected/m6-commands.spec.ts tests/protected/m6-commands-property.spec.ts; full suite 1135 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43450775111 all four cells success; mutation run 43450781915 apply-commands.ts 86.03 >= 80 (commands.ts unchanged by this card, covered by earlier mutation); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (2 rounds, approve); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, no findings)"
+    },
+    {
+      "id": "CHK-M6-04-d",
+      "command": "pnpm exec vitest run tests/protected/m6-commands.spec.ts tests/protected/m6-commands-property.spec.ts; full suite 1135 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43450775111 all four cells success; mutation run 43450781915 apply-commands.ts 86.03 >= 80 (commands.ts unchanged by this card, covered by earlier mutation); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (2 rounds, approve); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, no findings)"
+    },
+    {
+      "id": "CHK-M6-04-e",
+      "command": "pnpm exec vitest run tests/protected/m6-commands.spec.ts tests/protected/m6-commands-property.spec.ts; full suite 1135 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43450775111 all four cells success; mutation run 43450781915 apply-commands.ts 86.03 >= 80 (commands.ts unchanged by this card, covered by earlier mutation); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (2 rounds, approve); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, no findings)"
+    },
+    {
+      "id": "CHK-M6-04-f",
+      "command": "pnpm exec vitest run tests/protected/m6-commands.spec.ts tests/protected/m6-commands-property.spec.ts; full suite 1135 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43450775111 all four cells success; mutation run 43450781915 apply-commands.ts 86.03 >= 80 (commands.ts unchanged by this card, covered by earlier mutation); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (2 rounds, approve); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, no findings)"
+    }
+  ],
+  "ended_at": "2026-11-13T16:03:54.973Z"
+}
