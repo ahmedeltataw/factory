@@ -138,8 +138,38 @@ function getCommandLineForPid(pid: number, retries = 3): { status: 'found'; comm
           if (!isProcessAlive(pid)) return { status: 'not-found' }
         }
       } else {
-        const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
-        return { status: 'found', command: cmd }
+        let cmd = ''
+        try {
+          const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
+            encoding: 'utf8',
+            timeout: 10000,
+          })
+          if (res.status === 0 && res.stdout) {
+            cmd = res.stdout.trim()
+          }
+        } catch {}
+
+        if (!cmd) {
+          try {
+            cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+          } catch (e) {
+            if (!isProcessAlive(pid)) return { status: 'not-found' }
+            throw e
+          }
+        }
+
+        try {
+          const env = readFileSync(`/proc/${pid}/environ`, 'utf8')
+          if (env) {
+            cmd += '\0' + env
+          }
+        } catch {}
+
+        if (cmd.length > 0) {
+          return { status: 'found', command: cmd }
+        }
+        if (!isProcessAlive(pid)) return { status: 'not-found' }
+        throw new Error(`Process query returned empty command line for living PID ${pid}`)
       }
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
@@ -194,24 +224,35 @@ async function waitForProcessDeath(
 
 async function killSupervisorSafely(item: TrackedSupervisorChild, timeoutMs = 15000): Promise<void> {
   const { child, marker, pid } = item
-  if (!pid || !isProcessAlive(pid)) return
-  const check = checkProcessIdentity(pid, marker)
-  if (!check.alive) return
-  if (!check.matches) {
-    throw new Error(`Process identity mismatch for PID ${pid}: expected marker ${marker}`)
+  if (!pid) return
+
+  const handleRunning = child.exitCode === null && child.signalCode === null
+  if (handleRunning) {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
+        timeout: 10000,
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+    } else {
+      try { child.kill('SIGKILL') } catch {}
+    }
+
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if ((child.exitCode !== null || child.signalCode !== null) && !isProcessAlive(pid)) {
+        break
+      }
+      await delay(50)
+    }
+
+    if (child.exitCode === null && child.signalCode === null) {
+      throw new Error(`Supervisor process PID ${pid} (marker ${marker}) failed to terminate within ${timeoutMs}ms`)
+    }
   }
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
-      timeout: 10000,
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-  } else {
-    try { child.kill('SIGKILL') } catch {}
-  }
-  const dead = await waitForProcessDeath(pid, timeoutMs, marker)
-  if (!dead) {
-    throw new Error(`Supervisor process PID ${pid} (marker ${marker}) failed to terminate within ${timeoutMs}ms`)
+
+  if (isProcessAlive(pid)) {
+    throw new Error(`Supervisor process PID ${pid} (marker ${marker}) child handle exited or not provably ours, but process is still alive`)
   }
 }
 
