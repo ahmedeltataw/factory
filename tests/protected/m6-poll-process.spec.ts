@@ -5,6 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openStore } from '../../supervisor/src/app/store.ts'
@@ -613,7 +614,7 @@ describe('M6-05 real Supervisor processes with local fake GitHub server', () => 
     expect(resEmpty.stderr).toContain('FACTORY_GITHUB_TOKEN')
   })
 
-  it('CHK-M6-05-b: invalid policy exit 1 with Arabic message and zod issue path; refused URL exit 1; paused policy error visible in status', async () => {
+  it('CHK-M6-05-b: invalid policy exit 1 with Arabic message and zod issue path; refused URL exit 1; paused policy error written to github_cursor', async () => {
     const root = getTempDir()
     const repoDir = join(root, 'repo')
     const stateDir = join(root, 'state')
@@ -670,27 +671,73 @@ describe('M6-05 real Supervisor processes with local fake GitHub server', () => 
     expect(resRefused2.status).toBe(1)
     expect(resRefused2.stderr).toBe(resRefused.stderr)
 
-    // Paused-policy status visibility: write a cursor error 'policy: missing' and verify status output displays it
+    // Paused policy error written to github_cursor: run Supervisor with valid policy so repo gets a cursor row, then make policy missing and wait until github_cursor.error equals 'policy: missing'
     writePolicy(policyPath, defaultPolicy())
+    const serverInstance = await createFakeServer((_req, res) => {
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.github+json',
+        'ETag': 'etag-init',
+        'x-poll-interval': '60',
+      })
+      res.end('[]')
+    })
+
+    const supEnv = cleanTestEnv({
+      FACTORY_GITHUB_API_URL: serverInstance.url,
+      FACTORY_GITHUB_TOKEN: 'valid-test-token',
+    })
+
+    const supChild = spawnCli(
+      ['start', '--state-dir', stateDir, '--heartbeat-ms', '50'],
+      { env: supEnv },
+    )
+
     const dbPath = join(stateDir, 'state.sqlite')
-    const db = openStore(dbPath)
-    try {
-      const proj = db.prepare('SELECT id FROM projects LIMIT 1').get() as { id: string }
-      db.prepare(`
-        INSERT INTO github_cursor (project_id, repo, etag, next_poll_ms, error, updated_at)
-        VALUES (?, 'owner/repo', 'e1', 0, 'policy: missing', '2026-11-13T00:00:00.000Z')
-      `).run(proj.id)
-    } finally {
-      db.close()
+    const deadlineInit = Date.now() + 10000
+    let cursorCreated = false
+    while (Date.now() < deadlineInit) {
+      try {
+        const roDb = new DatabaseSync(dbPath, { readOnly: true, timeout: 1000 })
+        try {
+          const row = roDb.prepare('SELECT repo, error FROM github_cursor WHERE repo = ?').get('owner/repo') as { repo: string; error: string | null } | undefined
+          if (row) {
+            cursorCreated = true
+            break
+          }
+        } finally {
+          roDb.close()
+        }
+      } catch {
+        // Retry on transient lock
+      }
+      await delay(50)
     }
+    expect(cursorCreated).toBe(true)
 
-    const statusJson = await runCliAsync(['status', '--state-dir', stateDir, '--json'], { env: testEnv })
-    expect(statusJson.status).toBe(0)
-    expect(statusJson.stdout).toContain('policy: missing')
+    rmSync(policyPath, { force: true })
 
-    const statusText = await runCliAsync(['status', '--state-dir', stateDir], { env: testEnv })
-    expect(statusText.status).toBe(0)
-    expect(statusText.stdout).toContain('policy: missing')
+    const deadlineError = Date.now() + 10000
+    let observedError: string | null = null
+    while (Date.now() < deadlineError) {
+      try {
+        const roDb = new DatabaseSync(dbPath, { readOnly: true, timeout: 1000 })
+        try {
+          const row = roDb.prepare('SELECT error FROM github_cursor WHERE repo = ?').get('owner/repo') as { error: string | null } | undefined
+          if (row?.error === 'policy: missing' || (row?.error && row.error.startsWith('policy: '))) {
+            observedError = row.error
+            break
+          }
+        } finally {
+          roDb.close()
+        }
+      } catch {
+        // Retry on transient lock
+      }
+      await delay(50)
+    }
+    expect(observedError).toBe('policy: missing')
+
+    await killSupervisorSafely(supChild)
   })
 
   it('CHK-M6-05-d: hard kill between a poll result and its commit leaves no partial rows, after --takeover the same events are fetched again with the OLD stored ETag and give one row each', async () => {

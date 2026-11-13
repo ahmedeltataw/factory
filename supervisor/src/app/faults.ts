@@ -1,5 +1,5 @@
-﻿export type FaultName = 'outbox-before-effect' | 'outbox-after-effect' | 'attempt-after-spawn'
-export const FAULT_NAMES: readonly FaultName[] = ['outbox-before-effect', 'outbox-after-effect', 'attempt-after-spawn']
+﻿export type FaultName = 'outbox-before-effect' | 'outbox-after-effect' | 'attempt-after-spawn' | 'github-after-poll'
+export const FAULT_NAMES: readonly FaultName[] = ['outbox-before-effect', 'outbox-after-effect', 'attempt-after-spawn', 'github-after-poll']
 
 export function parseFault(value: string | undefined): FaultName | undefined {
   if (value === undefined || value === '') return undefined
