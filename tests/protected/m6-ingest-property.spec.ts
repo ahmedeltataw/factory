@@ -34,9 +34,11 @@ afterEach(() => {
 
 function setupDatabase(): DatabaseSync {
   const path = databasePath()
-  const db = openStore(path)
-  db.exec("INSERT INTO projects (id, name, created_at) VALUES ('p', 'Test Project', '2026-11-13T00:00:00.000Z')")
-  return db
+  return openStore(path)
+}
+
+function insertProject(db: DatabaseSync, projectId: string): void {
+  db.prepare("INSERT INTO projects (id, name, created_at) VALUES (?, 'Test Project', '2026-11-13T00:00:00.000Z')").run(projectId)
 }
 
 function parseTestPolicy(overrides: Record<string, unknown> = {}): { policy: Policy; hash: string } {
@@ -131,7 +133,6 @@ const rawEventArb = fc.record({
 function projectSemanticRow(row: Record<string, unknown>) {
   return {
     eventId: String(row.event_id),
-    projectId: String(row.project_id),
     repo: String(row.repo),
     kind: String(row.kind),
     actorId: Number(row.actor_id),
@@ -157,265 +158,292 @@ describe('M6-03 properties: CHK-M6-03-c ordering and CHK-M6-03-e invariants', ()
   it('CHK-M6-03-c: ordering property - any page order gives the same github_events table', () => {
     // maxPendingPerRepo is 2: guaranteed 4 admissible events ensure pending limit is exceeded
     const { policy } = parseTestPolicy({ maxPendingPerRepo: 2 })
+    const db = setupDatabase()
+    let runIndex = 0
 
-    fc.assert(
-      fc.property(
-        fc.shuffledSubarray(
-          [
-            // 4 guaranteed admissible unique events with known ascending BigInt IDs (including 20-digit IDs)
-            {
-              id: '10000000000000000001',
-              type: 'IssuesEvent',
-              actor: { id: 101, login: 'alice', type: 'User' },
-              repo: { name: 'owner/repo' },
-              payload: { action: 'opened', issue: { number: 1, title: 'Admit 1', body: 'Body 1', labels: [{ name: 'factory' }] } },
-              created_at: '2026-11-13T10:00:00Z',
-            },
-            {
-              id: '10000000000000000002',
-              type: 'IssuesEvent',
-              actor: { id: 101, login: 'alice', type: 'User' },
-              repo: { name: 'owner/repo' },
-              payload: { action: 'opened', issue: { number: 2, title: 'Admit 2', body: 'Body 2', labels: [{ name: 'factory' }] } },
-              created_at: '2026-11-13T10:01:00Z',
-            },
-            {
-              id: '90071992547409920001',
-              type: 'IssuesEvent',
-              actor: { id: 102, login: 'bob', type: 'User' },
-              repo: { name: 'owner/repo' },
-              payload: { action: 'opened', issue: { number: 3, title: 'Admit 3', body: 'Body 3', labels: [{ name: 'bug' }] } },
-              created_at: '2026-11-13T10:02:00Z',
-            },
-            {
-              id: '90071992547409920002',
-              type: 'IssuesEvent',
-              actor: { id: 102, login: 'bob', type: 'User' },
-              repo: { name: 'owner/repo' },
-              payload: { action: 'opened', issue: { number: 4, title: 'Admit 4', body: 'Body 4', labels: [{ name: 'bug' }] } },
-              created_at: '2026-11-13T10:03:00Z',
-            },
-          ],
-          { minLength: 4, maxLength: 4 },
+    try {
+      fc.assert(
+        fc.property(
+          fc.shuffledSubarray(
+            [
+              // 4 guaranteed admissible unique events with known ascending BigInt IDs (including 20-digit IDs)
+              {
+                id: '10000000000000000001',
+                type: 'IssuesEvent',
+                actor: { id: 101, login: 'alice', type: 'User' },
+                repo: { name: 'owner/repo' },
+                payload: { action: 'opened', issue: { number: 1, title: 'Admit 1', body: 'Body 1', labels: [{ name: 'factory' }] } },
+                created_at: '2026-11-13T10:00:00Z',
+              },
+              {
+                id: '10000000000000000002',
+                type: 'IssuesEvent',
+                actor: { id: 101, login: 'alice', type: 'User' },
+                repo: { name: 'owner/repo' },
+                payload: { action: 'opened', issue: { number: 2, title: 'Admit 2', body: 'Body 2', labels: [{ name: 'factory' }] } },
+                created_at: '2026-11-13T10:01:00Z',
+              },
+              {
+                id: '90071992547409920001',
+                type: 'IssuesEvent',
+                actor: { id: 102, login: 'bob', type: 'User' },
+                repo: { name: 'owner/repo' },
+                payload: { action: 'opened', issue: { number: 3, title: 'Admit 3', body: 'Body 3', labels: [{ name: 'bug' }] } },
+                created_at: '2026-11-13T10:02:00Z',
+              },
+              {
+                id: '90071992547409920002',
+                type: 'IssuesEvent',
+                actor: { id: 102, login: 'bob', type: 'User' },
+                repo: { name: 'owner/repo' },
+                payload: { action: 'opened', issue: { number: 4, title: 'Admit 4', body: 'Body 4', labels: [{ name: 'bug' }] } },
+                created_at: '2026-11-13T10:03:00Z',
+              },
+            ],
+            { minLength: 4, maxLength: 4 },
+          ),
+          (orderedWitnesses) => {
+            runIndex++
+            const proj1 = `p_ord_${runIndex}_a`
+            const proj2 = `p_ord_${runIndex}_b`
+            insertProject(db, proj1)
+            insertProject(db, proj2)
+
+            // Permute the page order
+            const permuted = [...orderedWitnesses].reverse()
+
+            const state1 = createIngestState()
+            ingestPoll(db, proj1, policy, 'owner/repo', { kind: 'events', etag: 'e1', pollAfterMs: 60000, events: orderedWitnesses }, 100000, state1)
+            const rawRows1 = db.prepare('SELECT * FROM github_events WHERE project_id = ? ORDER BY event_id ASC').all(proj1) as Record<string, unknown>[]
+            const rows1 = rawRows1.map(projectSemanticRow)
+
+            const state2 = createIngestState()
+            ingestPoll(db, proj2, policy, 'owner/repo', { kind: 'events', etag: 'e1', pollAfterMs: 60000, events: permuted }, 100000, state2)
+            const rawRows2 = db.prepare('SELECT * FROM github_events WHERE project_id = ? ORDER BY event_id ASC').all(proj2) as Record<string, unknown>[]
+            const rows2 = rawRows2.map(projectSemanticRow)
+
+            expect(rawRows1.every((r) => r.project_id === proj1)).toBe(true)
+            expect(rawRows2.every((r) => r.project_id === proj2)).toBe(true)
+
+            // 1. Any page order yields the exact same semantic table
+            expect(rows1).toEqual(rows2)
+
+            // 2. Guaranteed witnesses: pending limit (2) was reached and enforced by BigInt oldest-first order
+            const pendingRows = rows1.filter((r) => r.status === 'pending')
+            const limitRows = rows1.filter((r) => r.status === 'ignored' && r.reason === 'pending-limit')
+
+            expect(pendingRows).toHaveLength(2)
+            expect(limitRows).toHaveLength(2)
+
+            // Oldest BigInt IDs are pending; newer BigInt IDs are pending-limit
+            expect(pendingRows.map((r) => r.eventId)).toEqual(['10000000000000000001', '10000000000000000002'])
+            expect(limitRows.map((r) => r.eventId)).toEqual(['90071992547409920001', '90071992547409920002'])
+          },
         ),
-        (orderedWitnesses) => {
-          // Permute the page order
-          const permuted = [...orderedWitnesses].reverse()
-
-          const db1 = setupDatabase()
-          const state1 = createIngestState()
-          ingestPoll(db1, 'p', policy, 'owner/repo', { kind: 'events', etag: 'e1', pollAfterMs: 60000, events: orderedWitnesses }, 100000, state1)
-          const rawRows1 = db1.prepare('SELECT * FROM github_events WHERE project_id = ? ORDER BY event_id ASC').all('p') as Record<string, unknown>[]
-          const rows1 = rawRows1.map(projectSemanticRow)
-          db1.close()
-
-          const db2 = setupDatabase()
-          const state2 = createIngestState()
-          ingestPoll(db2, 'p', policy, 'owner/repo', { kind: 'events', etag: 'e1', pollAfterMs: 60000, events: permuted }, 100000, state2)
-          const rawRows2 = db2.prepare('SELECT * FROM github_events WHERE project_id = ? ORDER BY event_id ASC').all('p') as Record<string, unknown>[]
-          const rows2 = rawRows2.map(projectSemanticRow)
-          db2.close()
-
-          // 1. Any page order yields the exact same semantic table
-          expect(rows1).toEqual(rows2)
-
-          // 2. Guaranteed witnesses: pending limit (2) was reached and enforced by BigInt oldest-first order
-          const pendingRows = rows1.filter((r) => r.status === 'pending')
-          const limitRows = rows1.filter((r) => r.status === 'ignored' && r.reason === 'pending-limit')
-
-          expect(pendingRows).toHaveLength(2)
-          expect(limitRows).toHaveLength(2)
-
-          // Oldest BigInt IDs are pending; newer BigInt IDs are pending-limit
-          expect(pendingRows.map((r) => r.eventId)).toEqual(['10000000000000000001', '10000000000000000002'])
-          expect(limitRows.map((r) => r.eventId)).toEqual(['90071992547409920001', '90071992547409920002'])
-        },
-      ),
-      { numRuns: 20 },
-    )
+        { numRuns: 20 },
+      )
+    } finally {
+      db.close()
+    }
   })
 
   it('CHK-M6-03-e: ingest never writes commands, tasks or task_deps', () => {
     const policy = testPolicy()
+    const db = setupDatabase()
+    let runIndex = 0
 
-    fc.assert(
-      fc.property(
-        fc.array(rawEventArb, { minLength: 1, maxLength: 6 }),
-        (events) => {
-          // Guaranteed admitted witness to ensure the property exercises ingestion of pending events
-          // and cannot pass vacuously with only rejected or unsupported events.
-          const admittedWitness = {
-            id: '1',
-            type: 'IssuesEvent',
-            actor: { id: 101, login: 'alice', type: 'User' },
-            repo: { name: 'owner/repo' },
-            payload: { action: 'opened', issue: { number: 10, title: 'Admit Witness', body: 'Body', labels: [{ name: 'factory' }] } },
-            created_at: '2026-11-13T10:00:00Z',
-          }
+    try {
+      fc.assert(
+        fc.property(
+          fc.array(rawEventArb, { minLength: 1, maxLength: 6 }),
+          (events) => {
+            runIndex++
+            const projectId = `p_nowrite_${runIndex}`
+            insertProject(db, projectId)
 
-          // Prefix generated events so admittedWitness (id: '1') is processed first and guaranteed admitted as pending
-          const allEvents = [
-            admittedWitness,
-            ...events.map((e, idx) => ({ ...e, id: `1000${idx}${e.id}` })),
-          ]
+            // Guaranteed admitted witness to ensure the property exercises ingestion of pending events
+            // and cannot pass vacuously with only rejected or unsupported events.
+            const admittedWitness = {
+              id: '1',
+              type: 'IssuesEvent',
+              actor: { id: 101, login: 'alice', type: 'User' },
+              repo: { name: 'owner/repo' },
+              payload: { action: 'opened', issue: { number: 10, title: 'Admit Witness', body: 'Body', labels: [{ name: 'factory' }] } },
+              created_at: '2026-11-13T10:00:00Z',
+            }
 
-          const db = setupDatabase()
-          const state = createIngestState()
+            // Prefix generated events so admittedWitness (id: '1') is processed first and guaranteed admitted as pending
+            const allEvents = [
+              admittedWitness,
+              ...events.map((e, idx) => ({ ...e, id: `1000${idx}${e.id}` })),
+            ]
 
-          ingestPoll(db, 'p', policy, 'owner/repo', { kind: 'events', etag: 'e1', pollAfterMs: 60000, events: allEvents }, 100000, state)
+            const state = createIngestState()
 
-          // Verify the witness was stored as pending
-          const witnessRow = db.prepare("SELECT status FROM github_events WHERE project_id = 'p' AND event_id = '1'").get() as { status: string } | undefined
-          expect(witnessRow).toBeDefined()
-          expect(witnessRow!.status).toBe('pending')
+            ingestPoll(db, projectId, policy, 'owner/repo', { kind: 'events', etag: 'e1', pollAfterMs: 60000, events: allEvents }, 100000, state)
 
-          const cmdCount = (db.prepare('SELECT count(*) as count FROM commands').get() as { count: number }).count
-          const taskCount = (db.prepare('SELECT count(*) as count FROM tasks').get() as { count: number }).count
-          const depCount = (db.prepare('SELECT count(*) as count FROM task_deps').get() as { count: number }).count
+            // Verify the witness was stored as pending
+            const witnessRow = db.prepare('SELECT status FROM github_events WHERE project_id = ? AND event_id = ?').get(projectId, '1') as { status: string } | undefined
+            expect(witnessRow).toBeDefined()
+            expect(witnessRow!.status).toBe('pending')
 
-          db.close()
+            const cmdCount = (db.prepare('SELECT count(*) as count FROM commands WHERE project_id = ?').get(projectId) as { count: number }).count
+            const taskCount = (db.prepare('SELECT count(*) as count FROM tasks WHERE project_id = ?').get(projectId) as { count: number }).count
+            const depCount = (db.prepare('SELECT count(*) as count FROM task_deps JOIN tasks ON tasks.id = task_deps.task_id WHERE tasks.project_id = ?').get(projectId) as { count: number }).count
+            const totalDepCount = (db.prepare('SELECT count(*) as count FROM task_deps').get() as { count: number }).count
 
-          expect(cmdCount).toBe(0)
-          expect(taskCount).toBe(0)
-          expect(depCount).toBe(0)
-        },
-      ),
-      { numRuns: 20 },
-    )
+            expect(cmdCount).toBe(0)
+            expect(taskCount).toBe(0)
+            expect(depCount).toBe(0)
+            expect(totalDepCount).toBe(0)
+          },
+        ),
+        { numRuns: 20 },
+      )
+    } finally {
+      db.close()
+    }
   })
 
   it('CHK-M6-03-e: random pages property - unique event ids, valid pending gate pass, untrusted scope invariant', () => {
     const { policy, hash: expectedPolicyHash } = parseTestPolicy({ maxPendingPerRepo: 3 })
+    const db = setupDatabase()
+    let runIndex = 0
 
-    fc.assert(
-      fc.property(
-        fc.array(rawEventArb, { minLength: 1, maxLength: 6 }),
-        (randomEvents) => {
-          // Guaranteed witnesses to ensure the property never passes vacuously.
-          // Admitted witness has ID '1' (strictly below every generated event ID) so it is processed first
-          // and cannot have its pending limit exhausted by generated events.
-          const witnessAdmitted = {
-            id: '1',
-            type: 'IssuesEvent',
-            actor: { id: 101, login: 'alice', type: 'User' },
-            repo: { name: 'owner/repo' },
-            payload: { action: 'opened', issue: { number: 42, title: 'Guaranteed Bug', body: 'body', labels: [{ name: 'factory' }] } },
-            created_at: '2026-11-13T10:00:00Z',
-          }
-          const witnessRejected = {
-            id: '2',
-            type: 'IssuesEvent',
-            actor: { id: 999, login: 'eve', type: 'User' },
-            repo: { name: 'owner/repo' },
-            payload: { action: 'opened', issue: { number: 43, title: 'Rejected Bug', body: 'body', labels: [{ name: 'factory' }] } },
-            created_at: '2026-11-13T10:00:00Z',
-          }
+    try {
+      fc.assert(
+        fc.property(
+          fc.array(rawEventArb, { minLength: 1, maxLength: 6 }),
+          (randomEvents) => {
+            runIndex++
+            const projectId = `p_rand_${runIndex}`
+            insertProject(db, projectId)
 
-          const mappedRandom = randomEvents.map((e, idx) => ({ ...e, id: `7000${idx}${e.id}` }))
-
-          // Include identical duplicate payloads (repeated IDs) while preserving unambiguous expected outcomes:
-          // Duplicates of witnessAdmitted, witnessRejected, and random events exercise deduplication logic.
-          const allEvents = [
-            witnessAdmitted,
-            witnessRejected,
-            ...mappedRandom,
-            { ...witnessAdmitted },
-            { ...witnessRejected },
-            ...mappedRandom.slice(0, 2).map((e) => ({ ...e })),
-          ]
-
-          const db = setupDatabase()
-          const state = createIngestState()
-
-          ingestPoll(db, 'p', policy, 'owner/repo', { kind: 'events', etag: 'e1', pollAfterMs: 60000, events: allEvents }, 100000, state)
-
-          const rows = db.prepare("SELECT * FROM github_events WHERE project_id = 'p'").all() as Record<string, unknown>[]
-
-          // 1. Guaranteed witnesses present and correct
-          expect(rows.length).toBeGreaterThan(0)
-          const admittedWitnessRow = rows.find((r) => r.event_id === '1')
-          expect(admittedWitnessRow).toBeDefined()
-          expect(admittedWitnessRow!.status).toBe('pending')
-          expect(admittedWitnessRow!.reason).toBeNull()
-
-          const rejectedWitnessRow = rows.find((r) => r.event_id === '2')
-          expect(rejectedWitnessRow).toBeDefined()
-          expect(rejectedWitnessRow!.status).toBe('ignored')
-          expect(rejectedWitnessRow!.reason).toBe('actor-not-allowed')
-
-          // 2. Invariant: No duplicate event id in table despite repeated IDs in input
-          const eventIds = rows.map((r) => String(r.event_id))
-          expect(new Set(eventIds).size).toBe(eventIds.length)
-
-          for (const row of rows) {
-            const status = String(row.status)
-            const text = String(row.text)
-
-            // Text trust and sha256 invariant
-            expect(row.text_trust).toBe('untrusted')
-            expect(row.text_sha256).toBe(sha256Hex(text))
-
-            // Find matching original raw input to normalize and re-verify
-            const raw = allEvents.find((e) => String(e.id) === String(row.event_id)) as Record<string, unknown>
-            expect(raw).toBeDefined()
-            const norm = normalizeEvent(raw)
-
-            if (!norm.ok) {
-              // Only malformed events with readable decimal IDs are stored as ignored
-              expect(status).toBe('ignored')
-              expect(row.reason).toBe('malformed')
-              expect(row.title).toBeNull()
-              expect(row.scope_json).toBeNull()
-              continue
+            // Guaranteed witnesses to ensure the property never passes vacuously.
+            // Admitted witness has ID '1' (strictly below every generated event ID) so it is processed first
+            // and cannot have its pending limit exhausted by generated events.
+            const witnessAdmitted = {
+              id: '1',
+              type: 'IssuesEvent',
+              actor: { id: 101, login: 'alice', type: 'User' },
+              repo: { name: 'owner/repo' },
+              payload: { action: 'opened', issue: { number: 42, title: 'Guaranteed Bug', body: 'body', labels: [{ name: 'factory' }] } },
+              created_at: '2026-11-13T10:00:00Z',
+            }
+            const witnessRejected = {
+              id: '2',
+              type: 'IssuesEvent',
+              actor: { id: 999, login: 'eve', type: 'User' },
+              repo: { name: 'owner/repo' },
+              payload: { action: 'opened', issue: { number: 43, title: 'Rejected Bug', body: 'body', labels: [{ name: 'factory' }] } },
+              created_at: '2026-11-13T10:00:00Z',
             }
 
-            const gateRes = gate(policy, norm.event)
+            const mappedRandom = randomEvents.map((e, idx) => ({ ...e, id: `7000${idx}${e.id}` }))
 
-            if (status === 'ignored') {
-              expect(row.title).toBeNull()
-              expect(row.scope_json).toBeNull()
-              expect(typeof row.reason).toBe('string')
-              expect(String(row.reason).length).toBeGreaterThan(0)
+            // Include identical duplicate payloads (repeated IDs) while preserving unambiguous expected outcomes:
+            // Duplicates of witnessAdmitted, witnessRejected, and random events exercise deduplication logic.
+            const allEvents = [
+              witnessAdmitted,
+              witnessRejected,
+              ...mappedRandom,
+              { ...witnessAdmitted },
+              { ...witnessRejected },
+              ...mappedRandom.slice(0, 2).map((e) => ({ ...e })),
+            ]
 
-              if (!gateRes.admit) {
-                expect(row.reason).toBe(gateRes.reason)
-              } else {
-                // If gate admitted, it must be ignored due to pending-limit
-                expect(row.reason).toBe('pending-limit')
+            const state = createIngestState()
+
+            ingestPoll(db, projectId, policy, 'owner/repo', { kind: 'events', etag: 'e1', pollAfterMs: 60000, events: allEvents }, 100000, state)
+
+            const rows = db.prepare('SELECT * FROM github_events WHERE project_id = ?').all(projectId) as Record<string, unknown>[]
+
+            // 1. Guaranteed witnesses present and correct
+            expect(rows.length).toBeGreaterThan(0)
+            const admittedWitnessRow = rows.find((r) => r.event_id === '1')
+            expect(admittedWitnessRow).toBeDefined()
+            expect(admittedWitnessRow!.status).toBe('pending')
+            expect(admittedWitnessRow!.reason).toBeNull()
+
+            const rejectedWitnessRow = rows.find((r) => r.event_id === '2')
+            expect(rejectedWitnessRow).toBeDefined()
+            expect(rejectedWitnessRow!.status).toBe('ignored')
+            expect(rejectedWitnessRow!.reason).toBe('actor-not-allowed')
+
+            // 2. Invariant: No duplicate event id in table despite repeated IDs in input
+            const eventIds = rows.map((r) => String(r.event_id))
+            expect(new Set(eventIds).size).toBe(eventIds.length)
+
+            for (const row of rows) {
+              const status = String(row.status)
+              const text = String(row.text)
+
+              // Text trust and sha256 invariant
+              expect(row.text_trust).toBe('untrusted')
+              expect(row.text_sha256).toBe(sha256Hex(text))
+
+              // Find matching original raw input to normalize and re-verify
+              const raw = allEvents.find((e) => String(e.id) === String(row.event_id)) as Record<string, unknown>
+              expect(raw).toBeDefined()
+              const norm = normalizeEvent(raw)
+
+              if (!norm.ok) {
+                // Only malformed events with readable decimal IDs are stored as ignored
+                expect(status).toBe('ignored')
+                expect(row.reason).toBe('malformed')
+                expect(row.title).toBeNull()
+                expect(row.scope_json).toBeNull()
+                continue
               }
-            } else if (status === 'pending') {
-              expect(row.reason).toBeNull()
-              expect(typeof row.title).toBe('string')
-              expect(String(row.title).length).toBeGreaterThan(0)
 
-              // Gate must have admitted the normalized event
-              expect(gateRes.admit).toBe(true)
-              if (!gateRes.admit) throw new Error('Unreachable')
+              const gateRes = gate(policy, norm.event)
 
-              // Title matches gate
-              expect(row.title).toBe(gateRes.title)
+              if (status === 'ignored') {
+                expect(row.title).toBeNull()
+                expect(row.scope_json).toBeNull()
+                expect(typeof row.reason).toBe('string')
+                expect(String(row.reason).length).toBeGreaterThan(0)
 
-              // Scope comes from policy repo entry, never text-derived
-              const repoConfig = policy.repos.find((r) => r.name === norm.event.repo)!
-              expect(JSON.parse(String(row.scope_json))).toEqual([...repoConfig.scope])
-              expect(gateRes.scope).toEqual([...repoConfig.scope])
+                if (!gateRes.admit) {
+                  expect(row.reason).toBe(gateRes.reason)
+                } else {
+                  // If gate admitted, it must be ignored due to pending-limit
+                  expect(row.reason).toBe('pending-limit')
+                }
+              } else if (status === 'pending') {
+                expect(row.reason).toBeNull()
+                expect(typeof row.title).toBe('string')
+                expect(String(row.title).length).toBeGreaterThan(0)
 
-              // Basis matches exact policy hash and normalized event
-              const basis = JSON.parse(String(row.basis_json)) as Record<string, unknown>
-              expect(basis.policyVersion).toBe(policy.version)
-              expect(basis.policyHash).toBe(expectedPolicyHash)
-              expect(basis.actorId).toBe(norm.event.actor.id)
-              expect(basis.repo).toBe(norm.event.repo)
-              expect(basis.issue).toBe(norm.event.issue)
-              expect(basis.eventId).toBe(norm.event.eventId)
-              expect(basis.kind).toBe(norm.event.kind)
+                // Gate must have admitted the normalized event
+                expect(gateRes.admit).toBe(true)
+                if (!gateRes.admit) throw new Error('Unreachable')
+
+                // Title matches gate
+                expect(row.title).toBe(gateRes.title)
+
+                // Scope comes from policy repo entry, never text-derived
+                const repoConfig = policy.repos.find((r) => r.name === norm.event.repo)!
+                expect(JSON.parse(String(row.scope_json))).toEqual([...repoConfig.scope])
+                expect(gateRes.scope).toEqual([...repoConfig.scope])
+
+                // Basis matches exact policy hash and normalized event
+                const basis = JSON.parse(String(row.basis_json)) as Record<string, unknown>
+                expect(basis.policyVersion).toBe(policy.version)
+                expect(basis.policyHash).toBe(expectedPolicyHash)
+                expect(basis.actorId).toBe(norm.event.actor.id)
+                expect(basis.repo).toBe(norm.event.repo)
+                expect(basis.issue).toBe(norm.event.issue)
+                expect(basis.eventId).toBe(norm.event.eventId)
+                expect(basis.kind).toBe(norm.event.kind)
+              }
             }
-          }
-
-          db.close()
-        },
-      ),
-      { numRuns: 30 },
-    )
+          },
+        ),
+        { numRuns: 30 },
+      )
+    } finally {
+      db.close()
+    }
   })
 })
