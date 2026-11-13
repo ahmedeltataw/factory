@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M6-05",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "097b7b8",
+  "checks": [
+    {
+      "id": "CHK-M6-05-a",
+      "command": "pnpm exec vitest run tests/protected/m6-poll.spec.ts tests/protected/m6-poll-process.spec.ts; full suite 1232 tests; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43506620297 all four cells success; mutation run 43506625517 supervisor-loop.ts 84.10, faults.ts 80.00, total 83.86 >= 80 (cli/main.ts is exercised only through child processes, so Stryker reports no coverage; it is covered by CHK-M6-05-b and CHK-M6-05-e real-process tests, a recorded limit); protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, 8 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve)"
+    },
+    {
+      "id": "CHK-M6-05-b",
+      "command": "pnpm exec vitest run tests/protected/m6-poll.spec.ts tests/protected/m6-poll-process.spec.ts; full suite 1232 tests; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43506620297 all four cells success; mutation run 43506625517 supervisor-loop.ts 84.10, faults.ts 80.00, total 83.86 >= 80 (cli/main.ts is exercised only through child processes, so Stryker reports no coverage; it is covered by CHK-M6-05-b and CHK-M6-05-e real-process tests, a recorded limit); protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, 8 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve)"
+    },
+    {
+      "id": "CHK-M6-05-c",
+      "command": "pnpm exec vitest run tests/protected/m6-poll.spec.ts tests/protected/m6-poll-process.spec.ts; full suite 1232 tests; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43506620297 all four cells success; mutation run 43506625517 supervisor-loop.ts 84.10, faults.ts 80.00, total 83.86 >= 80 (cli/main.ts is exercised only through child processes, so Stryker reports no coverage; it is covered by CHK-M6-05-b and CHK-M6-05-e real-process tests, a recorded limit); protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, 8 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve)"
+    },
+    {
+      "id": "CHK-M6-05-d",
+      "command": "pnpm exec vitest run tests/protected/m6-poll.spec.ts tests/protected/m6-poll-process.spec.ts; full suite 1232 tests; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43506620297 all four cells success; mutation run 43506625517 supervisor-loop.ts 84.10, faults.ts 80.00, total 83.86 >= 80 (cli/main.ts is exercised only through child processes, so Stryker reports no coverage; it is covered by CHK-M6-05-b and CHK-M6-05-e real-process tests, a recorded limit); protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, 8 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve)"
+    },
+    {
+      "id": "CHK-M6-05-e",
+      "command": "pnpm exec vitest run tests/protected/m6-poll.spec.ts tests/protected/m6-poll-process.spec.ts; full suite 1232 tests; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43506620297 all four cells success; mutation run 43506625517 supervisor-loop.ts 84.10, faults.ts 80.00, total 83.86 >= 80 (cli/main.ts is exercised only through child processes, so Stryker reports no coverage; it is covered by CHK-M6-05-b and CHK-M6-05-e real-process tests, a recorded limit); protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, 8 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve)"
+    }
+  ],
+  "ended_at": "2026-11-13T21:27:07.467Z"
+}
