@@ -72,8 +72,8 @@ it('CHK-M5-07-a: phases and task graph are read in order without writes', () => 
   expect(result.status).toBe(0)
   const json = JSON.parse(result.stdout)
   const expected = phases.map((phase, i) => ({ ...phase, tasks: [counts(0, 0, 0, 0, 1, 1), counts(4, 1, 1, 2, 0, 0), counts(1, 0, 0, 0, 0, 0), counts(0, 0, 0, 0, 0, 0), counts(0, 0, 0, 0, 0, 0)][i] }))
-  expect(status.schemaVersion).toBe(7)
-  expect(json.schemaVersion).toBe(7)
+  expect(status.schemaVersion).toBe(8)
+  expect(json.schemaVersion).toBe(8)
   expect(status.phases).toEqual(expected)
   expect(json.phases).toEqual(expected)
   for (const row of rows) {
@@ -82,7 +82,7 @@ it('CHK-M5-07-a: phases and task graph are read in order without writes', () => 
   }
   expect(hash(path)).toBe(before)
   const db = new DatabaseSync(path, { readOnly: true })
-  try { expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 }) } finally { db.close() }
+  try { expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 }) } finally { db.close() }
 }))
 
 it('CHK-M5-07-b: waiting matches dispatch and blockedBy remains progress-only', () => withFixture(dir => {

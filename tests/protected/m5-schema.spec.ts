@@ -136,7 +136,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
     const path = databasePath()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
       expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
       expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
       expect(db.prepare('PRAGMA busy_timeout').get()).toMatchObject({ timeout: 5000 })
@@ -230,7 +230,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
       // Reopening is idempotent
       const observer = new DatabaseSync(path)
       try {
-        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
+        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
       } finally {
         observer.close()
       }
@@ -298,7 +298,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
         timeAfterUpgrade = new Date(Date.now() + 100).toISOString()
       }
       try {
-        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
+        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
         expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
         expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
 
@@ -496,7 +496,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
     future.exec(`
       CREATE TABLE future_data (value TEXT NOT NULL);
       INSERT INTO future_data VALUES ('preserved');
-      PRAGMA user_version = 8;
+      PRAGMA user_version = 9;
     `)
     future.close()
 
@@ -544,7 +544,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
           second,
           `CREATE TABLE future_data (value TEXT NOT NULL);
            INSERT INTO future_data VALUES ('preserved');
-           PRAGMA user_version = 8;`,
+           PRAGMA user_version = 9;`,
         )
       } finally {
         second.close()
@@ -572,7 +572,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
 
     const check = new DatabaseSync(path)
     try {
-      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
       expect(check.prepare('SELECT value FROM future_data').get()).toMatchObject({ value: 'preserved' })
       expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'phases'").get()).toBeUndefined()
     } finally {
@@ -979,7 +979,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
 
         const expectedStatus = {
           phases: [],
-          schemaVersion: 7,
+          schemaVersion: 8,
           recordedCommandCount: 6,
           commands: { recorded: 6, applied: 1, rejected: 2, pending: 3 },
           lease: {
@@ -1032,7 +1032,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
         expect(status).toEqual(expectedStatus)
 
         const arabic = formatStatus(status as unknown as Status)
-        expect(arabic).toContain('إصدار المخطط: 7')
+        expect(arabic).toContain('إصدار المخطط: 8')
         expect(arabic).toContain('عدد الأوامر المسجلة: 6')
         expect(arabic).toContain('Example task')
         expect(arabic).toContain('task-one')

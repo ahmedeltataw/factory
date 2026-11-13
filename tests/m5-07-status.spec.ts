@@ -68,7 +68,7 @@ describe('M5-07 status unit and mutation tests', () => {
       expect(() => readStatus(dir, { nowMs: null as any, staleAfterMs: 500 })).toThrow('status: nowMs must be a nonnegative safe integer')
       // boundary: 0 is valid nonnegative safe integer
       const status0 = readStatus(dir, { nowMs: 0, staleAfterMs: 500 })
-      expect(status0.schemaVersion).toBe(7)
+      expect(status0.schemaVersion).toBe(8)
     })
 
     it('validates staleAfterMs argument', () => {
@@ -80,18 +80,18 @@ describe('M5-07 status unit and mutation tests', () => {
       expect(() => readStatus(dir, { nowMs: 1000, staleAfterMs: null as any })).toThrow('status: staleAfterMs must be a positive safe integer')
       // boundary: 1 is valid positive safe integer
       const status1 = readStatus(dir, { nowMs: 1000, staleAfterMs: 1 })
-      expect(status1.schemaVersion).toBe(7)
+      expect(status1.schemaVersion).toBe(8)
     })
 
     it('validates unsupported user_version and missing user_version', () => {
       const dir = makeDir()
       const db = openStore(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 8')
+        db.exec('PRAGMA user_version = 9')
       } finally {
         db.close()
       }
-      expect(() => readStatus(dir, { nowMs: 1000, staleAfterMs: 500 })).toThrow('status: unsupported schema version 8')
+      expect(() => readStatus(dir, { nowMs: 1000, staleAfterMs: 500 })).toThrow('status: unsupported schema version 9')
 
       const originalPrepare = DatabaseSync.prototype.prepare
       DatabaseSync.prototype.prepare = function (sql: string, ...rest: any[]) {
@@ -349,7 +349,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec("INSERT INTO supervisor_lease VALUES (1, 'legacy-owner', 3, 800, 'active')")
@@ -358,7 +358,7 @@ describe('M5-07 status unit and mutation tests', () => {
       }
 
       const status = readStatus(dir, { nowMs: 1000, staleAfterMs: 500 })
-      expect(status.schemaVersion).toBe(7)
+      expect(status.schemaVersion).toBe(8)
       expect(status.recordedCommandCount).toBe(0)
       expect(status.lease).not.toBeNull()
       expect(status.lease?.takeover).toBeUndefined()
@@ -368,7 +368,7 @@ describe('M5-07 status unit and mutation tests', () => {
       expect(status.phases).toEqual([])
 
       const text = formatStatus(status)
-      expect(text).toContain('إصدار المخطط: 7')
+      expect(text).toContain('إصدار المخطط: 8')
       expect(text).toContain('دليل الاستحواذ=legacy-owner:3:800')
       expect(text).not.toContain('الأوامر:')
       expect(text).not.toContain('صندوق الصادر:')
@@ -380,7 +380,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec('CREATE TABLE command_outcomes (command_id TEXT, outcome TEXT, failure_class TEXT, duration_ms INTEGER, recorded_at TEXT)')
@@ -397,7 +397,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec('CREATE TABLE tasks (rowid INTEGER PRIMARY KEY, id TEXT, title TEXT, status TEXT, scope_json TEXT, max_attempts INTEGER, timeout_ms INTEGER, attempt_base INTEGER, not_before_ms INTEGER, created_at TEXT, updated_at TEXT)')
@@ -414,7 +414,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec('CREATE TABLE outbox (id TEXT, idempotency_key TEXT, kind TEXT, payload_json TEXT, status TEXT, tries INTEGER, next_attempt_ms INTEGER, last_error TEXT)')
@@ -927,7 +927,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec('CREATE TABLE tasks (rowid INTEGER PRIMARY KEY, id TEXT, title TEXT, status TEXT, scope_json TEXT, max_attempts INTEGER, timeout_ms INTEGER, attempt_base INTEGER, not_before_ms INTEGER, created_at TEXT, updated_at TEXT)')
@@ -947,7 +947,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec('CREATE TABLE tasks (rowid INTEGER PRIMARY KEY, id TEXT, title TEXT, status TEXT, scope_json TEXT, max_attempts INTEGER, timeout_ms INTEGER, attempt_base INTEGER, not_before_ms INTEGER, created_at TEXT, updated_at TEXT)')
@@ -1113,14 +1113,14 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec('CREATE TABLE task_deps (task_id TEXT, depends_on TEXT)')
 
         // Case A: tasks table missing and task_deps is empty -> succeeds!
         const statusEmpty = readStatus(dir, { nowMs: 1000, staleAfterMs: 500 })
-        expect(statusEmpty.schemaVersion).toBe(7)
+        expect(statusEmpty.schemaVersion).toBe(8)
 
         // Case B: tasks table missing and task_deps has a row -> throws!
         db.exec("INSERT INTO task_deps VALUES ('t1', 't0')")
@@ -1322,7 +1322,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec(`
@@ -1352,7 +1352,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const dir = makeDir()
       const db = new DatabaseSync(join(dir, 'state.sqlite'))
       try {
-        db.exec('PRAGMA user_version = 7')
+        db.exec('PRAGMA user_version = 8')
         db.exec('CREATE TABLE commands (id TEXT, project_id TEXT, kind TEXT, payload_json TEXT, created_at TEXT)')
         db.exec('CREATE TABLE supervisor_lease (id INTEGER PRIMARY KEY, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT)')
         db.exec(`
@@ -1479,7 +1479,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const allPhases: PhaseStatus[] = ['locked', 'open', 'done']
       const formattedPhases = allPhases.map(s => {
         const dummy: Status = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           recordedCommandCount: 1,
           lease: null,
           phases: [{ name: 'intake', ord: 1, status: s, openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } }],
@@ -1496,7 +1496,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const labels = ['قيد التقدم', 'قيد الانتظار', 'جاهزة', 'محظورة', 'فاشلة', 'متروكة', 'مكتملة']
       statuses.forEach((st, idx) => {
         const dummy: Status = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           recordedCommandCount: 1,
           lease: null,
           phases: [],
@@ -1524,7 +1524,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const labels = ['معلقة', 'قيد التشغيل', 'ناجحة', 'أخفقت', 'مقاطعة', 'تم إنهاؤها']
       statuses.forEach((st, idx) => {
         const dummy: Status = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           recordedCommandCount: 1,
           lease: null,
           phases: [],
@@ -1560,7 +1560,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const labels = ['قيد البدء', 'يعمل', 'خرج', 'تم إنهاؤه', 'مفقود']
       states.forEach((st, idx) => {
         const dummy: Status = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           recordedCommandCount: 1,
           lease: null,
           phases: [],
@@ -1596,7 +1596,7 @@ describe('M5-07 status unit and mutation tests', () => {
       const expected = ['مفقود', 'غير قيد التشغيل', 'عدم تطابق الهوية', 'تم إنهاؤه', 'عابر', 'انتهاء المهلة', 'انتهاك النطاق', 'خروج غير صفري', 'خطأ صندوق الصادر: send-failed', 'custom-error']
       classes.forEach((ec, idx) => {
         const dummy: Status = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           recordedCommandCount: 1,
           lease: null,
           phases: [],
@@ -1637,7 +1637,7 @@ describe('M5-07 status unit and mutation tests', () => {
       ]
       freshnesses.forEach((fr, idx) => {
         const dummy: Status = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           recordedCommandCount: 1,
           lease: {
             ownerId: 'owner',
@@ -1655,7 +1655,7 @@ describe('M5-07 status unit and mutation tests', () => {
     it('formats outbox with various pending, done, failed combinations and failedRows', () => {
       // 0, 0, 0: no outbox section
       const dummyZero: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         outbox: { pending: 0, done: 0, failed: 0, failedRows: [] },
@@ -1665,7 +1665,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
       // pending > 0
       const dummyPend: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         outbox: { pending: 2, done: 0, failed: 0, failedRows: [] },
@@ -1676,7 +1676,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
       // failed > 0 with failedRows (null lastError and non-null lastError)
       const dummyFailed: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         outbox: {
@@ -1699,7 +1699,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
     it('does not render phase or task section when empty', () => {
       const dummyEmpty: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 0,
         lease: null,
         phases: [],
@@ -1713,7 +1713,7 @@ describe('M5-07 status unit and mutation tests', () => {
     it('accurately computes task attempt budget in formatStatus', () => {
       // attemptBase = 2, attempts: [no 1, no 2, no 3], maxAttempts = 5 -> attemptsUsed = 1
       const dummyWithBase: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [],
@@ -1746,7 +1746,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
       // attemptBase omitted, maxAttempts omitted -> attemptsUsed = 1, maxAttempts = 3
       const dummyDefault: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [],
@@ -1772,7 +1772,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
     it('formats task optional fields (timeoutMs, notBeforeMs, phase, dependsOn, blockedBy)', () => {
       const dummyFull: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [],
@@ -1800,7 +1800,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
       // Omitted / null fields
       const dummyOmitted: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [],
@@ -1827,7 +1827,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
     it('formats waiting reasons with empty target list without trailing parentheses', () => {
       const dummyBackoff: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [],
@@ -1854,7 +1854,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
     it('formats attempt line with null, 0, and positive exitCode and deadlineMs', () => {
       const dummyAtt: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [],
@@ -1888,7 +1888,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
     it('formats worker with null pid, 0 heartbeatMs, and suspect flag accurately', () => {
       const dummyWorker: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [],
@@ -1939,7 +1939,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
     it('renders phase openedAt, closedAt, and task counts in Arabic view', () => {
       const dummy: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [
@@ -1991,7 +1991,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
     it('handles phase with null dates and default task counts when omitted', () => {
       const dummy: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [
@@ -2013,7 +2013,7 @@ describe('M5-07 status unit and mutation tests', () => {
 
     it('renders task attempts with evidence and suspect workers', () => {
       const dummy: Status = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         recordedCommandCount: 1,
         lease: null,
         phases: [],

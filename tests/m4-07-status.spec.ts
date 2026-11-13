@@ -76,7 +76,7 @@ describe('M4-07 unit tests', () => {
     const dir = createFixture()
     try {
       const status = readStatus(dir, { nowMs: 1000, staleAfterMs: 500 }) as Status
-      expect(status.schemaVersion).toBe(7)
+      expect(status.schemaVersion).toBe(8)
       const tasks = status.tasks!
       const ready1 = tasks.find((t) => t.id === 'ready-1')!
       expect(ready1.scope).toEqual(['docs/api', 'src/ui'])
