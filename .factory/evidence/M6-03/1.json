@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M6-03",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "7123b37a9f5298432bb3d60291c01f216ef47c4c",
+  "checks": [
+    {
+      "id": "CHK-M6-03-a",
+      "command": "pnpm exec vitest run tests/protected/m6-ingest.spec.ts tests/protected/m6-ingest-property.spec.ts; full suite 1153 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43446648063 all four cells success (first run failed once in m4-retries CHK-M4-05-d, a wall-clock flake unrelated to M6; failed job rerun green); mutation run 43443276943 ingest.ts 83.73 >= 80; protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (4 rounds, approve); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve) and read by Lead"
+    },
+    {
+      "id": "CHK-M6-03-b",
+      "command": "pnpm exec vitest run tests/protected/m6-ingest.spec.ts tests/protected/m6-ingest-property.spec.ts; full suite 1153 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43446648063 all four cells success (first run failed once in m4-retries CHK-M4-05-d, a wall-clock flake unrelated to M6; failed job rerun green); mutation run 43443276943 ingest.ts 83.73 >= 80; protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (4 rounds, approve); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve) and read by Lead"
+    },
+    {
+      "id": "CHK-M6-03-c",
+      "command": "pnpm exec vitest run tests/protected/m6-ingest.spec.ts tests/protected/m6-ingest-property.spec.ts; full suite 1153 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43446648063 all four cells success (first run failed once in m4-retries CHK-M4-05-d, a wall-clock flake unrelated to M6; failed job rerun green); mutation run 43443276943 ingest.ts 83.73 >= 80; protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (4 rounds, approve); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve) and read by Lead"
+    },
+    {
+      "id": "CHK-M6-03-d",
+      "command": "pnpm exec vitest run tests/protected/m6-ingest.spec.ts tests/protected/m6-ingest-property.spec.ts; full suite 1153 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43446648063 all four cells success (first run failed once in m4-retries CHK-M4-05-d, a wall-clock flake unrelated to M6; failed job rerun green); mutation run 43443276943 ingest.ts 83.73 >= 80; protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (4 rounds, approve); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve) and read by Lead"
+    },
+    {
+      "id": "CHK-M6-03-e",
+      "command": "pnpm exec vitest run tests/protected/m6-ingest.spec.ts tests/protected/m6-ingest-property.spec.ts; full suite 1153 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43446648063 all four cells success (first run failed once in m4-retries CHK-M4-05-d, a wall-clock flake unrelated to M6; failed job rerun green); mutation run 43443276943 ingest.ts 83.73 >= 80; protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (4 rounds, approve); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve) and read by Lead"
+    }
+  ],
+  "ended_at": "2026-11-13T15:19:33.729Z"
+}
