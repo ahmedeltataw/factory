@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "card": "M6-01",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "08665b24be572e0a9a8f44297907d51437468935",
+  "checks": [
+    {
+      "id": "CHK-M6-01-a",
+      "command": "pnpm exec vitest run tests/protected/m6-gate.spec.ts tests/protected/m6-gate-property.spec.ts; full suite 1123 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43430461198 all four cells success; mutation run 43430466149 event.ts 90.48, gate.ts 89.27 >= 80; protected tests by gpt-6.1-terra reviewed by gpt-6.1-sol (5 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve, no findings) and read by Lead"
+    },
+    {
+      "id": "CHK-M6-01-b",
+      "command": "pnpm exec vitest run tests/protected/m6-gate.spec.ts tests/protected/m6-gate-property.spec.ts; full suite 1123 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43430461198 all four cells success; mutation run 43430466149 event.ts 90.48, gate.ts 89.27 >= 80; protected tests by gpt-6.1-terra reviewed by gpt-6.1-sol (5 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve, no findings) and read by Lead"
+    },
+    {
+      "id": "CHK-M6-01-c",
+      "command": "pnpm exec vitest run tests/protected/m6-gate.spec.ts tests/protected/m6-gate-property.spec.ts; full suite 1123 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43430461198 all four cells success; mutation run 43430466149 event.ts 90.48, gate.ts 89.27 >= 80; protected tests by gpt-6.1-terra reviewed by gpt-6.1-sol (5 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve, no findings) and read by Lead"
+    },
+    {
+      "id": "CHK-M6-01-d",
+      "command": "pnpm exec vitest run tests/protected/m6-gate.spec.ts tests/protected/m6-gate-property.spec.ts; full suite 1123 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43430461198 all four cells success; mutation run 43430466149 event.ts 90.48, gate.ts 89.27 >= 80; protected tests by gpt-6.1-terra reviewed by gpt-6.1-sol (5 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve, no findings) and read by Lead"
+    },
+    {
+      "id": "CHK-M6-01-e",
+      "command": "pnpm exec vitest run tests/protected/m6-gate.spec.ts tests/protected/m6-gate-property.spec.ts; full suite 1123 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43430461198 all four cells success; mutation run 43430466149 event.ts 90.48, gate.ts 89.27 >= 80; protected tests by gpt-6.1-terra reviewed by gpt-6.1-sol (5 rounds); implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve, no findings) and read by Lead"
+    }
+  ],
+  "ended_at": "2026-11-13T13:33:29.241Z"
+}

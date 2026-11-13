@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M6-02",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "6650f86c62b1829f9e440140c7c06a1d747b9e37",
+  "checks": [
+    {
+      "id": "CHK-M6-02-a",
+      "command": "pnpm exec vitest run tests/protected/m6-schema.spec.ts; full suite 1001 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43428015961 all four cells success; mutation run 43428020718 store.ts 94.23 >= 80; protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (4 rounds); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (one finding on the status.ts schemaVersion literal type, resolved by Lead amendment 2026-11-13)"
+    },
+    {
+      "id": "CHK-M6-02-b",
+      "command": "pnpm exec vitest run tests/protected/m6-schema.spec.ts; full suite 1001 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43428015961 all four cells success; mutation run 43428020718 store.ts 94.23 >= 80; protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (4 rounds); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (one finding on the status.ts schemaVersion literal type, resolved by Lead amendment 2026-11-13)"
+    },
+    {
+      "id": "CHK-M6-02-c",
+      "command": "pnpm exec vitest run tests/protected/m6-schema.spec.ts; full suite 1001 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43428015961 all four cells success; mutation run 43428020718 store.ts 94.23 >= 80; protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (4 rounds); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (one finding on the status.ts schemaVersion literal type, resolved by Lead amendment 2026-11-13)"
+    },
+    {
+      "id": "CHK-M6-02-d",
+      "command": "pnpm exec vitest run tests/protected/m6-schema.spec.ts; full suite 1001 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43428015961 all four cells success; mutation run 43428020718 store.ts 94.23 >= 80; protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high (4 rounds); implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (one finding on the status.ts schemaVersion literal type, resolved by Lead amendment 2026-11-13)"
+    }
+  ],
+  "ended_at": "2026-11-13T13:33:29.343Z"
+}
