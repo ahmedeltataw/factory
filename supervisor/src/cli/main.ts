@@ -169,7 +169,82 @@ async function run(argv: readonly string[]): Promise<number> {
   return 0
 }
 
+async function runGitHub(argv: readonly string[]): Promise<number> {
+  const action = argv[1]
+  if (action !== 'approve' && action !== 'reject') {
+    process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory github <approve|reject> --state-dir <path> --event <id>\n')
+    return 2
+  }
+  const allowed = action === 'approve'
+    ? ['--state-dir', '--event', '--command-id']
+    : ['--state-dir', '--event', '--reason', '--command-id']
+  const values: Record<string, string> = {}
+  for (let i = 2; i < argv.length; i++) {
+    const key = argv[i]!
+    const value = argv[++i]
+    if (
+      !allowed.includes(key) ||
+      values[key] !== undefined ||
+      value === undefined ||
+      value.startsWith('-') ||
+      !value.isWellFormed()
+    ) {
+      process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory github <approve|reject> --state-dir <path> --event <id>\n')
+      return 2
+    }
+    if (key === '--event' && !/^[0-9]{1,20}$/.test(value)) {
+      process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory github <approve|reject> --state-dir <path> --event <id>\n')
+      return 2
+    }
+    if (key === '--state-dir' && !value.trim()) {
+      process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory github <approve|reject> --state-dir <path> --event <id>\n')
+      return 2
+    }
+    if (key === '--command-id' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+      process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory github <approve|reject> --state-dir <path> --event <id>\n')
+      return 2
+    }
+    values[key] = value
+  }
+  if (values['--state-dir'] === undefined || values['--event'] === undefined) {
+    process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory github <approve|reject> --state-dir <path> --event <id>\n')
+    return 2
+  }
+  try {
+    const path = join(values['--state-dir']!, 'state.sqlite')
+    if (!existsSync(path)) throw new Error('missing database')
+    const db = new DatabaseSync(path)
+    try {
+      db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000')
+      const project = db.prepare('SELECT project_id FROM project_config').get() as { project_id: string } | undefined
+      if (!project) throw new Error('missing project')
+      const id = values['--command-id'] ?? randomUUID()
+      const existing = db.prepare('SELECT created_at FROM commands WHERE id = ?').get(id) as { created_at: string } | undefined
+      const { appendCommand } = await import('../app/commands.ts')
+      const kind = action === 'approve' ? 'github.approve' : 'github.reject'
+      const payload = action === 'approve'
+        ? { eventId: values['--event']! }
+        : { eventId: values['--event']!, reason: values['--reason'] ?? null }
+      const result = appendCommand(db, {
+        id,
+        projectId: project.project_id,
+        kind,
+        payloadJson: JSON.stringify(payload),
+        createdAt: existing?.created_at ?? new Date().toISOString(),
+      })
+      process.stdout.write(`${result} ${id}\n\u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0623\u0645\u0631\n`)
+      return 0
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    process.stderr.write(`\u062a\u0639\u0630\u0631 \u062a\u0646\u0641\u064a\u0630 \u0627\u0644\u0623\u0645\u0631: ${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
+  }
+}
+
 async function runTaskOrInit(argv: readonly string[]): Promise<number> {
+  if (argv[0] === 'github') return await runGitHub(argv)
   const isInit = argv[0] === 'init'
   const action = argv[1]
   const isPhase = argv[0] === 'phase' && action === 'advance'
