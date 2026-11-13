@@ -276,6 +276,19 @@ process.on('SIGINT', () => { clearInterval(timer); process.exit(0); });
     JSON.stringify({ pid: process.pid, nonce, grandchildPid }),
   )
 
+  if (process.env.FAKE_PRINT_ENV === '1' || process.env.FAKE_PRINT_ENV === 'child') {
+    const keys = Object.keys(process.env).sort()
+    process.stdout.write(`ENV_KEYS ${JSON.stringify(keys)}\n`)
+    if (process.env.FAKE_PRINT_ENV === 'child') {
+      const childScript = `process.stdout.write('ENV_KEYS_CHILD ' + JSON.stringify(Object.keys(process.env).sort()) + '\\n');`
+      const cp = spawn(process.execPath, ['-e', childScript], { stdio: 'inherit', windowsHide: true })
+      await new Promise<void>((resolve, reject) => {
+        cp.once('error', reject)
+        cp.once('exit', () => resolve())
+      })
+    }
+  }
+
   // 4. Precedence: FAKE_HANG > FAKE_FAIL_UNTIL_ATTEMPT > FAKE_EXIT_CODE > normal
   if (isHang) {
     setInterval(() => {}, 60000)
