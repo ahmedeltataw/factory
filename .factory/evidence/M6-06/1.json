@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M6-06",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "9b010fd",
+  "checks": [
+    {
+      "id": "CHK-M6-06-a",
+      "command": "pnpm exec vitest run tests/protected/m6-client.spec.ts tests/protected/m6-token.spec.ts tests/m6-06-client.spec.ts; full suite 1200 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43470236866 all four cells success; mutation client.ts 88.33 >= 80 (run 43469732683); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high; implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 4 rounds)"
+    },
+    {
+      "id": "CHK-M6-06-b",
+      "command": "pnpm exec vitest run tests/protected/m6-client.spec.ts tests/protected/m6-token.spec.ts tests/m6-06-client.spec.ts; full suite 1200 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43470236866 all four cells success; mutation client.ts 88.33 >= 80 (run 43469732683); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high; implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 4 rounds)"
+    },
+    {
+      "id": "CHK-M6-06-c",
+      "command": "pnpm exec vitest run tests/protected/m6-client.spec.ts tests/protected/m6-token.spec.ts tests/m6-06-client.spec.ts; full suite 1200 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43470236866 all four cells success; mutation client.ts 88.33 >= 80 (run 43469732683); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high; implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 4 rounds)"
+    },
+    {
+      "id": "CHK-M6-06-d",
+      "command": "pnpm exec vitest run tests/protected/m6-client.spec.ts tests/protected/m6-token.spec.ts tests/m6-06-client.spec.ts; full suite 1200 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43470236866 all four cells success; mutation client.ts 88.33 >= 80 (run 43469732683); protected tests by gpt-6.1-terra reviewed by gemini-3.8-flash-high; implementation by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 4 rounds)"
+    }
+  ],
+  "ended_at": "2026-11-13T18:54:50.658Z"
+}
