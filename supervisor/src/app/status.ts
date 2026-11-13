@@ -20,7 +20,7 @@ import {
 } from '../core/graph.ts'
 
 /** Storage schema version this status reader supports: the M4 storage schema (v6) / M5 (v7). */
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 
 export type LeaseState = 'active' | 'released'
 export type LeaseFreshness = 'fresh' | 'stale' | 'future' | 'not-applicable'
@@ -122,7 +122,7 @@ export interface TaskStatusItem {
 }
 
 export interface Status {
-  readonly schemaVersion: 7
+  readonly schemaVersion: 8
   readonly recordedCommandCount: number
   readonly lease: null | Lease
   readonly commands?: CommandsSummary

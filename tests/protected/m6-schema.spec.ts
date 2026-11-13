@@ -226,7 +226,7 @@ it('CHK-M6-02-c: event and cursor constraints and transitions', () => {
       db.prepare("INSERT INTO projects VALUES ('p1', 'Project', '2026-11-10T00:00:00.000Z')").run()
       db.prepare("INSERT INTO project_config VALUES ('p1', ?, 'main', '2026-11-10T00:00:00.000Z')").run(process.cwd())
 
-      db.exec("INSERT INTO phases (project_id,name,ord,status,opened_at,closed_at) VALUES ('p1','intake',1,'open','2026-11-10T00:00:00.000Z',NULL)")
+      db.exec("INSERT INTO phases (project_id,name,ord,status,opened_at,closed_at) VALUES ('p1','intake',1,'open','2026-11-10T00:00:00.000Z',NULL), ('p1','development',2,'locked',NULL,NULL), ('p1','qa',3,'locked',NULL,NULL), ('p1','devops',4,'locked',NULL,NULL), ('p1','handover',5,'locked',NULL,NULL)")
 
       const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 500 })
       try {
@@ -260,7 +260,13 @@ it('CHK-M6-02-c: event and cursor constraints and transitions', () => {
         db.prepare("INSERT INTO evidence VALUES ('attempt-1', 'base', 'head-sha', '[{\"path\":\"src/a.ts\",\"sha256\":\"abc123\"}]', 'out', 'err', 'now')").run()
 
         const expectedStatus = {
-          phases: [{ name: 'intake', ord: 1, status: 'open', openedAt: '2026-11-10T00:00:00.000Z', closedAt: null, tasks: { ready: 1, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } }],
+          phases: [
+            { name: 'intake', ord: 1, status: 'open', openedAt: '2026-11-10T00:00:00.000Z', closedAt: null, tasks: { ready: 1, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } },
+            { name: 'development', ord: 2, status: 'locked', openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } },
+            { name: 'qa', ord: 3, status: 'locked', openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } },
+            { name: 'devops', ord: 4, status: 'locked', openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } },
+            { name: 'handover', ord: 5, status: 'locked', openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } },
+          ],
           schemaVersion: 8,
           recordedCommandCount: 6,
           commands: { recorded: 6, applied: 1, rejected: 2, pending: 3 },

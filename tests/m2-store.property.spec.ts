@@ -52,7 +52,7 @@ describe('M2-02 storage property (CHK-M2-TOOLS-b)', () => {
           for (let attempt = 0; attempt < 2; attempt++) {
             const db = openStore(path)
             try {
-              expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
+              expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
               expect(db.prepare('SELECT id, name, created_at FROM projects ORDER BY id').all()).toEqual(expected)
             } finally {
               db.close()

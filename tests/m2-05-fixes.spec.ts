@@ -76,9 +76,9 @@ it('reports missing, unsupported and malformed databases in Arabic before detail
   const dir = directory()
   const missing = cli('status', '--state-dir', dir); expect(missing.status).toBe(1); expect(missing.stderr.split('\n')[0]).toMatch(/[\u0600-\u06ff]/)
   const db = new DatabaseSync(join(dir, 'state.sqlite'))
-  try { db.exec('PRAGMA user_version = 8') } finally { db.close() }
+  try { db.exec('PRAGMA user_version = 9') } finally { db.close() }
   const unsupported = cli('status', '--state-dir', dir); expect(unsupported.status).toBe(1); expect(unsupported.stderr.split('\n')[0]).toContain('\u063a\u064a\u0631 \u0645\u062f\u0639\u0648\u0645')
   const malformedDb = new DatabaseSync(join(dir, 'state.sqlite'))
-  try { malformedDb.exec("PRAGMA user_version = 7; CREATE TABLE commands (id TEXT); CREATE TABLE supervisor_lease (id INTEGER, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT); INSERT INTO supervisor_lease VALUES (1, '', 1, 0, 'active')") } finally { malformedDb.close() }
+  try { malformedDb.exec("PRAGMA user_version = 8; CREATE TABLE commands (id TEXT); CREATE TABLE supervisor_lease (id INTEGER, owner_id TEXT, generation INTEGER, heartbeat_ms INTEGER, status TEXT); INSERT INTO supervisor_lease VALUES (1, '', 1, 0, 'active')") } finally { malformedDb.close() }
   const malformed = cli('status', '--state-dir', dir); expect(malformed.status).toBe(1); expect(malformed.stderr.split('\n')[0]).toContain('\u063a\u064a\u0631 \u0635\u0627\u0644\u062d\u0629')
 })

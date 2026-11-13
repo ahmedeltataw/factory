@@ -40,7 +40,7 @@ describe('M5-WIN store opening', () => {
         expect(migrations).toBe(1)
         expect(failed.size).toBe(2)
         expect([...failed].every(handle => closed.has(handle))).toBe(true)
-        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 7 })
+        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
       } finally { db.close() }
     } finally {
       vi.restoreAllMocks()

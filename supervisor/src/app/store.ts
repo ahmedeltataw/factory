@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 const ASCII_WHITESPACE = 'char(32, 9, 10, 13, 12, 11)'
 const MIGRATIONS: Readonly<Record<number, string | readonly string[]>> = {
   1: 'CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL)',
@@ -61,6 +61,13 @@ const MIGRATIONS: Readonly<Record<number, string | readonly string[]>> = {
     `CREATE TRIGGER task_deps_no_update BEFORE UPDATE ON task_deps BEGIN SELECT RAISE(ABORT, 'task_deps are immutable'); END`,
     `CREATE TRIGGER task_deps_no_delete BEFORE DELETE ON task_deps BEGIN SELECT RAISE(ABORT, 'task_deps are immutable'); END`,
     `INSERT INTO phases (project_id, name, ord, status, opened_at) SELECT projects.id, phase.name, phase.ord, CASE WHEN phase.ord = 1 THEN 'open' ELSE 'locked' END, CASE WHEN phase.ord = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE NULL END FROM projects CROSS JOIN (SELECT 'intake' AS name, 1 AS ord UNION ALL SELECT 'development', 2 UNION ALL SELECT 'qa', 3 UNION ALL SELECT 'devops', 4 UNION ALL SELECT 'handover', 5) AS phase`,
+  ],
+  8: [
+    `CREATE TABLE github_events (event_id TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES projects(id), repo TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('issue.opened','issue.comment')), actor_id INTEGER NOT NULL, actor_login TEXT NOT NULL, issue INTEGER NOT NULL, status TEXT NOT NULL CHECK (status IN ('ignored','pending','approved','rejected')), reason TEXT, title TEXT, scope_json TEXT, basis_json TEXT, text TEXT NOT NULL, text_trust TEXT NOT NULL CHECK (text_trust = 'untrusted'), text_sha256 TEXT NOT NULL, event_at TEXT NOT NULL, received_at TEXT NOT NULL, decided_at TEXT, decided_by_command TEXT REFERENCES commands(id), task_id TEXT REFERENCES tasks(id), PRIMARY KEY (project_id, event_id))`,
+    `CREATE TABLE github_cursor (project_id TEXT NOT NULL REFERENCES projects(id), repo TEXT NOT NULL, etag TEXT, next_poll_ms INTEGER NOT NULL, error TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (project_id, repo))`,
+    `CREATE TRIGGER github_events_no_delete BEFORE DELETE ON github_events BEGIN SELECT RAISE(ABORT, 'github_events are permanent'); END`,
+    `CREATE TRIGGER github_events_immutable BEFORE UPDATE ON github_events BEGIN SELECT RAISE(ABORT, 'github_events is immutable') WHERE OLD.status <> 'pending' OR NEW.status NOT IN ('approved', 'rejected') OR (NEW.status = 'approved' AND NEW.task_id IS NULL) OR NEW.event_id IS NOT OLD.event_id OR NEW.project_id IS NOT OLD.project_id OR NEW.repo IS NOT OLD.repo OR NEW.kind IS NOT OLD.kind OR NEW.actor_id IS NOT OLD.actor_id OR NEW.actor_login IS NOT OLD.actor_login OR NEW.issue IS NOT OLD.issue OR NEW.title IS NOT OLD.title OR NEW.scope_json IS NOT OLD.scope_json OR NEW.basis_json IS NOT OLD.basis_json OR NEW.text IS NOT OLD.text OR NEW.text_trust IS NOT OLD.text_trust OR NEW.text_sha256 IS NOT OLD.text_sha256 OR NEW.event_at IS NOT OLD.event_at OR NEW.received_at IS NOT OLD.received_at; END`,
+    `CREATE TRIGGER github_events_pending_check BEFORE INSERT ON github_events WHEN NEW.status = 'pending' AND (NEW.title IS NULL OR length(trim(NEW.title)) = 0 OR NEW.scope_json IS NULL OR length(trim(NEW.scope_json)) = 0) BEGIN SELECT RAISE(ABORT, 'pending github_events must have title and scope_json'); END`,
   ],
 }
 
