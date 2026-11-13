@@ -33,8 +33,15 @@ it('CHK-M6-06-c: client failures and persisted poll results never disclose the c
   const token = `canary-${randomUUID()}`, root = mkdtempSync(join(tmpdir(), 'factory-m6-token-'))
   const prior = process.env.FACTORY_GITHUB_TOKEN
   process.env.FACTORY_GITHUB_TOKEN = token
-  let status = 500, body = token
-  const server = createServer((_req, res) => { res.writeHead(status, status === 302 ? { location: `/echo-${token}` } : {}); res.end(body) })
+  let status = 500
+  const requests: { authorization: string | undefined; body: string; location?: string }[] = []
+  const server = createServer((req, res) => {
+    const authorization = req.headers.authorization
+    const echoed = authorization?.replace(/^Bearer /, '') ?? ''
+    const body = `echo:${echoed}`, location = status === 302 ? `/echo-${echoed}` : undefined
+    requests.push({ authorization, body, location })
+    res.writeHead(status, location ? { location } : {}); res.end(body)
+  })
   let db: DatabaseSync | undefined
   try {
     server.listen(0, '127.0.0.1'); await once(server, 'listening')
@@ -46,9 +53,14 @@ it('CHK-M6-06-c: client failures and persisted poll results never disclose the c
     db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('project', 'project', '2026-01-01')
     const policy: Policy = { version: 1, repos: [{ name: 'owner/name', labels: ['allowed'], scope: ['src'] }], actors: [{ id: 1, login: 'actor' }], command: '/factory', maxPendingPerRepo: 5 }
     for (const code of [500, 401, 302, 200]) {
-      status = code; body = token
+      status = code
+      const count = requests.length
       let result: PollResult
       try { result = await c.poll({ repo: 'owner/name', etag: null }) } catch (error) { noSecret(error, token); throw error }
+      expect(requests).toHaveLength(count + 1)
+      expect(requests[count]?.authorization).toBe(`Bearer ${token}`)
+      expect(requests[count]?.body).toBe(`echo:${token}`)
+      if (code === 302) expect(requests[count]?.location).toBe(`/echo-${token}`)
       expect(result.kind).toBe('error'); noSecret(result, token)
       ingest.ingestPoll(db, 'project', policy, 'owner/name', result, Date.now(), ingest.createIngestState())
       expect(db.prepare('SELECT COUNT(*) AS count FROM github_cursor').get()?.count).toBe(1)
@@ -70,7 +82,7 @@ it('CHK-M6-06-c: client failures and persisted poll results never disclose the c
 
 function alive(pid: number): boolean { try { process.kill(pid, 0); return true } catch { return false } }
 async function waitUntil(check: () => boolean): Promise<void> {
-  const deadline = Date.now() + 15000
+  const deadline = Date.now() + 10000
   while (Date.now() < deadline) { if (check()) return; await delay(25) }
   throw new Error('Worker did not finish before deadline')
 }
@@ -80,14 +92,14 @@ function envKeys(log: string, label: string): string[] {
   return JSON.parse(lines[0]!.slice(label.length + 1)) as string[]
 }
 
-it('CHK-M6-06-d: worker and grandchild exclude secrets for default and supplied environments', async () => {
+it.each(['default', 'process', 'explicit', 'child'])('CHK-M6-06-d: worker and grandchild exclude secrets for %s environment', async mode => {
   const changed = [...secretKeys, 'FAKE_PRINT_ENV', 'FAKE_EXIT_CODE', 'FACTORY_M6_OTHER']
   const previous = new Map(changed.map(key => [key, process.env[key]]))
   const root = mkdtempSync(join(tmpdir(), 'factory-m6-worker-'))
   try {
     for (const key of secretKeys) process.env[key] = `secret-${randomUUID()}`
     process.env.FAKE_PRINT_ENV = '1'; process.env.FAKE_EXIT_CODE = '7'; process.env.FACTORY_M6_OTHER = 'present'
-    for (const mode of ['default', 'process', 'explicit', 'child']) {
+    {
       const cwd = join(root, `${mode}-cwd`), runDir = join(root, `${mode}-run`); mkdirSync(cwd); mkdirSync(runDir)
       const env = mode === 'default' ? undefined : mode === 'process' ? process.env : { ...process.env, FAKE_PRINT_ENV: mode === 'child' ? 'child' : '1' }
       const spawned = spawnWorker({ cwd, runDir, taskId: `task-${mode}`, attemptId: randomUUID(), ...(env ? { env } : {}) })
@@ -124,4 +136,4 @@ it('CHK-M6-06-d: worker and grandchild exclude secrets for default and supplied 
     for (const [key, value] of previous) if (value === undefined) delete process.env[key]; else process.env[key] = value
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }
-}, 90000)
+})

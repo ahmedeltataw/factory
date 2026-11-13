@@ -65,13 +65,19 @@ it('CHK-M6-06-a: requests, pages, and response mapping', async () => {
       if (limited.kind === 'rate-limited') { expect(limited.retryAfterMs).toBeGreaterThanOrEqual(178000); expect(limited.retryAfterMs).toBeLessThanOrEqual(180000) }
     }
     for (const status of [500, 503, 401, 403, 404]) { s.replies.push({ status }); errorResult(await poll(c), status >= 500) }
-    for (const body of ['not json', ' '.repeat(5 * 1024 * 1024 + 1)]) { s.replies.push({ status: 200, body }); errorResult(await poll(c), false) }
+    s.replies.push({ status: 200, body: 'not json' }); errorResult(await poll(c), false)
+    s.replies.push({ status: 200, body: `[${'0,'.repeat(500000)}0]` })
+    const accepted = await poll(c)
+    expect(accepted.kind).toBe('events')
+    if (accepted.kind === 'events') expect(accepted.events).toHaveLength(500001)
+    s.replies.push({ status: 200, body: `[${'0,'.repeat(3000000)}0]` }); errorResult(await poll(c), false)
   } finally { await s.close(); await other.close() }
   const closed = await server(); const c = await client(closed.url); await closed.close(); errorResult(await poll(c), true)
 }, 30000)
 
 it('CHK-M6-06-b: rejects unsafe hosts and never follows redirects', async () => {
   const module = await import(clientPath) as { createGitHubClient(options: { token: string; apiUrl?: string }): GitHubPort }
+  expect(() => module.createGitHubClient({ token: 'x' })).not.toThrow()
   for (const apiUrl of ['https://example.com', 'http://example.com', 'http://api.github.com']) expect(() => module.createGitHubClient({ token: 'x', apiUrl })).toThrow()
   for (const apiUrl of ['https://api.github.com', 'http://127.0.0.1:1234', 'http://localhost:1234']) expect(() => module.createGitHubClient({ token: 'x', apiUrl })).not.toThrow()
   const source = await server(), target = await server()
