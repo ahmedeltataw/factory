@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M6-QA2",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "0f37c3e26b0e8bc1fd96df95013ebe8911d22d57",
+  "checks": [
+    {
+      "id": "CHK-M6-QA2-a",
+      "command": "pnpm exec vitest run tests/protected/m6-gate.spec.ts tests/protected/m6-gate-property.spec.ts; verify + mutation dispatch",
+      "result": "pass",
+      "output": "Muse #23-#26 gaps covered by 18 added assertions; verify run 43443594418 all four cells success; mutation run 43443600301 event.ts 99.40, gate.ts 96.05 (was 90.48 and 89.27); written by gpt-6.1-terra, reviewed by gemini-3.8-flash-high (approve)"
+    }
+  ],
+  "ended_at": "2026-11-13T15:19:33.845Z"
+}
