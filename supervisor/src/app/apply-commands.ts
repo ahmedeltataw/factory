@@ -4,8 +4,67 @@ import { fencedWrite } from './fence.ts'
 import type { SupervisorLeaseHandle } from './supervisor-lease.ts'
 import { parseScope } from '../core/scope.ts'
 import { PHASES, parseDeps, phaseOrd, type PhaseName } from '../core/graph.ts'
+import { sanitizeLine } from '../sources/github/event.ts'
 
 interface PendingCommand { id: string; project_id: string; kind: string; payload_json: string; created_at: string }
+
+interface CreateTaskParams {
+  readonly id: string
+  readonly projectId: string
+  readonly createdByCommand: string
+  readonly title: unknown
+  readonly scope: unknown
+  readonly maxAttempts: unknown
+  readonly timeoutMs: unknown
+  readonly phase: unknown
+  readonly deps: unknown
+  readonly createdAt: string
+  readonly now: string
+}
+
+function createTask(db: DatabaseSync, params: CreateTaskParams): string | null {
+  const scope = parseScope(params.scope)
+  const maxAttempts = params.maxAttempts
+  const timeoutMs = params.timeoutMs
+  const phase = params.phase === undefined ? null : params.phase
+  const deps = parseDeps(params.deps === undefined ? [] : params.deps)
+  if (
+    (phase !== null && (typeof phase !== 'string' || !PHASES.includes(phase as PhaseName))) ||
+    !deps.ok ||
+    typeof params.title !== 'string' ||
+    !params.title.trim() ||
+    !params.title.isWellFormed() ||
+    !scope.ok ||
+    typeof maxAttempts !== 'number' ||
+    !Number.isInteger(maxAttempts) ||
+    maxAttempts < 1 ||
+    maxAttempts > 10 ||
+    (timeoutMs !== null && (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 86400000))
+  ) {
+    return 'invalid command or payload'
+  }
+  const selected = phase === null
+    ? db.prepare("SELECT name, status FROM phases WHERE project_id = ? AND status = 'open'").get(params.projectId)
+    : db.prepare('SELECT name, status FROM phases WHERE project_id = ? AND name = ?').get(params.projectId, phase)
+  const target = selected as { name: string; status: string } | undefined
+  const phaseLess = !target && !db.prepare('SELECT 1 FROM phases WHERE project_id = ? LIMIT 1').get(params.projectId)
+  if (phaseLess && phase === null && deps.deps.length === 0) {
+    db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)")
+      .run(params.id, params.projectId, params.createdByCommand, params.title, params.createdAt, params.now, JSON.stringify(scope.scope), maxAttempts, timeoutMs)
+    return null
+  }
+  if (!target || target.status === 'done') return 'phase is not available'
+  for (const dep of deps.deps) {
+    const task = db.prepare('SELECT project_id, status, phase FROM tasks WHERE id = ?').get(dep) as { project_id: string; status: string; phase: string } | undefined
+    if (!task || task.project_id !== params.projectId || task.status === 'dropped' || phaseOrd(task.phase) > phaseOrd(target.name)) {
+      return `invalid dependency: ${dep}`
+    }
+  }
+  db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms, phase) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?)")
+    .run(params.id, params.projectId, params.createdByCommand, params.title, params.createdAt, params.now, JSON.stringify(scope.scope), maxAttempts, timeoutMs, target.name)
+  for (const dep of deps.deps) db.prepare('INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)').run(params.id, dep)
+  return null
+}
 
 export function applyPendingCommands(db: DatabaseSync, handle: SupervisorLeaseHandle): void {
   while (true) {
@@ -20,38 +79,69 @@ export function applyPendingCommands(db: DatabaseSync, handle: SupervisorLeaseHa
       const object = payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {}
       if (command.kind === 'task.create') {
         const legacy = Object.keys(object).length === 1 && Object.hasOwn(object, 'title')
-        const scope = parseScope(legacy ? ['.'] : object.scope)
-        const maxAttempts = legacy ? 3 : object.maxAttempts
-        const timeoutMs = legacy ? null : object.timeoutMs
-        const phase = object.phase === undefined ? null : object.phase
-        const deps = parseDeps(object.deps === undefined ? [] : object.deps)
-        if ((phase !== null && (typeof phase !== 'string' || !PHASES.includes(phase as PhaseName))) || !deps.ok || typeof object.title !== 'string' || !object.title.trim() || !object.title.isWellFormed() || !scope.ok ||
-            typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10 ||
-            (timeoutMs !== null && (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 86400000))) {
+        reason = createTask(db, {
+          id: command.id,
+          projectId: command.project_id,
+          createdByCommand: command.id,
+          title: object.title,
+          scope: legacy ? ['.'] : object.scope,
+          maxAttempts: legacy ? 3 : object.maxAttempts,
+          timeoutMs: legacy ? null : object.timeoutMs,
+          phase: object.phase,
+          deps: object.deps,
+          createdAt: command.created_at,
+          now,
+        })
+      } else if (command.kind === 'github.approve') {
+        if (typeof object.eventId !== 'string' || !/^[0-9]{1,20}$/.test(object.eventId)) {
           reason = 'invalid command or payload'
         } else {
-          const selected = phase === null
-            ? db.prepare("SELECT name, status FROM phases WHERE project_id = ? AND status = 'open'").get(command.project_id)
-            : db.prepare('SELECT name, status FROM phases WHERE project_id = ? AND name = ?').get(command.project_id, phase)
-          const target = selected as { name: string; status: string } | undefined
-          const phaseLess = !target && !db.prepare('SELECT 1 FROM phases WHERE project_id = ? LIMIT 1').get(command.project_id)
-          if (phaseLess && phase === null && deps.deps.length === 0) {
-            db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)")
-              .run(command.id, command.project_id, command.id, object.title, command.created_at, now, JSON.stringify(scope.scope), maxAttempts, timeoutMs)
-          } else if (!target || target.status === 'done') reason = 'phase is not available'
-          else {
-            for (const dep of deps.deps) {
-              const task = db.prepare('SELECT project_id, status, phase FROM tasks WHERE id = ?').get(dep) as { project_id: string; status: string; phase: string } | undefined
-              if (!task || task.project_id !== command.project_id || task.status === 'dropped' || phaseOrd(task.phase) > phaseOrd(target.name)) {
-                reason = `invalid dependency: ${dep}`
-                break
-              }
-            }
+          const eventRow = db.prepare('SELECT event_id, status, title, scope_json FROM github_events WHERE project_id = ? AND event_id = ?')
+            .get(command.project_id, object.eventId) as { event_id: string; status: string; title: string | null; scope_json: string | null } | undefined
+          if (!eventRow) {
+            reason = 'unknown event'
+          } else if (eventRow.status !== 'pending') {
+            reason = 'event is not pending'
+          } else {
+            let eventScope: unknown
+            try { eventScope = JSON.parse(eventRow.scope_json ?? '') } catch { eventScope = null }
+            reason = createTask(db, {
+              id: command.id,
+              projectId: command.project_id,
+              createdByCommand: command.id,
+              title: eventRow.title,
+              scope: eventScope,
+              maxAttempts: 3,
+              timeoutMs: null,
+              phase: null,
+              deps: [],
+              createdAt: command.created_at,
+              now,
+            })
             if (reason === null) {
-              db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms, phase) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?)")
-                .run(command.id, command.project_id, command.id, object.title, command.created_at, now, JSON.stringify(scope.scope), maxAttempts, timeoutMs, target.name)
-              for (const dep of deps.deps) db.prepare('INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)').run(command.id, dep)
+              db.prepare("UPDATE github_events SET status = 'approved', task_id = ?, decided_at = ?, decided_by_command = ? WHERE project_id = ? AND event_id = ?")
+                .run(command.id, now, command.id, command.project_id, eventRow.event_id)
             }
+          }
+        }
+      } else if (command.kind === 'github.reject') {
+        if (
+          typeof object.eventId !== 'string' ||
+          !/^[0-9]{1,20}$/.test(object.eventId) ||
+          (object.reason !== undefined && object.reason !== null && typeof object.reason !== 'string')
+        ) {
+          reason = 'invalid command or payload'
+        } else {
+          const eventRow = db.prepare('SELECT event_id, status FROM github_events WHERE project_id = ? AND event_id = ?')
+            .get(command.project_id, object.eventId) as { event_id: string; status: string } | undefined
+          if (!eventRow) {
+            reason = 'unknown event'
+          } else if (eventRow.status !== 'pending') {
+            reason = 'event is not pending'
+          } else {
+            const sanitizedReason = typeof object.reason === 'string' ? sanitizeLine(object.reason) : null
+            db.prepare("UPDATE github_events SET status = 'rejected', reason = ?, decided_at = ?, decided_by_command = ? WHERE project_id = ? AND event_id = ?")
+              .run(sanitizedReason, now, command.id, command.project_id, eventRow.event_id)
           }
         }
       } else if (command.kind === 'phase.advance' && typeof object.phase === 'string' && PHASES.includes(object.phase as PhaseName)) {
