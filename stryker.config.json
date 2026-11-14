@@ -30,5 +30,6 @@
     "high": 80,
     "low": 70,
     "break": 80
-  }
+  },
+  "dryRunTimeoutMinutes": 60
 }
