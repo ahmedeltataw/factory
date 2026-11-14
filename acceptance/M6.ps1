@@ -826,7 +826,7 @@ function Get-DemoFakeServerLogs {
   if ([string]::IsNullOrWhiteSpace($script:fakeLogFile) -or -not (Test-Path -LiteralPath $script:fakeLogFile)) {
     return @()
   }
-  $lines = if (Test-Path -LiteralPath $script:fakeLogFile) { @(Get-Content -LiteralPath $script:fakeLogFile) } else { @() }
+  $lines = if (Test-Path -LiteralPath $script:fakeLogFile) { @([System.IO.File]::ReadAllLines($script:fakeLogFile)) } else { @() }
   $records = [System.Collections.Generic.List[object]]::new()
   foreach ($line in $lines) {
     if ($null -eq $line -or [string]::IsNullOrWhiteSpace([string]$line)) { continue }
@@ -1053,15 +1053,183 @@ try {
 
 function Set-DemoRepoDue([string]$sDir = $null, [string]$repo = 'owner/repo') {
   $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
-  $dbFile = (Join-Path $activeState 'state.sqlite').Replace('\', '/')
-  $errFile = Join-Path $logsDir 'set-repo-due.err'
-  $nodeCode = "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync('$dbFile'); db.exec('PRAGMA busy_timeout = 5000'); const r = db.prepare('UPDATE github_cursor SET next_poll_ms = 0 WHERE repo = ?').run('$repo'); if (r.changes === 0) { db.prepare('UPDATE github_cursor SET next_poll_ms = 0').run(); } const row = db.prepare('SELECT next_poll_ms FROM github_cursor WHERE repo = ?').get('$repo') || db.prepare('SELECT next_poll_ms FROM github_cursor LIMIT 1').get(); if (!row || row.next_poll_ms !== 0) throw new Error('Failed to set next_poll_ms to 0: ' + JSON.stringify(row)); db.close();"
-  & $script:nodeExe -e $nodeCode 2> $errFile
-  $code = $LASTEXITCODE
-  if ($code -ne 0) {
-    $errText = if (Test-Path -LiteralPath $errFile) { Get-Content -LiteralPath $errFile -Raw } else { '' }
-    throw "Failed to set repo due ($code): $errText"
+  $activeHelpersDir = if ($helpersDir) { $helpersDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'helpers' } else { $env:TEMP }
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $helper = Join-Path $activeHelpersDir 'set-repo-due.mjs'
+  $code = @'
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+
+const stateDir = process.env.FACTORY_STATE_DIR;
+const targetRepo = process.env.FACTORY_TARGET_REPO || 'owner/repo';
+const dbFile = join(stateDir, 'state.sqlite');
+const db = new DatabaseSync(dbFile);
+try {
+  db.exec('PRAGMA busy_timeout = 5000');
+  const r = db.prepare('UPDATE github_cursor SET next_poll_ms = 0 WHERE repo = ?').run(targetRepo);
+  if (r.changes === 0) {
+    db.prepare('UPDATE github_cursor SET next_poll_ms = 0').run();
   }
+  const row = db.prepare('SELECT next_poll_ms FROM github_cursor WHERE repo = ?').get(targetRepo)
+    || db.prepare('SELECT next_poll_ms FROM github_cursor LIMIT 1').get();
+  if (!row || row.next_poll_ms !== 0) {
+    throw new Error('Failed to set next_poll_ms to 0: ' + JSON.stringify(row));
+  }
+} finally {
+  db.close();
+}
+'@
+  [System.IO.File]::WriteAllText($helper, $code, (New-Object System.Text.UTF8Encoding $false))
+  $prevDir = $env:FACTORY_STATE_DIR
+  $prevRepo = $env:FACTORY_TARGET_REPO
+  $env:FACTORY_STATE_DIR = $activeState
+  $env:FACTORY_TARGET_REPO = $repo
+  try {
+    $errFile = Join-Path $activeLogsDir 'set-repo-due.err'
+    & $script:nodeExe $helper 2> $errFile
+    $codeExit = $LASTEXITCODE
+    if ($codeExit -ne 0) {
+      $errText = if (Test-Path -LiteralPath $errFile) { Get-Content -LiteralPath $errFile -Raw } else { '' }
+      throw "Failed to set repo due ($codeExit): $errText"
+    }
+  } finally {
+    $env:FACTORY_STATE_DIR = $prevDir
+    $env:FACTORY_TARGET_REPO = $prevRepo
+  }
+}
+
+function Format-DemoServerDiagnostics([string]$sDir, [string[]]$supervisorNames) {
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $activeHelpersDir = if ($helpersDir) { $helpersDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'helpers' } else { $env:TEMP }
+  $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
+  $sb = [System.Text.StringBuilder]::new()
+
+  [void]$sb.AppendLine("=== DEMO SERVER & SUPERVISOR DIAGNOSTICS ===")
+
+  # 1. Raw line count and compact dump of every logged request
+  $logPath = $script:fakeLogFile
+  $rawCount = 0
+  if (-not [string]::IsNullOrWhiteSpace($logPath) -and (Test-Path -LiteralPath $logPath)) {
+    try {
+      $rawLines = @([System.IO.File]::ReadAllLines($logPath))
+      $rawCount = $rawLines.Count
+      [void]$sb.AppendLine("Fake server log file raw lines: $rawCount (path: $logPath)")
+    } catch {
+      [void]$sb.AppendLine("Fake server log file read error: $($_.Exception.Message)")
+    }
+  } else {
+    [void]$sb.AppendLine("Fake server log file raw lines: 0 (file not found: $logPath)")
+  }
+
+  $logs = @(Get-DemoFakeServerLogs)
+  [void]$sb.AppendLine("Parsed requests count: $($logs.Count)")
+  if ($logs.Count -eq 0) {
+    [void]$sb.AppendLine("  (no requests logged)")
+  } else {
+    for ($i = 0; $i -lt $logs.Count; $i++) {
+      $entry = $logs[$i]
+      if ($null -eq $entry) {
+        [void]$sb.AppendLine("  [$i] <null entry>")
+        continue
+      }
+      $m = [string]$entry.method
+      $p = [string]$entry.path
+      $hb = [string]$entry.hasBearer
+      $inm = if ([string]::IsNullOrWhiteSpace([string]$entry.ifNoneMatch)) { '<none>' } else { [string]$entry.ifNoneMatch }
+      if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+        $inm = $inm.Replace([string]$script:canaryToken, '[canary]')
+      }
+      $inm = [System.Text.RegularExpressions.Regex]::Replace($inm, 'ghp_[A-Za-z0-9_]+', '[canary]')
+      [void]$sb.AppendLine("  [$i] method=$m path=$p hasBearer=$hb ifNoneMatch=$inm")
+    }
+  }
+
+  # 2. Last 15 lines of supervisor .out and .err files
+  foreach ($name in $supervisorNames) {
+    foreach ($ext in @('out', 'err')) {
+      $fPath = Join-Path $activeLogsDir "$name.$ext"
+      [void]$sb.AppendLine("--- Last 15 lines of $name.$ext ---")
+      if (Test-Path -LiteralPath $fPath) {
+        try {
+          $fileLines = @([System.IO.File]::ReadAllLines($fPath))
+          $tail = @($fileLines | Select-Object -Last 15)
+          if ($tail.Count -eq 0) {
+            [void]$sb.AppendLine("  (empty file)")
+          } else {
+            foreach ($tl in $tail) {
+              $lineStr = [string]$tl
+              if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+                $lineStr = $lineStr.Replace([string]$script:canaryToken, '[canary]')
+              }
+              $lineStr = [System.Text.RegularExpressions.Regex]::Replace($lineStr, 'ghp_[A-Za-z0-9_]+', '[canary]')
+              [void]$sb.AppendLine("  $lineStr")
+            }
+          }
+        } catch {
+          [void]$sb.AppendLine("  (error reading file: $($_.Exception.Message))")
+        }
+      } else {
+        [void]$sb.AppendLine("  (file not found: $fPath)")
+      }
+    }
+  }
+
+  # 3. Read github_cursor rows from state SQLite using node:sqlite
+  [void]$sb.AppendLine("--- github_cursor rows from state.sqlite ---")
+  if (-not [string]::IsNullOrWhiteSpace($activeState) -and (Test-Path -LiteralPath (Join-Path $activeState 'state.sqlite'))) {
+    try {
+      $diagHelper = Join-Path $activeHelpersDir 'read-github-cursor.mjs'
+      $diagCode = @'
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+const stateDir = process.env.FACTORY_DIAG_STATE_DIR;
+const db = new DatabaseSync(join(stateDir, 'state.sqlite'), { readOnly: true });
+try {
+  const rows = db.prepare('SELECT repo, etag, next_poll_ms, error FROM github_cursor ORDER BY repo ASC').all();
+  process.stdout.write(JSON.stringify(rows));
+} finally { db.close(); }
+'@
+      [System.IO.File]::WriteAllText($diagHelper, $diagCode, (New-Object System.Text.UTF8Encoding $false))
+      $previousDiagDir = $env:FACTORY_DIAG_STATE_DIR
+      $env:FACTORY_DIAG_STATE_DIR = $activeState
+      $diagErr = Join-Path $activeLogsDir 'read-github-cursor.err'
+      try {
+        $rawCursors = & $script:nodeExe $diagHelper 2> $diagErr
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($rawCursors)) {
+          $cursorRows = @(ConvertFrom-JsonArray $rawCursors)
+          if ($cursorRows.Count -eq 0) {
+            [void]$sb.AppendLine("  (no rows in github_cursor)")
+          } else {
+            foreach ($crow in $cursorRows) {
+              $cRepo = [string]$crow.repo
+              $cEtag = if ([string]::IsNullOrWhiteSpace([string]$crow.etag)) { '<null>' } else { [string]$crow.etag }
+              $cNext = [string]$crow.next_poll_ms
+              $cErr = if ([string]::IsNullOrWhiteSpace([string]$crow.error)) { '<null>' } else { [string]$crow.error }
+              if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+                $cEtag = $cEtag.Replace([string]$script:canaryToken, '[canary]')
+                $cErr = $cErr.Replace([string]$script:canaryToken, '[canary]')
+              }
+              $cEtag = [System.Text.RegularExpressions.Regex]::Replace($cEtag, 'ghp_[A-Za-z0-9_]+', '[canary]')
+              $cErr = [System.Text.RegularExpressions.Regex]::Replace($cErr, 'ghp_[A-Za-z0-9_]+', '[canary]')
+              [void]$sb.AppendLine("  repo=$cRepo etag=$cEtag next_poll_ms=$cNext error=$cErr")
+            }
+          }
+        } else {
+          $errOut = if (Test-Path -LiteralPath $diagErr) { Get-Content -LiteralPath $diagErr -Raw } else { '' }
+          [void]$sb.AppendLine("  (failed reading github_cursor: $errOut)")
+        }
+      } finally {
+        $env:FACTORY_DIAG_STATE_DIR = $previousDiagDir
+      }
+    } catch {
+      [void]$sb.AppendLine("  (exception reading github_cursor: $($_.Exception.Message))")
+    }
+  } else {
+    [void]$sb.AppendLine("  (state database not found at $activeState)")
+  }
+
+  [void]$sb.AppendLine("============================================")
+  return $sb.ToString()
 }
 
 function Assert-DemoCanaryAbsent([string]$sDir, [string]$canary) {
@@ -1653,7 +1821,10 @@ try {
     # A. Verify server request log
     $logs = @(Get-DemoFakeServerLogs)
     $logCount = if ($logs) { $logs.Count } else { 0 }
-    Assert-Demo ($logCount -ge 2) "Expected at least 2 requests logged, found $logCount"
+    if ($logCount -lt 2) {
+      $diag = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('token-ingest', 'token-run')
+      Assert-Demo ($logCount -ge 2) "Expected at least 2 requests logged, found $logCount`n$diag"
+    }
     foreach ($entry in $logs) {
       if ($null -eq $entry) { continue }
       Assert-Demo ($entry.method -eq 'GET') "Logged request method expected GET, got $($entry.method)"
@@ -1661,8 +1832,14 @@ try {
       Assert-Demo ($entry.url -match '^/repos/owner/repo/events') "Logged request url unexpected: $($entry.url)"
       Assert-Demo ($entry.hasBearer -eq $true -and $entry.authScheme -eq 'Bearer') "Logged request missing Bearer header"
     }
-    Assert-Demo ($logs.Count -ge 1 -and [string]::IsNullOrWhiteSpace($logs[0].ifNoneMatch)) "First poll request must have no If-None-Match"
-    Assert-Demo ($logs.Count -ge 2 -and [string]$logs[1].ifNoneMatch -match 'canary-etag-v1') "Second poll request must have If-None-Match canary-etag-v1, got: $(if ($logs.Count -ge 2) { $logs[1].ifNoneMatch } else { '' })"
+    if ($logs.Count -lt 1 -or -not [string]::IsNullOrWhiteSpace($logs[0].ifNoneMatch)) {
+      $diag = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('token-ingest', 'token-run')
+      Assert-Demo ($logs.Count -ge 1 -and [string]::IsNullOrWhiteSpace($logs[0].ifNoneMatch)) "First poll request must have no If-None-Match`n$diag"
+    }
+    if ($logs.Count -lt 2 -or [string]$logs[1].ifNoneMatch -notmatch 'canary-etag-v1') {
+      $diag = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('token-ingest', 'token-run')
+      Assert-Demo ($logs.Count -ge 2 -and [string]$logs[1].ifNoneMatch -match 'canary-etag-v1') "Second poll request must have If-None-Match canary-etag-v1, got: $(if ($logs.Count -ge 2) { $logs[1].ifNoneMatch } else { '' })`n$diag"
+    }
 
     # Verify that the server's request log file does not leak the secret canary token value
     $logRaw = if (-not [string]::IsNullOrWhiteSpace($script:fakeLogFile) -and (Test-Path -LiteralPath $script:fakeLogFile)) {
@@ -1766,9 +1943,15 @@ try {
     # Assert that takeover poll sent old ETag in If-None-Match
     $allLogs = @(Get-DemoFakeServerLogs)
     $takeoverLogs = @($allLogs | Select-Object -Skip $logCountBeforeTakeover)
-    Assert-Demo ($takeoverLogs.Count -ge 1) "No requests recorded during takeover poll"
+    if ($takeoverLogs.Count -lt 1) {
+      $diag15 = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('crash-round1', 'crash-faulted', 'crash-takeover')
+      Assert-Demo ($takeoverLogs.Count -ge 1) "No requests recorded during takeover poll`n$diag15"
+    }
     $takeoverReq = $takeoverLogs[0]
-    Assert-Demo ($takeoverReq.ifNoneMatch -match 'etag-committed-old') "Takeover poll must send old committed ETag in If-None-Match, got: $($takeoverReq.ifNoneMatch)"
+    if ($takeoverReq.ifNoneMatch -notmatch 'etag-committed-old') {
+      $diag15 = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('crash-round1', 'crash-faulted', 'crash-takeover')
+      Assert-Demo ($takeoverReq.ifNoneMatch -match 'etag-committed-old') "Takeover poll must send old committed ETag in If-None-Match, got: $($takeoverReq.ifNoneMatch)`n$diag15"
+    }
 
     # Assert that after takeover, events 5001 and 5002 each have exactly one row (deduped) and cursor has new ETag
     $data3 = Get-DemoGitHubData $pState

@@ -59,8 +59,8 @@ function recordRequest(req, url) {
     timestamp: new Date().toISOString(),
     method: req.method ?? '',
     url: req.url ?? '',
-    path: url.pathname,
-    query: url.search,
+    path: url?.pathname ?? '',
+    query: url?.search ?? '',
     hasBearer,
     authScheme: hasBearer ? 'Bearer' : (typeof auth === 'string' ? auth.split(' ')[0] : null),
     ifNoneMatch,
@@ -83,6 +83,8 @@ const server = createServer((req, res) => {
   try {
     url = new URL(req.url ?? '/', 'http://127.0.0.1')
   } catch {
+    url = { pathname: req.url ?? '/', search: '' }
+    recordRequest(req, url)
     res.writeHead(400, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ message: 'Bad Request' }))
     return
