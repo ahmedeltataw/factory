@@ -1026,6 +1026,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
             },
           ],
           outbox: { pending: 1, done: 2, failed: 3, failedRows: [{ key: 'failed-1', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-2', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-3', kind: 'extra', tries: 0, lastError: null }] },
+          github: null,
         }
 
         const status = readStatus(dir, { nowMs: 2000, staleAfterMs: 500 }) as unknown as Record<string, unknown>
@@ -1049,7 +1050,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
         })
         expect(cliResult.status).toBe(0)
         const cliJson = JSON.parse(cliResult.stdout)
-        expect(Object.keys(cliJson).sort()).toEqual(['commands', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
+        expect(Object.keys(cliJson).sort()).toEqual(['commands', 'github', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
         expect(cliJson).toEqual(expectedStatus)
         expect(cliResult.stdout).not.toContain('private-payload')
         expect(cliResult.stdout).not.toContain('nonce-1')

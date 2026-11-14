@@ -416,6 +416,7 @@ describe('M3-07 Status Reader and Formatter', () => {
     const status = readStatus(dir, { nowMs: 600, staleAfterMs: 500 })
     expect(status).toEqual({
       schemaVersion: 8,
+      github: null,
       recordedCommandCount: 2,
       phases: [],
       lease: {

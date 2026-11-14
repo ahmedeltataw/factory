@@ -11,6 +11,7 @@ import {
   type WorkerState,
 } from './domain.ts'
 import { parseScope, scopesOverlap } from '../core/scope.ts'
+import { sanitizeLine } from '../sources/github/event.ts'
 import {
   PHASES,
   planDispatch,
@@ -121,8 +122,15 @@ export interface TaskStatusItem {
   readonly waiting: TaskWaiting | null
 }
 
+interface GitHubStatus {
+  readonly repos: readonly { name: string; lastPollAt: string; nextPollAt: string; etag: boolean; error: string | null }[]
+  readonly events: { ignored: number; pending: number; approved: number; rejected: number }
+  readonly pending: readonly { eventId: string; repo: string; issue: number; actor: string; title: string; scope: readonly string[]; receivedAt: string }[]
+}
+
 export interface Status {
   readonly schemaVersion: 8
+  readonly github?: GitHubStatus | null
   readonly recordedCommandCount: number
   readonly lease: null | Lease
   readonly commands?: CommandsSummary
@@ -790,11 +798,52 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
         tasks: phaseTasksCounts.get(p.name) ?? { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 },
       }))
 
+      let github: GitHubStatus | null = null
+      if (tableNames.has('github_cursor') && tableNames.has('github_events')) {
+        const config = tableNames.has('project_config')
+          ? db.prepare('SELECT project_id FROM project_config LIMIT 1').get() as { project_id?: string } | undefined
+          : undefined
+        const project = tableNames.has('projects')
+          ? db.prepare('SELECT id FROM projects LIMIT 1').get() as { id?: string } | undefined
+          : undefined
+        const projectId = config?.project_id != null ? config.project_id : project?.id
+        if (projectId) {
+          const cursors = db.prepare('SELECT repo, updated_at, next_poll_ms, etag, error FROM github_cursor WHERE project_id = ? ORDER BY repo').all(projectId)
+          const counts = db.prepare('SELECT status, COUNT(*) AS count FROM github_events WHERE project_id = ? GROUP BY status').all(projectId)
+          const events = { ignored: 0, pending: 0, approved: 0, rejected: 0 }
+          for (const row of counts) {
+            if (row.status !== 'ignored' && row.status !== 'pending' && row.status !== 'approved' && row.status !== 'rejected') throw new Error('status: malformed github event status')
+            if (!isNonnegativeSafeInteger(row.count)) throw new Error('status: malformed github event count')
+            events[row.status] = row.count
+          }
+          const invalidTitle = db.prepare("SELECT 1 FROM github_events WHERE project_id = ? AND status = 'pending' AND (title IS NULL OR title = '') LIMIT 1").get(projectId)
+          if (invalidTitle) throw new Error('status: malformed github event title')
+          if (cursors.length > 0 || counts.length > 0) {
+            const repos = cursors.map(row => {
+              if (typeof row.repo !== 'string' || typeof row.updated_at !== 'string' || !isNonnegativeSafeInteger(row.next_poll_ms) || (row.etag !== null && typeof row.etag !== 'string') || (row.error !== null && typeof row.error !== 'string')) throw new Error('status: malformed github cursor')
+              const date = new Date(row.next_poll_ms)
+              if (!Number.isFinite(date.getTime())) throw new Error('status: malformed github cursor date')
+              return { name: row.repo, lastPollAt: row.updated_at, nextPollAt: date.toISOString(), etag: row.etag !== null, error: row.error }
+            })
+            const pendingRows = db.prepare("SELECT event_id, repo, issue, actor_login, title, scope_json, received_at FROM github_events WHERE project_id = ? AND status = 'pending' ORDER BY received_at DESC, event_id DESC LIMIT 20").all(projectId)
+            const pending = pendingRows.reverse().map(row => {
+              if (typeof row.event_id !== 'string' || typeof row.repo !== 'string' || !isPositiveSafeInteger(row.issue) || typeof row.actor_login !== 'string' || typeof row.title !== 'string' || row.title.length === 0 || typeof row.scope_json !== 'string' || typeof row.received_at !== 'string') throw new Error('status: malformed github pending event')
+              let value: unknown
+              try { value = JSON.parse(row.scope_json) } catch { throw new Error('status: malformed github scope') }
+              if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) throw new Error('status: malformed github scope')
+              return { eventId: row.event_id, repo: row.repo, issue: row.issue, actor: sanitizeLine(row.actor_login), title: sanitizeLine(row.title), scope: value, receivedAt: row.received_at }
+            })
+            github = { repos, events, pending }
+          }
+        }
+      }
+
       db.exec('COMMIT')
 
       const statusObj: Status = hasV5Tables
         ? {
             schemaVersion: SCHEMA_VERSION,
+            github,
             recordedCommandCount,
             lease,
             commands,
@@ -804,6 +853,7 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
           }
         : {
             schemaVersion: SCHEMA_VERSION,
+            github,
             recordedCommandCount,
             lease,
             phases: [],
@@ -1050,5 +1100,15 @@ export function formatStatus(status: Status): string {
     }
   }
 
+  if (status.github) {
+    for (const repo of status.github.repos) {
+      lines.push(`\u0645\u0633\u062a\u0648\u062f\u0639 GitHub: ${repo.name}, \u0622\u062e\u0631 \u0641\u062d\u0635=${repo.lastPollAt}, \u0627\u0644\u0641\u062d\u0635 \u0627\u0644\u062a\u0627\u0644\u064a=${repo.nextPollAt}, ETag=${repo.etag}, \u0627\u0644\u062e\u0637\u0623=${repo.error === null ? '-' : repo.error}`)
+    }
+    const { ignored, pending, approved, rejected } = status.github.events
+    lines.push(`\u0623\u062d\u062f\u0627\u062b GitHub: \u0645\u062a\u062c\u0627\u0647\u0644=${ignored}, \u0645\u0639\u0644\u0642=${pending}, \u0645\u0642\u0628\u0648\u0644=${approved}, \u0645\u0631\u0641\u0648\u0636=${rejected}`)
+    for (const event of status.github.pending) {
+      lines.push(`\u062d\u062f\u062b: ${event.eventId}, \u0627\u0644\u0645\u0633\u062a\u0648\u062f\u0639=${event.repo}, \u0627\u0644\u0642\u0636\u064a\u0629=${event.issue}, \u0627\u0644\u0645\u0631\u0633\u0644=${sanitizeLine(event.actor)}, \u0627\u0644\u0639\u0646\u0648\u0627\u0646=${sanitizeLine(event.title)}, \u0627\u0644\u0646\u0637\u0627\u0642=${event.scope.join(', ')}, \u0627\u0644\u0627\u0633\u062a\u0644\u0627\u0645=${event.receivedAt}`)
+    }
+  }
   return lines.join('\n')
 }

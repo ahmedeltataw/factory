@@ -643,6 +643,7 @@ describe('M4-01 Schema v6 contract', () => {
             },
           ],
           outbox: { pending: 1, done: 2, failed: 3, failedRows: [{ key: 'failed-1', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-2', kind: 'extra', tries: 0, lastError: null }, { key: 'failed-3', kind: 'extra', tries: 0, lastError: null }] },
+          github: null,
         }
 
         // Read status directly and assert complete M3 status object including lease shape
@@ -669,7 +670,7 @@ describe('M4-01 Schema v6 contract', () => {
         })
         expect(cliResult.status).toBe(0)
         const cliJson = JSON.parse(cliResult.stdout)
-        expect(Object.keys(cliJson).sort()).toEqual(['commands', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
+        expect(Object.keys(cliJson).sort()).toEqual(['commands', 'github', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
         expect(cliJson).toEqual(expectedStatus)
         expect(cliResult.stdout).not.toContain('private-payload')
         expect(cliResult.stdout).not.toContain('nonce-1')
