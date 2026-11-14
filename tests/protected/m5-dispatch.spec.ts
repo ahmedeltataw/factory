@@ -385,7 +385,7 @@ describe('M5-06 dispatch with phases and dependencies', () => {
         {
           cwd: tempCwd,
           env: cleanTestEnv({
-            FAKE_SLEEP_MS: '3000',
+            FAKE_SLEEP_MS: '10000',
             FACTORY_SUPERVISOR_MARKER: supMarker,
           }),
           stdio: 'ignore',
