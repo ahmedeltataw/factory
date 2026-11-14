@@ -617,7 +617,17 @@ function Initialize-DemoProject([string]$name) {
   return $projRecord
 }
 
-function Write-DemoGitHubPolicy([string]$sDir, [string]$repoName = 'owner/repo', [string[]]$scope = @('.'), [int]$maxPending = 10) {
+function Write-DemoGitHubPolicy {
+  param(
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$sDir,
+    [Parameter(Position = 1)]
+    [string]$repoName = 'owner/repo',
+    [Parameter(Position = 2)]
+    [string[]]$scope = @('.'),
+    [Parameter(Position = 3)]
+    [int]$maxPending = 10
+  )
   $policy = [ordered]@{
     version = 1
     repos = @(
@@ -1218,7 +1228,7 @@ try {
     $ErrorActionPreference = 'Continue'
     $proj = Initialize-DemoProject 'intake'
     $pState = $proj.StateDir
-    Write-DemoGitHubPolicy $pState 'owner/repo' @('.') 10
+    Write-DemoGitHubPolicy -sDir $pState -repoName 'owner/repo' -scope @('.') -maxPending 10
 
     # Events setup:
     # 1. Allowed comment: /factory task Fix login (alice, id 1) -> pending
@@ -1288,7 +1298,7 @@ try {
     $pState = $proj.StateDir
     $pRepo = $proj.Repo
     $pBaseSha = $proj.BaseSha
-    Write-DemoGitHubPolicy $pState 'owner/repo' @('.') 10
+    Write-DemoGitHubPolicy -sDir $pState -repoName 'owner/repo' -scope @('.') -maxPending 10
 
     $ev2001 = New-GitHubIssueCommentEvent '2001' 'owner/repo' 1 'alice' '/factory task Task to approve'
     $ev2002 = New-GitHubIssueCommentEvent '2002' 'owner/repo' 1 'alice' '/factory task Task to reject'
@@ -1383,7 +1393,8 @@ try {
     $pBaseSha = $proj.BaseSha
 
     # Policy defines restricted scope: src/allowed and factory-fake
-    Write-DemoGitHubPolicy $pState 'owner/repo' @('src/allowed', 'factory-fake') 10
+    $policyScope = @('src/allowed', 'factory-fake')
+    Write-DemoGitHubPolicy -sDir $pState -repoName 'owner/repo' -scope $policyScope -maxPending 10
 
     # Hostile comment body with:
     # - Instruction text trying to override previous instructions
@@ -1411,15 +1422,21 @@ try {
     Assert-Demo (-not $evStored.title.Contains('/etc/passwd')) "Stored title must not contain hostile scope text"
 
     $storedScope = @($evStored.scope_json | ConvertFrom-Json)
-    Assert-Demo ($storedScope.Count -eq 2) "Scope must have exactly 2 elements from policy, got $($storedScope.Count)"
-    Assert-Demo ($storedScope -contains 'src/allowed' -and $storedScope -contains 'factory-fake') "Scope must equal policy scope exactly"
+    Assert-Demo ($storedScope.Count -eq $policyScope.Count) "Scope must have exactly $($policyScope.Count) elements from policy, got $($storedScope.Count)"
+    foreach ($sc in $policyScope) {
+      Assert-Demo ($storedScope -contains $sc) "Scope must contain policy element '$sc'"
+    }
     Assert-Demo ($storedScope -notcontains '/etc/passwd') "Hostile scope line must not affect scope"
 
     # Status --json verification
     $snap = Invoke-FactoryStatus $pState
     $pendingItem = $snap.github.pending[0]
     Assert-Demo ($pendingItem.title -eq 'Fix login bug reversed') "Status JSON title must be sanitized, got '$($pendingItem.title)'"
-    Assert-Demo ($pendingItem.scope -contains 'src/allowed') "Status JSON scope must reflect policy scope"
+    Assert-Demo ($pendingItem.scope.Count -eq $policyScope.Count) "Status JSON scope count expected $($policyScope.Count), got $($pendingItem.scope.Count)"
+    foreach ($sc in $policyScope) {
+      Assert-Demo ($pendingItem.scope -contains $sc) "Status JSON scope must contain policy element '$sc'"
+    }
+    Assert-Demo ($pendingItem.scope -notcontains '/etc/passwd') "Status JSON scope must not contain hostile scope line"
 
     # Status Arabic text view verification
     $statusText = Invoke-FactoryStatusText $pState
@@ -1442,7 +1459,11 @@ try {
     $tHostile = Get-DemoTask $cmdHostile $pState
     Assert-Demo ($tHostile.status -eq 'done') "Hostile approved task status expected done, got $($tHostile.status)"
     Assert-Demo ($tHostile.title -eq 'Fix login bug reversed') "Task title must match sanitized title"
-    Assert-Demo ($tHostile.scope -contains 'src/allowed' -and $tHostile.scope -notcontains '/etc/passwd') "Task scope must be strictly from policy"
+    Assert-Demo ($tHostile.scope.Count -eq $policyScope.Count) "Task scope count expected $($policyScope.Count), got $($tHostile.scope.Count)"
+    foreach ($sc in $policyScope) {
+      Assert-Demo ($tHostile.scope -contains $sc) "Task scope must contain policy element '$sc'"
+    }
+    Assert-Demo ($tHostile.scope -notcontains '/etc/passwd') "Task scope must be strictly from policy"
 
     $global:LASTEXITCODE = 0
   })) { throw 'Step 13 failed' }
@@ -1454,7 +1475,7 @@ try {
     $ErrorActionPreference = 'Continue'
     $proj = Initialize-DemoProject 'token'
     $pState = $proj.StateDir
-    Write-DemoGitHubPolicy $pState 'owner/repo' @('.') 10
+    Write-DemoGitHubPolicy -sDir $pState -repoName 'owner/repo' -scope @('.') -maxPending 10
 
     Clear-DemoFakeServerLogs
 
@@ -1528,7 +1549,7 @@ try {
     $ErrorActionPreference = 'Continue'
     $proj = Initialize-DemoProject 'crash'
     $pState = $proj.StateDir
-    Write-DemoGitHubPolicy $pState 'owner/repo' @('.') 10
+    Write-DemoGitHubPolicy -sDir $pState -repoName 'owner/repo' -scope @('.') -maxPending 10
 
     # Round 1: first poll establishes committed event 5001 with ETag 'etag-committed-old'
     $ev5001 = New-GitHubIssueCommentEvent '5001' 'owner/repo' 1 'alice' '/factory task Crash seed task 5001'
