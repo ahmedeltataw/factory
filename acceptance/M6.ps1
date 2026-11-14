@@ -433,7 +433,7 @@ process.stdout.write(JSON.stringify(canonical));
       throw "Path canonicalization failed with code ${helperCodeExit}: $(Get-Content -LiteralPath $helperErrFile -Raw)"
     }
     try {
-      $canonicalPaths = ConvertFrom-JsonArray $rawPaths
+      $canonicalPaths = @(ConvertFrom-JsonArray $rawPaths)
     } catch {
       throw "Invalid path canonicalization JSON: $rawPaths"
     }
@@ -564,32 +564,32 @@ function Invoke-FactoryStatus([string]$sDir) {
     $parsed = ($stdout | ConvertFrom-Json)
     if ($null -ne $parsed) {
       if ($null -ne $parsed.tasks) {
-        $parsed.tasks = @(ConvertFrom-JsonArray $parsed.tasks | ForEach-Object {
+        $parsed.tasks = @(@(ConvertFrom-JsonArray $parsed.tasks) | ForEach-Object {
           $t = $_
-          if ($null -ne $t.scope) { $t.scope = ConvertFrom-JsonArray $t.scope }
-          if ($null -ne $t.attempts) { $t.attempts = ConvertFrom-JsonArray $t.attempts }
-          if ($null -ne $t.blockedBy) { $t.blockedBy = ConvertFrom-JsonArray $t.blockedBy }
-          if ($null -ne $t.dependsOn) { $t.dependsOn = ConvertFrom-JsonArray $t.dependsOn }
+          if ($null -ne $t.scope) { $t.scope = @(ConvertFrom-JsonArray $t.scope) }
+          if ($null -ne $t.attempts) { $t.attempts = @(ConvertFrom-JsonArray $t.attempts) }
+          if ($null -ne $t.blockedBy) { $t.blockedBy = @(ConvertFrom-JsonArray $t.blockedBy) }
+          if ($null -ne $t.dependsOn) { $t.dependsOn = @(ConvertFrom-JsonArray $t.dependsOn) }
           $t
         })
       } else {
         $parsed.tasks = @()
       }
       if ($null -ne $parsed.phases) {
-        $parsed.phases = ConvertFrom-JsonArray $parsed.phases
+        $parsed.phases = @(ConvertFrom-JsonArray $parsed.phases)
       } else {
         $parsed.phases = @()
       }
       if ($null -ne $parsed.github) {
         if ($null -ne $parsed.github.repos) {
-          $parsed.github.repos = ConvertFrom-JsonArray $parsed.github.repos
+          $parsed.github.repos = @(ConvertFrom-JsonArray $parsed.github.repos)
         } else {
           $parsed.github.repos = @()
         }
         if ($null -ne $parsed.github.pending) {
-          $parsed.github.pending = @(ConvertFrom-JsonArray $parsed.github.pending | ForEach-Object {
+          $parsed.github.pending = @(@(ConvertFrom-JsonArray $parsed.github.pending) | ForEach-Object {
             $p = $_
-            if ($null -ne $p.scope) { $p.scope = ConvertFrom-JsonArray $p.scope }
+            if ($null -ne $p.scope) { $p.scope = @(ConvertFrom-JsonArray $p.scope) }
             $p
           })
         } else {
@@ -803,7 +803,7 @@ function Get-DemoFakeServerLogs {
       }
     } catch {}
   }
-  return ,@($records | ForEach-Object { $_ })
+  return $records.ToArray()
 }
 
 function Clear-DemoFakeServerLogs {
@@ -955,7 +955,7 @@ try {
       return [pscustomobject]@{
         attemptBase = $parsed.attemptBase
         evidence    = $parsed.evidence
-        attempts    = ConvertFrom-JsonArray $parsed.attempts
+        attempts    = @(ConvertFrom-JsonArray $parsed.attempts)
       }
     } catch { throw "Invalid database JSON: $raw" }
   } finally { Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue }
@@ -1009,8 +1009,8 @@ try {
     try {
       $parsed = (($raw -join "`n") | ConvertFrom-Json)
       return [pscustomobject]@{
-        events  = ConvertFrom-JsonArray $parsed.events
-        cursors = ConvertFrom-JsonArray $parsed.cursors
+        events  = @(ConvertFrom-JsonArray $parsed.events)
+        cursors = @(ConvertFrom-JsonArray $parsed.cursors)
       }
     } catch { throw "Invalid GitHub database JSON: $raw" }
   } finally { Remove-Item env:FACTORY_STATE_DIR -ErrorAction SilentlyContinue }
@@ -1067,7 +1067,7 @@ process.stdout.write(JSON.stringify(matches));
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) { throw "Failed to scan canary ($exitCode): $(Get-Content $errFile -Raw)" }
-    $matches = ConvertFrom-JsonArray $raw
+    $matches = @(ConvertFrom-JsonArray $raw)
     if ($matches.Count -gt 0) {
       throw "Canary token was found in files: $($matches -join ', ')"
     }
@@ -1092,7 +1092,7 @@ function Assert-WorkerEnvNoSecrets([string]$sDir) {
       $foundAnyEnvKeys = $true
       $spaceIdx = $line.IndexOf(' ')
       $jsonText = $line.Substring($spaceIdx + 1).Trim()
-      $keys = ConvertFrom-JsonArray $jsonText
+      $keys = @(ConvertFrom-JsonArray $jsonText)
       foreach ($sk in $secretKeys) {
         if ($keys -contains $sk) {
           throw "Worker environment in $($logFile.FullName) leaked secret variable: $sk"
@@ -1501,7 +1501,7 @@ try {
     Assert-Demo (-not $evStored.title.Contains([string]$bidiRlo)) "Stored title must not contain bidi override character"
     Assert-Demo (-not $evStored.title.Contains('/etc/passwd')) "Stored title must not contain hostile scope text"
 
-    $storedScope = ConvertFrom-JsonArray $evStored.scope_json
+    $storedScope = @(ConvertFrom-JsonArray $evStored.scope_json)
     Assert-Demo ($storedScope.Count -eq $policyScope.Count) "Scope must have exactly $($policyScope.Count) elements from policy, got $($storedScope.Count)"
     foreach ($sc in $policyScope) {
       Assert-Demo ($storedScope -contains $sc) "Scope must contain policy element '$sc'"
