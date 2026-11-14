@@ -10,7 +10,12 @@
     "supervisor/src/app/recovery.ts",
     "supervisor/src/app/supervisor-loop.ts",
     "supervisor/src/core/scope.ts",
-    "supervisor/src/core/graph.ts"
+    "supervisor/src/core/graph.ts",
+    "supervisor/src/app/status.ts",
+    "supervisor/src/sources/github/event.ts",
+    "supervisor/src/sources/github/gate.ts",
+    "supervisor/src/sources/github/ingest.ts",
+    "supervisor/src/sources/github/client.ts"
   ],
   "testRunner": "vitest",
   "plugins": [
