@@ -73,6 +73,7 @@ function recordRequest(req, url) {
       appendFileSync(logFile, JSON.stringify(record) + '\n', 'utf8')
     } catch (err) {
       process.stderr.write(`Failed to append to request log: ${err instanceof Error ? err.message : String(err)}\n`)
+      throw err
     }
   }
   return record

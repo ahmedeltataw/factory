@@ -286,11 +286,70 @@ function Test-ProcessMatchesRun($proc) {
   return (Test-CommandLineMatchesRun $proc.CommandLine)
 }
 
+function Register-DemoWorkerNonces([string]$sDir) {
+  if ([string]::IsNullOrWhiteSpace($sDir) -or -not (Test-Path -LiteralPath $sDir)) { return }
+  $runsDir = Join-Path $sDir 'runs'
+  if (-not (Test-Path -LiteralPath $runsDir)) { return }
+  $workers = @(Get-ChildItem -LiteralPath $runsDir -Filter worker.json -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+      $workerRaw = Read-DemoText $_.FullName
+      if (-not [string]::IsNullOrWhiteSpace($workerRaw)) {
+        $workerRaw | ConvertFrom-Json
+      } else { $null }
+    } catch { $null }
+  })
+  foreach ($w in $workers) {
+    if ($null -ne $w) {
+      $wNonce = if ($w.nonce) { [string]$w.nonce } else { $null }
+      if ($null -ne $script:trackedWorkerNonces -and -not [string]::IsNullOrWhiteSpace($wNonce)) {
+        if (-not $script:trackedWorkerNonces.Contains($wNonce)) {
+          $script:trackedWorkerNonces.Add($wNonce)
+        }
+      }
+      if ($w.pid) {
+        Register-TrackedPid ([int]$w.pid) $wNonce
+      }
+      if ($w.grandchildPid) {
+        Register-TrackedPid ([int]$w.grandchildPid) $wNonce
+      }
+    }
+  }
+}
+
+function Discover-AllWorkerIdentities {
+  $stateDirs = [System.Collections.Generic.List[string]]::new()
+  if ($null -ne $script:allDemoProjects) {
+    foreach ($p in $script:allDemoProjects) {
+      if ($p -and $p.StateDir -and -not $stateDirs.Contains([string]$p.StateDir)) {
+        $stateDirs.Add([string]$p.StateDir)
+      }
+    }
+  }
+  if (-not [string]::IsNullOrWhiteSpace($stateDir) -and -not $stateDirs.Contains($stateDir)) {
+    $stateDirs.Add($stateDir)
+  }
+  if (-not [string]::IsNullOrWhiteSpace($acceptanceBase) -and (Test-Path -LiteralPath $acceptanceBase)) {
+    $foundDirs = @(Get-ChildItem -LiteralPath $acceptanceBase -Directory -Filter 'state*' -ErrorAction SilentlyContinue)
+    foreach ($d in $foundDirs) {
+      if ($d -and -not $stateDirs.Contains($d.FullName)) {
+        $stateDirs.Add($d.FullName)
+      }
+    }
+  }
+  foreach ($sd in $stateDirs) {
+    try {
+      Register-DemoWorkerNonces $sd
+    } catch {}
+  }
+}
+
 function Stop-AllAcceptanceProcesses {
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
   $timeoutSec = 15
 
   while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+    try { Discover-AllWorkerIdentities } catch {}
+
     # 1. Stop all explicitly tracked processes started via Start-Process
     foreach ($proc in $script:startedProcesses) {
       if ($null -eq $proc) { continue }
@@ -588,6 +647,14 @@ function Invoke-FactoryStatus([string]$sDir) {
 
   $stdout = [string]$outTask.Result
   $stderr = [string]$errTask.Result
+
+  if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+    $canary = [string]$script:canaryToken
+    if ($stderr.Contains($canary)) {
+      throw "Canary token leaked in factory status stderr"
+    }
+  }
+
   $code = $proc.ExitCode
   if ($code -ne 0) {
     throw "factory status failed with exit code ${code}: $stderr"
@@ -648,8 +715,14 @@ function Invoke-FactoryStatusText([string]$sDir) {
   $errFile = Join-Path $activeLogsDir 'status-text.err'
   $raw = & $script:nodeExe $cliPath status --state-dir $sDir 2> $errFile
   $code = $LASTEXITCODE
+  $errText = Read-DemoText $errFile
+  if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+    $canary = [string]$script:canaryToken
+    if ($errText.Contains($canary)) {
+      throw "Canary token leaked in factory status text stderr ($errFile)"
+    }
+  }
   if ($code -ne 0) {
-    $errText = Read-DemoText $errFile
     throw "factory status text failed with code ${code}: $errText"
   }
   $result = if ($raw) { ($raw -join "`n") } else { '' }
@@ -863,10 +936,13 @@ function Get-DemoFakeServerLogs {
     if ($null -eq $line -or [string]::IsNullOrWhiteSpace([string]$line)) { continue }
     try {
       $rec = ([string]$line | ConvertFrom-Json)
-      if ($null -ne $rec) {
-        $records.Add($rec)
+      if ($null -eq $rec) {
+        throw "Record parsed to null"
       }
-    } catch {}
+      $records.Add($rec)
+    } catch {
+      throw "Malformed request log record in '$($script:fakeLogFile)': '$line' ($($_.Exception.Message))"
+    }
   }
   return $records.ToArray()
 }
@@ -1284,7 +1360,14 @@ const matches = [];
 
 function walk(dir) {
   if (!existsSync(dir)) return;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    process.stderr.write(`Canary scanner failed to read directory ${dir}: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
+  for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       walk(full);
@@ -1294,7 +1377,10 @@ function walk(dir) {
         if (content.includes(canaryBuf)) {
           matches.push(full);
         }
-      } catch (err) {}
+      } catch (err) {
+        process.stderr.write(`Canary scanner failed to read file ${full}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(1);
+      }
     }
   }
 }
@@ -1319,69 +1405,71 @@ process.stdout.write(JSON.stringify(matches));
   } finally { Remove-Item env:FACTORY_SCAN_DIR, env:FACTORY_CANARY -ErrorAction SilentlyContinue }
 }
 
-function Assert-WorkerEnvNoSecrets([string]$sDir) {
+function Assert-WorkerEnvNoSecrets([string]$sDir, [switch]$RequireChild) {
   $runsDir = Join-Path $sDir 'runs'
   if (-not (Test-Path -LiteralPath $runsDir)) {
     throw "Runs directory missing: $runsDir"
   }
-  $stdoutLogs = @(Get-ChildItem -LiteralPath $runsDir -Filter 'stdout.log' -Recurse -ErrorAction SilentlyContinue)
-  if ($stdoutLogs.Count -eq 0) {
-    throw "No stdout.log found in $runsDir"
+  $runDirs = @(Get-ChildItem -LiteralPath $runsDir -Directory -ErrorAction SilentlyContinue)
+  if ($runDirs.Count -eq 0) {
+    throw "No worker run directories found in $runsDir"
   }
   $secretKeys = @('FACTORY_GITHUB_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_PAT')
-  $foundAnyEnvKeys = $false
-  foreach ($logFile in $stdoutLogs) {
-    if ($null -eq $logFile -or -not (Test-Path -LiteralPath $logFile.FullName)) { continue }
-    $content = Read-DemoText $logFile.FullName
-    if ([string]::IsNullOrWhiteSpace($content)) { continue }
+
+  foreach ($rDir in $runDirs) {
+    $stdoutLog = Join-Path $rDir.FullName 'stdout.log'
+    if (-not (Test-Path -LiteralPath $stdoutLog)) {
+      throw "Missing stdout.log in worker run directory: $($rDir.FullName)"
+    }
+    $content = Read-DemoText $stdoutLog
+    if ([string]::IsNullOrWhiteSpace($content)) {
+      throw "Worker stdout.log is empty: $stdoutLog"
+    }
     $splitLines = @($content -split "`r?`n")
-    $lines = @($splitLines | Where-Object {
-      if ([string]::IsNullOrWhiteSpace($_)) { return $false }
-      $strLine = [string]$_
-      return ($strLine.StartsWith('ENV_KEYS ') -or $strLine.StartsWith('ENV_KEYS_CHILD '))
-    })
-    foreach ($line in $lines) {
-      $foundAnyEnvKeys = $true
+    $workerEnvLines = [System.Collections.Generic.List[string]]::new()
+    $childEnvLines = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($l in $splitLines) {
+      if ([string]::IsNullOrWhiteSpace($l)) { continue }
+      $strLine = [string]$l
+      if ($strLine.StartsWith('ENV_KEYS ')) {
+        $workerEnvLines.Add($strLine)
+      } elseif ($strLine.StartsWith('ENV_KEYS_CHILD ')) {
+        $childEnvLines.Add($strLine)
+      }
+    }
+
+    # Worker marker is required for each expected run
+    if ($workerEnvLines.Count -eq 0) {
+      throw "Worker run '$($rDir.Name)' did not contain worker marker 'ENV_KEYS'"
+    }
+
+    # Child marker is required when requested
+    if ($RequireChild -and $childEnvLines.Count -eq 0) {
+      throw "Worker run '$($rDir.Name)' did not contain child marker 'ENV_KEYS_CHILD'"
+    }
+
+    $allMarkerLines = [System.Collections.Generic.List[string]]::new()
+    foreach ($wl in $workerEnvLines) { $allMarkerLines.Add($wl) }
+    foreach ($cl in $childEnvLines) { $allMarkerLines.Add($cl) }
+
+    foreach ($line in $allMarkerLines) {
       $str = [string]$line
       $spaceIdx = $str.IndexOf(' ')
       $jsonText = if ($spaceIdx -ge 0) { $str.Substring($spaceIdx + 1).Trim() } else { '' }
+      if (-not ($jsonText.StartsWith('[') -and $jsonText.EndsWith(']'))) {
+        throw "Worker environment payload in $stdoutLog is not a JSON array: '$jsonText'"
+      }
+      try {
+        $null = ($jsonText | ConvertFrom-Json)
+      } catch {
+        throw "Worker environment payload in $stdoutLog is invalid JSON: '$jsonText' ($($_.Exception.Message))"
+      }
       $keys = @(ConvertFrom-JsonArray $jsonText)
       foreach ($sk in $secretKeys) {
         if ($keys -contains $sk) {
-          throw "Worker environment in $($logFile.FullName) leaked secret variable: $sk"
+          throw "Worker environment in $stdoutLog leaked secret variable: $sk"
         }
-      }
-    }
-  }
-  if (-not $foundAnyEnvKeys) {
-    throw "Worker stdout.log did not contain any ENV_KEYS or ENV_KEYS_CHILD lines"
-  }
-}
-
-function Register-DemoWorkerNonces([string]$sDir) {
-  $runsDir = Join-Path $sDir 'runs'
-  if (-not (Test-Path -LiteralPath $runsDir)) { return }
-  $workers = @(Get-ChildItem -LiteralPath $runsDir -Filter worker.json -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-    try {
-      $workerRaw = Read-DemoText $_.FullName
-      if (-not [string]::IsNullOrWhiteSpace($workerRaw)) {
-        $workerRaw | ConvertFrom-Json
-      } else { $null }
-    } catch { $null }
-  })
-  foreach ($w in $workers) {
-    if ($null -ne $w) {
-      $wNonce = if ($w.nonce) { [string]$w.nonce } else { $null }
-      if ($null -ne $script:trackedWorkerNonces -and -not [string]::IsNullOrWhiteSpace($wNonce)) {
-        if (-not $script:trackedWorkerNonces.Contains($wNonce)) {
-          $script:trackedWorkerNonces.Add($wNonce)
-        }
-      }
-      if ($w.pid) {
-        Register-TrackedPid ([int]$w.pid) $wNonce
-      }
-      if ($w.grandchildPid) {
-        Register-TrackedPid ([int]$w.grandchildPid) $wNonce
       }
     }
   }
@@ -1885,11 +1973,11 @@ try {
     }
 
     # Also verify supervisor stdout/stderr and status outputs do not leak canary
-    foreach ($outPath in @((Join-Path $activeLogsDir 'token-ingest.out'), (Join-Path $activeLogsDir 'token-ingest.err'), (Join-Path $activeLogsDir 'token-run.out'), (Join-Path $activeLogsDir 'token-run.err'))) {
+    foreach ($outPath in @((Join-Path $activeLogsDir 'token-ingest.out'), (Join-Path $activeLogsDir 'token-ingest.err'), (Join-Path $activeLogsDir 'token-run.out'), (Join-Path $activeLogsDir 'token-run.err'), (Join-Path $activeLogsDir 'status-text.err'))) {
       if (Test-Path -LiteralPath $outPath) {
         $c = Read-DemoText $outPath
         if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
-          Assert-Demo (-not $c.Contains([string]$script:canaryToken)) "Canary token leaked in supervisor log: $outPath"
+          Assert-Demo (-not $c.Contains([string]$script:canaryToken)) "Canary token leaked in log: $outPath"
         }
       }
     }
@@ -1906,7 +1994,7 @@ try {
     }
 
     # C. Worker printed environment has no token variables
-    Assert-WorkerEnvNoSecrets $pState
+    Assert-WorkerEnvNoSecrets $pState -RequireChild
 
     $global:LASTEXITCODE = 0
   })) { throw 'Step 14 failed' }
@@ -1939,6 +2027,8 @@ try {
     # Make repo due for round 2
     Set-DemoRepoDue $pState 'owner/repo'
 
+    $logCountBeforeFault = @(Get-DemoFakeServerLogs).Count
+
     # Start supervisor with FACTORY_FAULT=github-after-poll:
     # Hard-killed after poll receives events result and before commit
     $proc2 = Start-DemoSupervisor 'crash-faulted' -sDir $pState -extraEnv @{ FACTORY_FAULT = 'github-after-poll' }
@@ -1948,6 +2038,18 @@ try {
       Start-Sleep -Milliseconds 50
     }
     Assert-Demo ($proc2.HasExited) "Supervisor 2 did not terminate under github-after-poll fault"
+    Assert-Demo ($proc2.ExitCode -ne 0) "Supervisor 2 must end with non-zero exit code on fault kill, got $($proc2.ExitCode)"
+
+    # Witness that second-round poll occurred and received events before the kill
+    $allLogsAfterFault = @(Get-DemoFakeServerLogs)
+    $faultLogs = @($allLogsAfterFault | Select-Object -Skip $logCountBeforeFault | Where-Object { $null -ne $_ })
+    if ($faultLogs.Count -lt 1) {
+      $diagFault = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('crash-round1', 'crash-faulted')
+      Assert-Demo ($faultLogs.Count -ge 1) "No poll request recorded during fault round before kill`n$diagFault"
+    }
+    $faultReq = $faultLogs[0]
+    Assert-Demo ($faultReq.method -eq 'GET' -and $faultReq.path -eq '/repos/owner/repo/events') "Fault round poll request path unexpected: $($faultReq.path)"
+    Assert-Demo ([string]$faultReq.ifNoneMatch -match 'etag-committed-old') "Fault round poll must send old committed ETag in If-None-Match, got: $(if ($faultReq) { $faultReq.ifNoneMatch } else { '' })"
 
     # Boundary assertions: DB still holds round 1 committed state (no event 5002, ETag is still old)
     $data2 = Get-DemoGitHubData $pState
@@ -2004,6 +2106,15 @@ try {
   }
 } finally {
   # --- Cleanup phase (checked and bounded) ---
+  try {
+    Discover-AllWorkerIdentities
+  } catch {
+    $script:overallFailed = $true
+    if ($null -eq $script:failureReason) {
+      $script:failureReason = $_.Exception.Message
+    }
+  }
+
   try {
     Stop-AllAcceptanceProcesses
   } catch {
