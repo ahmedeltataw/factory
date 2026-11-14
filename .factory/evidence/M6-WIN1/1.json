@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M6-WIN1",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "5807162",
+  "checks": [
+    {
+      "id": "CHK-M6-WIN1-a",
+      "command": "pnpm exec vitest run (full suite, local Windows development machine); verify dispatch",
+      "result": "pass",
+      "output": "full suite 1244/1244 locally at the card head (first fully green local run since M6-05); verify run 43578745883 all four cells success; diff is one value (FAKE_SLEEP_MS 3000 to 10000 in the diamond test of tests/protected/m5-dispatch.spec.ts); root cause: the observation window closed before the two Windows CIM identity lookups finished under load"
+    }
+  ],
+  "ended_at": "2026-11-14T09:15:27.681Z"
+}
