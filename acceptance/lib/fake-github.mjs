@@ -50,33 +50,49 @@ function getRepoConfig(repoName) {
   return memoryState.repos.get(normRepo) || { events: [] }
 }
 
-function recordRequest(req, url) {
+function attachLogger(req, res, url) {
   const auth = req.headers['authorization']
   const hasBearer = typeof auth === 'string' && /^Bearer\s+/i.test(auth)
   const ifNoneMatch = req.headers['if-none-match'] || null
+  const reqTime = new Date().toISOString()
+  const reqHeaders = Object.keys(req.headers)
 
-  const record = {
-    timestamp: new Date().toISOString(),
-    method: req.method ?? '',
-    url: req.url ?? '',
-    path: url?.pathname ?? '',
-    query: url?.search ?? '',
-    hasBearer,
-    authScheme: hasBearer ? 'Bearer' : (typeof auth === 'string' ? auth.split(' ')[0] : null),
-    ifNoneMatch,
-    headers: Object.keys(req.headers),
+  const meta = {
+    eventCount: 0,
+    etag: null,
   }
 
-  memoryState.requests.push(record)
-  if (logFile) {
-    try {
-      appendFileSync(logFile, JSON.stringify(record) + '\n', 'utf8')
-    } catch (err) {
-      process.stderr.write(`Failed to append to request log: ${err instanceof Error ? err.message : String(err)}\n`)
-      throw err
+  res.on('finish', () => {
+    const rawStatus = res.statusCode
+    const record = {
+      timestamp: reqTime,
+      method: req.method ?? '',
+      url: req.url ?? '',
+      path: url?.pathname ?? '',
+      query: url?.search ?? '',
+      hasBearer,
+      authScheme: hasBearer ? 'Bearer' : (typeof auth === 'string' ? auth.split(' ')[0] : null),
+      ifNoneMatch,
+      headers: reqHeaders,
+      statusCode: rawStatus,
+      status: rawStatus,
+      eventCount: meta.eventCount,
+      eventsCount: meta.eventCount,
+      etag: meta.etag,
+      responseEtag: meta.etag,
     }
-  }
-  return record
+
+    memoryState.requests.push(record)
+    if (logFile) {
+      try {
+        appendFileSync(logFile, JSON.stringify(record) + '\n', 'utf8')
+      } catch (err) {
+        process.stderr.write(`Failed to append to request log: ${err instanceof Error ? err.message : String(err)}\n`)
+      }
+    }
+  })
+
+  return meta
 }
 
 const server = createServer((req, res) => {
@@ -85,7 +101,7 @@ const server = createServer((req, res) => {
     url = new URL(req.url ?? '/', 'http://127.0.0.1')
   } catch {
     url = { pathname: req.url ?? '/', search: '' }
-    recordRequest(req, url)
+    attachLogger(req, res, url)
     res.writeHead(400, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ message: 'Bad Request' }))
     return
@@ -127,8 +143,8 @@ const server = createServer((req, res) => {
     return
   }
 
-  // Log incoming request before processing
-  recordRequest(req, url)
+  // Attach finish logger to record request after response is finished
+  const logMeta = attachLogger(req, res, url)
 
   // Match /repos/:owner/:repo/events
   const eventsMatch = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/events$/)
@@ -153,6 +169,8 @@ const server = createServer((req, res) => {
     if (ifNoneMatch) {
       const clientClean = String(ifNoneMatch).replace(/^W\//, '').replace(/^"|"$/g, '')
       if (clientClean === cleanEtag) {
+        logMeta.eventCount = 0
+        logMeta.etag = responseEtag
         res.writeHead(304, {
           'ETag': responseEtag,
           'x-poll-interval': '60',
@@ -162,6 +180,8 @@ const server = createServer((req, res) => {
       }
     }
 
+    logMeta.eventCount = events.length
+    logMeta.etag = responseEtag
     res.writeHead(200, {
       'Content-Type': 'application/vnd.github+json',
       'ETag': responseEtag,

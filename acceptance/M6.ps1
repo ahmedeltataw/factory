@@ -106,6 +106,37 @@ function Read-DemoText([string]$path) {
   }
 }
 
+function Read-DemoTextStrict([string]$path) {
+  if ([string]::IsNullOrWhiteSpace($path)) {
+    throw "Read-DemoTextStrict: path is empty or null"
+  }
+  if (-not (Test-Path -LiteralPath $path)) {
+    throw "Read-DemoTextStrict: file does not exist: $path"
+  }
+  $item = Get-Item -LiteralPath $path -ErrorAction Stop
+  if ($item.Length -eq 0) {
+    return ''
+  }
+  try {
+    $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+      if ($stream.Length -eq 0) { return '' }
+      $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+      try {
+        $content = $reader.ReadToEnd()
+        if ($null -eq $content) { return '' }
+        return [string]$content
+      } finally {
+        $reader.Dispose()
+      }
+    } finally {
+      $stream.Dispose()
+    }
+  } catch {
+    throw "Read-DemoTextStrict: error reading '$path': $($_.Exception.Message)"
+  }
+}
+
 function Remove-AcceptanceTempDir([string]$dir) {
   if ([string]::IsNullOrWhiteSpace($dir)) { return }
   if (-not (Test-Path -LiteralPath $dir)) { return }
@@ -715,7 +746,7 @@ function Invoke-FactoryStatusText([string]$sDir) {
   $errFile = Join-Path $activeLogsDir 'status-text.err'
   $raw = & $script:nodeExe $cliPath status --state-dir $sDir 2> $errFile
   $code = $LASTEXITCODE
-  $errText = Read-DemoText $errFile
+  $errText = Read-DemoTextStrict $errFile
   if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
     $canary = [string]$script:canaryToken
     if ($errText.Contains($canary)) {
@@ -1242,12 +1273,14 @@ function Format-DemoServerDiagnostics([string]$sDir, [string[]]$supervisorNames)
       $m = [string]$entry.method
       $p = [string]$entry.path
       $hb = [string]$entry.hasBearer
+      $sc = if ($null -ne $entry.statusCode) { [string]$entry.statusCode } else { '?' }
+      $ec = if ($null -ne $entry.eventCount) { [string]$entry.eventCount } else { '?' }
       $inm = if ([string]::IsNullOrWhiteSpace([string]$entry.ifNoneMatch)) { '<none>' } else { [string]$entry.ifNoneMatch }
       if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
         $inm = $inm.Replace([string]$script:canaryToken, '[canary]')
       }
       $inm = [System.Text.RegularExpressions.Regex]::Replace($inm, 'ghp_[A-Za-z0-9_]+', '[canary]')
-      [void]$sb.AppendLine("  [$i] method=$m path=$p hasBearer=$hb ifNoneMatch=$inm")
+      [void]$sb.AppendLine("  [$i] method=$m path=$p status=$sc events=$ec hasBearer=$hb ifNoneMatch=$inm")
     }
   }
 
@@ -1395,7 +1428,7 @@ process.stdout.write(JSON.stringify(matches));
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
-      $errContent = Read-DemoText $errFile
+      $errContent = Read-DemoTextStrict $errFile
       throw "Failed to scan canary ($exitCode): $errContent"
     }
     $matches = @(ConvertFrom-JsonArray $raw)
@@ -1421,7 +1454,7 @@ function Assert-WorkerEnvNoSecrets([string]$sDir, [switch]$RequireChild) {
     if (-not (Test-Path -LiteralPath $stdoutLog)) {
       throw "Missing stdout.log in worker run directory: $($rDir.FullName)"
     }
-    $content = Read-DemoText $stdoutLog
+    $content = Read-DemoTextStrict $stdoutLog
     if ([string]::IsNullOrWhiteSpace($content)) {
       throw "Worker stdout.log is empty: $stdoutLog"
     }
@@ -1961,8 +1994,9 @@ try {
       Assert-Demo ($logs.Count -ge 2 -and [string]$logs[1].ifNoneMatch -match 'canary-etag-v1') "Second poll request must have If-None-Match canary-etag-v1, got: $(if ($logs.Count -ge 2) { $logs[1].ifNoneMatch } else { '' })`n$diag"
     }
 
-    # Verify that the server's request log file does not leak the secret canary token value
-    $logRaw = Read-DemoText $script:fakeLogFile
+    # Verify that the server's request log file does not leak the secret canary token value (fail-closed)
+    Assert-Demo (Test-Path -LiteralPath $script:fakeLogFile) "Server request log missing: $($script:fakeLogFile)"
+    $logRaw = Read-DemoTextStrict $script:fakeLogFile
     if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
       Assert-Demo (-not $logRaw.Contains([string]$script:canaryToken)) "Canary token was leaked into server request log!"
     }
@@ -1972,15 +2006,7 @@ try {
       Assert-DemoCanaryAbsent $pState ([string]$script:canaryToken)
     }
 
-    # Also verify supervisor stdout/stderr and status outputs do not leak canary
-    foreach ($outPath in @((Join-Path $activeLogsDir 'token-ingest.out'), (Join-Path $activeLogsDir 'token-ingest.err'), (Join-Path $activeLogsDir 'token-run.out'), (Join-Path $activeLogsDir 'token-run.err'), (Join-Path $activeLogsDir 'status-text.err'))) {
-      if (Test-Path -LiteralPath $outPath) {
-        $c = Read-DemoText $outPath
-        if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
-          Assert-Demo (-not $c.Contains([string]$script:canaryToken)) "Canary token leaked in log: $outPath"
-        }
-      }
-    }
+    # Verify status snapshot and status text outputs do not leak canary
     $snapJson = Invoke-FactoryStatus $pState
     $snapRaw = [string](ConvertTo-Json -InputObject $snapJson -Depth 10)
     if ($null -eq $snapRaw) { $snapRaw = '' }
@@ -1991,6 +2017,22 @@ try {
     if ($null -eq $statusText) { $statusText = '' }
     if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
       Assert-Demo (-not $statusText.Contains([string]$script:canaryToken)) "Canary token leaked in status text"
+    }
+
+    # Also verify supervisor stdout/stderr and status outputs do not leak canary (fail-closed: every expected file must exist)
+    $expectedCanaryLogs = @(
+      (Join-Path $activeLogsDir 'token-ingest.out'),
+      (Join-Path $activeLogsDir 'token-ingest.err'),
+      (Join-Path $activeLogsDir 'token-run.out'),
+      (Join-Path $activeLogsDir 'token-run.err'),
+      (Join-Path $activeLogsDir 'status-text.err')
+    )
+    foreach ($outPath in $expectedCanaryLogs) {
+      Assert-Demo (Test-Path -LiteralPath $outPath) "Expected log file missing for canary check: $outPath"
+      $c = Read-DemoTextStrict $outPath
+      if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+        Assert-Demo (-not $c.Contains([string]$script:canaryToken)) "Canary token leaked in log: $outPath"
+      }
     }
 
     # C. Worker printed environment has no token variables
@@ -2038,9 +2080,8 @@ try {
       Start-Sleep -Milliseconds 50
     }
     Assert-Demo ($proc2.HasExited) "Supervisor 2 did not terminate under github-after-poll fault"
-    Assert-Demo ($proc2.ExitCode -ne 0) "Supervisor 2 must end with non-zero exit code on fault kill, got $($proc2.ExitCode)"
 
-    # Witness that second-round poll occurred and received events before the kill
+    # Positive evidence that second-round poll occurred, received events result, and response finished before the kill
     $allLogsAfterFault = @(Get-DemoFakeServerLogs)
     $faultLogs = @($allLogsAfterFault | Select-Object -Skip $logCountBeforeFault | Where-Object { $null -ne $_ })
     if ($faultLogs.Count -lt 1) {
@@ -2050,6 +2091,14 @@ try {
     $faultReq = $faultLogs[0]
     Assert-Demo ($faultReq.method -eq 'GET' -and $faultReq.path -eq '/repos/owner/repo/events') "Fault round poll request path unexpected: $($faultReq.path)"
     Assert-Demo ([string]$faultReq.ifNoneMatch -match 'etag-committed-old') "Fault round poll must send old committed ETag in If-None-Match, got: $(if ($faultReq) { $faultReq.ifNoneMatch } else { '' })"
+    Assert-Demo ($faultReq.statusCode -eq 200 -or $faultReq.status -eq 200) "Fault round response status must be 200, got: $($faultReq.statusCode)"
+    Assert-Demo ($faultReq.eventCount -ge 1) "Fault round response must contain at least 1 event, got: $($faultReq.eventCount)"
+
+    # Assert faulted Supervisor exit status equals what the fault produces:
+    # supervisor/src/app/faults.ts triggerFault terminates with process.kill(process.pid, 'SIGKILL').
+    # On Windows, TerminateProcess produces exit code 1; on POSIX systems, SIGKILL produces exit code 137.
+    $expectedFaultExitCodes = @(1, 137)
+    Assert-Demo ($expectedFaultExitCodes -contains $proc2.ExitCode) "Supervisor 2 exit code must match SIGKILL fault termination (1 on Windows, 137 on POSIX), got $($proc2.ExitCode)"
 
     # Boundary assertions: DB still holds round 1 committed state (no event 5002, ETag is still old)
     $data2 = Get-DemoGitHubData $pState
