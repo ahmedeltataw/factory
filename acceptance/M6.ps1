@@ -77,6 +77,35 @@ function ConvertFrom-JsonArray($jsonInput) {
   return @($jsonInput | ForEach-Object { $_ })
 }
 
+function Read-DemoText([string]$path) {
+  if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path)) {
+    return ''
+  }
+  try {
+    $text = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+    if ($null -eq $text) { return '' }
+    return [string]$text
+  } catch {
+    try {
+      $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+      try {
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+        try {
+          $content = $reader.ReadToEnd()
+          if ($null -eq $content) { return '' }
+          return [string]$content
+        } finally {
+          $reader.Dispose()
+        }
+      } finally {
+        $stream.Dispose()
+      }
+    } catch {
+      return ''
+    }
+  }
+}
+
 function Remove-AcceptanceTempDir([string]$dir) {
   if ([string]::IsNullOrWhiteSpace($dir)) { return }
   if (-not (Test-Path -LiteralPath $dir)) { return }
@@ -125,7 +154,7 @@ function Remove-AcceptanceTempDir([string]$dir) {
 
         $robocopyExit = $roboProc.ExitCode
         if ($null -eq $robocopyExit -or $robocopyExit -lt 0 -or $robocopyExit -gt 7) {
-          $roboErr = if (Test-Path -LiteralPath $roboErrLog) { (Get-Content -LiteralPath $roboErrLog -Raw) } else { '' }
+          $roboErr = Read-DemoText $roboErrLog
           throw "robocopy failed with exit code ${robocopyExit}: $roboErr"
         }
         $global:LASTEXITCODE = 0
@@ -433,7 +462,7 @@ process.stdout.write(JSON.stringify(canonical));
     $rawPaths = & $script:nodeExe $helperPath 2> $helperErrFile
     $helperCodeExit = $LASTEXITCODE
     if ($helperCodeExit -ne 0) {
-      throw "Path canonicalization failed with code ${helperCodeExit}: $(Get-Content -LiteralPath $helperErrFile -Raw)"
+      throw "Path canonicalization failed with code ${helperCodeExit}: $(Read-DemoText $helperErrFile)"
     }
     try {
       $canonicalPaths = @(ConvertFrom-JsonArray $rawPaths)
@@ -620,10 +649,12 @@ function Invoke-FactoryStatusText([string]$sDir) {
   $raw = & $script:nodeExe $cliPath status --state-dir $sDir 2> $errFile
   $code = $LASTEXITCODE
   if ($code -ne 0) {
-    $errText = if (Test-Path -LiteralPath $errFile) { [string](Get-Content -LiteralPath $errFile -Raw) } else { '' }
+    $errText = Read-DemoText $errFile
     throw "factory status text failed with code ${code}: $errText"
   }
-  return ([string]($raw -join "`n"))
+  $result = if ($raw) { ($raw -join "`n") } else { '' }
+  if ($null -eq $result) { return '' }
+  return [string]$result
 }
 
 function Step($n, $label, [scriptblock]$cmd = $null, [switch]$Skip) {
@@ -786,7 +817,7 @@ function Start-FakeGitHubServer {
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
   while (-not (Test-Path -LiteralPath $portFile) -and $sw.Elapsed.TotalSeconds -lt 15) {
     if ($proc.HasExited) {
-      $err = if (Test-Path -LiteralPath (Join-Path $logsDir 'fake-github.err')) { Get-Content (Join-Path $logsDir 'fake-github.err') -Raw } else { '' }
+      $err = Read-DemoText (Join-Path $logsDir 'fake-github.err')
       throw "Fake GitHub server exited prematurely with code $($proc.ExitCode): $err"
     }
     Start-Sleep -Milliseconds 50
@@ -794,7 +825,7 @@ function Start-FakeGitHubServer {
   if (-not (Test-Path -LiteralPath $portFile)) {
     throw "Fake GitHub server did not write port file within 15s"
   }
-  $portRaw = if (Test-Path -LiteralPath $portFile) { [string](Get-Content -LiteralPath $portFile -Raw) } else { '' }
+  $portRaw = Read-DemoText $portFile
   $rawUrl = $portRaw.Trim()
   if ([string]::IsNullOrWhiteSpace($rawUrl) -or -not $rawUrl.StartsWith('http://127.0.0.1:')) {
     throw "Invalid URL from Fake GitHub server: $rawUrl"
@@ -948,7 +979,7 @@ function Wait-DemoSupervisor($proc, [string]$name, [int]$timeoutSec = 90) {
   }
   if ($proc.ExitCode -ne 0) {
     $errPath = Join-Path $logsDir "$name.err"
-    $errContent = if (Test-Path -LiteralPath $errPath) { Get-Content $errPath -Raw } else { '' }
+    $errContent = Read-DemoText $errPath
     throw "Supervisor $name exited with code $($proc.ExitCode): $errContent"
   }
 }
@@ -984,7 +1015,7 @@ try {
     $errFile = Join-Path $logsDir "db-$taskId.err"
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) { throw "Database read failed ($exitCode): $(Get-Content $errFile -Raw)" }
+    if ($exitCode -ne 0) { throw "Database read failed ($exitCode): $(Read-DemoText $errFile)" }
     try {
       $parsed = (($raw -join "`n") | ConvertFrom-Json)
       return [pscustomobject]@{
@@ -1016,7 +1047,7 @@ try {
     $errFile = Join-Path $logsDir "cmd-$cmdId.err"
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) { throw "Command outcome read failed ($exitCode): $(Get-Content $errFile -Raw)" }
+    if ($exitCode -ne 0) { throw "Command outcome read failed ($exitCode): $(Read-DemoText $errFile)" }
     try { return (($raw -join "`n") | ConvertFrom-Json) } catch { throw "Invalid command outcome JSON: $raw" }
   } finally { Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_COMMAND_ID -ErrorAction SilentlyContinue }
 }
@@ -1040,7 +1071,7 @@ try {
     $errFile = Join-Path $logsDir 'read-github-data.err'
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) { throw "Failed to read GitHub database data ($exitCode): $(Get-Content $errFile -Raw)" }
+    if ($exitCode -ne 0) { throw "Failed to read GitHub database data ($exitCode): $(Read-DemoText $errFile)" }
     try {
       $parsed = (($raw -join "`n") | ConvertFrom-Json)
       return [pscustomobject]@{
@@ -1089,7 +1120,7 @@ try {
     & $script:nodeExe $helper 2> $errFile
     $codeExit = $LASTEXITCODE
     if ($codeExit -ne 0) {
-      $errText = if (Test-Path -LiteralPath $errFile) { Get-Content -LiteralPath $errFile -Raw } else { '' }
+      $errText = Read-DemoText $errFile
       throw "Failed to set repo due ($codeExit): $errText"
     }
   } finally {
@@ -1215,7 +1246,7 @@ try {
             }
           }
         } else {
-          $errOut = if (Test-Path -LiteralPath $diagErr) { Get-Content -LiteralPath $diagErr -Raw } else { '' }
+          $errOut = Read-DemoText $diagErr
           [void]$sb.AppendLine("  (failed reading github_cursor: $errOut)")
         }
       } finally {
@@ -1278,7 +1309,7 @@ process.stdout.write(JSON.stringify(matches));
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
-      $errContent = if (Test-Path -LiteralPath $errFile) { [string](Get-Content $errFile -Raw) } else { '' }
+      $errContent = Read-DemoText $errFile
       throw "Failed to scan canary ($exitCode): $errContent"
     }
     $matches = @(ConvertFrom-JsonArray $raw)
@@ -1301,7 +1332,7 @@ function Assert-WorkerEnvNoSecrets([string]$sDir) {
   $foundAnyEnvKeys = $false
   foreach ($logFile in $stdoutLogs) {
     if ($null -eq $logFile -or -not (Test-Path -LiteralPath $logFile.FullName)) { continue }
-    $content = [string](Get-Content -LiteralPath $logFile.FullName -Raw)
+    $content = Read-DemoText $logFile.FullName
     if ([string]::IsNullOrWhiteSpace($content)) { continue }
     $splitLines = @($content -split "`r?`n")
     $lines = @($splitLines | Where-Object {
@@ -1332,7 +1363,7 @@ function Register-DemoWorkerNonces([string]$sDir) {
   if (-not (Test-Path -LiteralPath $runsDir)) { return }
   $workers = @(Get-ChildItem -LiteralPath $runsDir -Filter worker.json -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
     try {
-      $workerRaw = [string](Get-Content $_.FullName -Raw)
+      $workerRaw = Read-DemoText $_.FullName
       if (-not [string]::IsNullOrWhiteSpace($workerRaw)) {
         $workerRaw | ConvertFrom-Json
       } else { $null }
@@ -1430,7 +1461,7 @@ try {
       $refRaw = & git -C $PSScriptRoot rev-parse --abbrev-ref HEAD 2> $refErrFile
       $refExit = $LASTEXITCODE
       if ($refExit -ne 0) {
-        $refErr = if (Test-Path -LiteralPath $refErrFile) { (Get-Content -LiteralPath $refErrFile -Raw).Trim() } else { '' }
+        $refErr = (Read-DemoText $refErrFile).Trim()
         throw "Failed to resolve git ref from repository at '$PSScriptRoot' (exit code $($refExit)) - $refErr. Please pass -Ref explicitly."
       }
       $targetRef = ($refRaw -join '').Trim()
@@ -1443,7 +1474,7 @@ try {
     & git clone -q --branch $targetRef -- $Source $dest 2> $cloneErrFile
     $cloneExit = $LASTEXITCODE
     if ($cloneExit -ne 0) {
-      $cloneErr = if (Test-Path -LiteralPath $cloneErrFile) { (Get-Content -LiteralPath $cloneErrFile -Raw).Trim() } else { '' }
+      $cloneErr = (Read-DemoText $cloneErrFile).Trim()
       throw "git clone failed with exit code $($cloneExit) - $cloneErr"
     }
 
@@ -1451,7 +1482,7 @@ try {
     $shaRaw = & git -C $dest rev-parse HEAD 2> $shaErrFile
     $shaExit = $LASTEXITCODE
     if ($shaExit -ne 0) {
-      $shaErr = if (Test-Path -LiteralPath $shaErrFile) { (Get-Content -LiteralPath $shaErrFile -Raw).Trim() } else { '' }
+      $shaErr = (Read-DemoText $shaErrFile).Trim()
       throw "git rev-parse HEAD failed with exit code $($shaExit) - $shaErr"
     }
     $clonedSha = ($shaRaw -join '').Trim()
@@ -1627,7 +1658,7 @@ try {
     $cliPath = if ($dest -and (Test-Path -LiteralPath (Join-Path $dest 'lib\factory.mjs'))) { Join-Path $dest 'lib\factory.mjs' } else { 'lib/factory.mjs' }
     $errFile1 = Join-Path $logsDir 'approve1.err'
     $rawApprove1 = & $script:nodeExe $cliPath github approve --state-dir $pState --event 2001 --command-id $cmdApprove1 2> $errFile1
-    Assert-Demo ($LASTEXITCODE -eq 0) "github approve failed with exit code ${LASTEXITCODE}: $rawApprove1 $(Get-Content $errFile1 -Raw)"
+    Assert-Demo ($LASTEXITCODE -eq 0) "github approve failed with exit code ${LASTEXITCODE}: $rawApprove1 $(Read-DemoText $errFile1)"
 
     # Run supervisor: applies approve command, dispatches task, fake executor finishes done
     $proc2 = Start-DemoSupervisor 'approval-run' -sDir $pState
@@ -1656,7 +1687,7 @@ try {
     $cmdApprove2 = [guid]::NewGuid().ToString()
     $errFile2 = Join-Path $logsDir 'approve2.err'
     $rawApprove2 = & $script:nodeExe $cliPath github approve --state-dir $pState --event 2001 --command-id $cmdApprove2 2> $errFile2
-    Assert-Demo ($LASTEXITCODE -eq 0) "Second github approve command append failed: $rawApprove2"
+    Assert-Demo ($LASTEXITCODE -eq 0) "Second github approve command append failed: $rawApprove2 $(Read-DemoText $errFile2)"
 
     $proc3 = Start-DemoSupervisor 'approval-dup' -sDir $pState
     Wait-DemoSupervisor $proc3 'approval-dup'
@@ -1668,7 +1699,7 @@ try {
     $cmdReject = [guid]::NewGuid().ToString()
     $errFile3 = Join-Path $logsDir 'reject.err'
     $rawReject = & $script:nodeExe $cliPath github reject --state-dir $pState --event 2002 --reason "Not needed" --command-id $cmdReject 2> $errFile3
-    Assert-Demo ($LASTEXITCODE -eq 0) "github reject command append failed: $rawReject"
+    Assert-Demo ($LASTEXITCODE -eq 0) "github reject command append failed: $rawReject $(Read-DemoText $errFile3)"
 
     $proc4 = Start-DemoSupervisor 'approval-reject' -sDir $pState
     Wait-DemoSupervisor $proc4 'approval-reject'
@@ -1728,7 +1759,7 @@ try {
     $evStored = @($dbData.events | Where-Object { $_.event_id -eq '3001' })[0]
     Assert-Demo ($evStored.status -eq 'pending') "Event 3001 status expected pending, got $($evStored.status)"
     Assert-Demo ($evStored.title -eq 'Fix login bug reversed') "Stored title must be sanitized to 'Fix login bug reversed', got '$($evStored.title)'"
-    $sTitle = [string]$evStored.title
+    $sTitle = if ($evStored.title) { [string]$evStored.title } else { '' }
     Assert-Demo (-not $sTitle.Contains([string]$bidiRlo)) "Stored title must not contain bidi override character"
     Assert-Demo (-not $sTitle.Contains('/etc/passwd')) "Stored title must not contain hostile scope text"
 
@@ -1751,6 +1782,7 @@ try {
 
     # Status Arabic text view verification
     $statusText = [string](Invoke-FactoryStatusText $pState)
+    if ($null -eq $statusText) { $statusText = '' }
     Assert-Demo ($statusText.Contains('Fix login bug reversed')) "Status text must contain sanitized title"
     Assert-Demo (-not $statusText.Contains('/etc/passwd')) "Status text must not contain hostile text"
     Assert-Demo (-not $statusText.Contains([string]$bidiRlo)) "Status text must not contain bidi override characters"
@@ -1760,7 +1792,7 @@ try {
     $cliPath = if ($dest -and (Test-Path -LiteralPath (Join-Path $dest 'lib\factory.mjs'))) { Join-Path $dest 'lib\factory.mjs' } else { 'lib/factory.mjs' }
     $errFile = Join-Path $logsDir 'approve-hostile.err'
     $rawApprove = & $script:nodeExe $cliPath github approve --state-dir $pState --event 3001 --command-id $cmdHostile 2> $errFile
-    Assert-Demo ($LASTEXITCODE -eq 0) "github approve hostile failed: $rawApprove"
+    Assert-Demo ($LASTEXITCODE -eq 0) "github approve hostile failed: $rawApprove $(Read-DemoText $errFile)"
 
     $proc2 = Start-DemoSupervisor 'hostile-run' -sDir $pState
     Wait-DemoSupervisor $proc2 'hostile-run'
@@ -1804,7 +1836,7 @@ try {
     $errFile = Join-Path $activeLogsDir 'approve-token.err'
     $rawApprove = & $script:nodeExe $cliPath github approve --state-dir $pState --event 4001 --command-id $cmdToken 2> $errFile
     $approveText = if ($rawApprove) { ($rawApprove -join "`n") } else { '' }
-    Assert-Demo ($LASTEXITCODE -eq 0) "github approve token failed: $approveText"
+    Assert-Demo ($LASTEXITCODE -eq 0) "github approve token failed: $approveText $(Read-DemoText $errFile)"
 
     # Make repo due so supervisor 2 performs second poll round sending If-None-Match
     Set-DemoRepoDue $pState 'owner/repo'
@@ -1842,9 +1874,7 @@ try {
     }
 
     # Verify that the server's request log file does not leak the secret canary token value
-    $logRaw = if (-not [string]::IsNullOrWhiteSpace($script:fakeLogFile) -and (Test-Path -LiteralPath $script:fakeLogFile)) {
-      [string](Get-Content -LiteralPath $script:fakeLogFile -Raw)
-    } else { '' }
+    $logRaw = Read-DemoText $script:fakeLogFile
     if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
       Assert-Demo (-not $logRaw.Contains([string]$script:canaryToken)) "Canary token was leaked into server request log!"
     }
@@ -1857,7 +1887,7 @@ try {
     # Also verify supervisor stdout/stderr and status outputs do not leak canary
     foreach ($outPath in @((Join-Path $activeLogsDir 'token-ingest.out'), (Join-Path $activeLogsDir 'token-ingest.err'), (Join-Path $activeLogsDir 'token-run.out'), (Join-Path $activeLogsDir 'token-run.err'))) {
       if (Test-Path -LiteralPath $outPath) {
-        $c = [string](Get-Content -LiteralPath $outPath -Raw)
+        $c = Read-DemoText $outPath
         if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
           Assert-Demo (-not $c.Contains([string]$script:canaryToken)) "Canary token leaked in supervisor log: $outPath"
         }
@@ -1865,10 +1895,12 @@ try {
     }
     $snapJson = Invoke-FactoryStatus $pState
     $snapRaw = [string](ConvertTo-Json -InputObject $snapJson -Depth 10)
+    if ($null -eq $snapRaw) { $snapRaw = '' }
     if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
       Assert-Demo (-not $snapRaw.Contains([string]$script:canaryToken)) "Canary token leaked in status --json"
     }
     $statusText = [string](Invoke-FactoryStatusText $pState)
+    if ($null -eq $statusText) { $statusText = '' }
     if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
       Assert-Demo (-not $statusText.Contains([string]$script:canaryToken)) "Canary token leaked in status text"
     }
@@ -1897,7 +1929,7 @@ try {
     Wait-DemoSupervisor $proc1 'crash-round1'
 
     $data1 = Get-DemoGitHubData $pState
-    Assert-Demo ($data1.cursors[0].etag -match 'etag-committed-old') "Cursor round 1 missing etag-committed-old, got $($data1.cursors[0].etag)"
+    Assert-Demo ($data1.cursors.Count -ge 1 -and [string]$data1.cursors[0].etag -match 'etag-committed-old') "Cursor round 1 missing etag-committed-old, got $(if ($data1.cursors.Count -ge 1) { $data1.cursors[0].etag } else { '' })"
     Assert-Demo ($data1.events.Count -eq 1 -and $data1.events[0].event_id -eq '5001') "Event 5001 missing after round 1"
 
     # Round 2: configure fake server with events 5001 and 5002 with new ETag 'etag-new-v2'
@@ -1919,7 +1951,7 @@ try {
 
     # Boundary assertions: DB still holds round 1 committed state (no event 5002, ETag is still old)
     $data2 = Get-DemoGitHubData $pState
-    Assert-Demo ($data2.cursors[0].etag -match 'etag-committed-old') "Cursor ETag must remain old committed ETag after fault crash"
+    Assert-Demo ($data2.cursors.Count -ge 1 -and [string]$data2.cursors[0].etag -match 'etag-committed-old') "Cursor ETag must remain old committed ETag after fault crash"
     Assert-Demo ($data2.events.Count -eq 1 -and $data2.events[0].event_id -eq '5001') "Event 5002 must not be committed before crash"
 
     # Read lease to prepare takeover
@@ -1928,7 +1960,7 @@ try {
     Assert-Demo (-not [string]::IsNullOrWhiteSpace($takeover)) "Missing takeover token after crash"
 
     # Wait for lease staleness
-    $delay = [Math]::Max(0, [long]$snap2.lease.heartbeatMs + 2500 - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+    $delay = [Math]::Max([long]0, [long]$snap2.lease.heartbeatMs + 2500 - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
     if ($delay -gt 0) { Start-Sleep -Milliseconds $delay }
 
     # Make repo due for takeover run
@@ -1942,20 +1974,20 @@ try {
 
     # Assert that takeover poll sent old ETag in If-None-Match
     $allLogs = @(Get-DemoFakeServerLogs)
-    $takeoverLogs = @($allLogs | Select-Object -Skip $logCountBeforeTakeover)
+    $takeoverLogs = @($allLogs | Select-Object -Skip $logCountBeforeTakeover | Where-Object { $null -ne $_ })
     if ($takeoverLogs.Count -lt 1) {
       $diag15 = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('crash-round1', 'crash-faulted', 'crash-takeover')
       Assert-Demo ($takeoverLogs.Count -ge 1) "No requests recorded during takeover poll`n$diag15"
     }
     $takeoverReq = $takeoverLogs[0]
-    if ($takeoverReq.ifNoneMatch -notmatch 'etag-committed-old') {
+    if ([string]$takeoverReq.ifNoneMatch -notmatch 'etag-committed-old') {
       $diag15 = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('crash-round1', 'crash-faulted', 'crash-takeover')
-      Assert-Demo ($takeoverReq.ifNoneMatch -match 'etag-committed-old') "Takeover poll must send old committed ETag in If-None-Match, got: $($takeoverReq.ifNoneMatch)`n$diag15"
+      Assert-Demo ([string]$takeoverReq.ifNoneMatch -match 'etag-committed-old') "Takeover poll must send old committed ETag in If-None-Match, got: $(if ($takeoverReq) { $takeoverReq.ifNoneMatch } else { '' })`n$diag15"
     }
 
     # Assert that after takeover, events 5001 and 5002 each have exactly one row (deduped) and cursor has new ETag
     $data3 = Get-DemoGitHubData $pState
-    Assert-Demo ($data3.cursors[0].etag -match 'etag-new-v2') "Cursor ETag must update to etag-new-v2, got $($data3.cursors[0].etag)"
+    Assert-Demo ($data3.cursors.Count -ge 1 -and [string]$data3.cursors[0].etag -match 'etag-new-v2') "Cursor ETag must update to etag-new-v2, got $(if ($data3.cursors.Count -ge 1) { $data3.cursors[0].etag } else { '' })"
 
     $finalEventIds = @($data3.events | ForEach-Object { $_.event_id })
     Assert-Demo ($finalEventIds.Count -eq 2) "Expected exactly 2 events in DB, found $($finalEventIds.Count)"
