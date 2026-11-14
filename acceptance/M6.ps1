@@ -837,7 +837,7 @@ function Get-DemoFakeServerLogs {
       }
     } catch {}
   }
-  return ,$records.ToArray()
+  return $records.ToArray()
 }
 
 function Clear-DemoFakeServerLogs {
