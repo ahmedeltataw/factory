@@ -36,6 +36,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { killTree, spawnWorker } from '../../supervisor/src/app/process-tree.ts'
+import {
+  findProcessesWithNonces,
+  isProcessAliveWithNonce,
+  probePid,
+  waitForProcessDeath,
+} from '../helpers/process-identity.ts'
 
 interface KillTreeResult {
   result: 'killed' | 'not-running' | 'identity-mismatch' | 'kill-failed'
@@ -67,15 +73,7 @@ function createFixtureDir(prefix = 'factory-m3-process-tree-'): string {
   return dir
 }
 
-function isProcessAlive(pid: number): boolean {
-  if (!pid || pid <= 0) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
+
 
 function trackProcess(pid: number, nonce: string): void {
   if (pid > 0 && pid !== process.pid && nonce) {
@@ -89,120 +87,10 @@ function untrackDeadProcesses(): void {
   for (let i = trackedProcesses.length - 1; i >= 0; i--) {
     const item = trackedProcesses[i]
     if (!item) continue
-    if (!isProcessAlive(item.pid)) {
+    if (probePid(item.pid) === 'absent') {
       trackedProcesses.splice(i, 1)
     }
   }
-}
-
-/**
- * Batched enumeration: finds all live PIDs whose command line contains ANY of the given nonces.
- * Excludes both the PowerShell lookup process ($PID) and the test runner PID (process.pid).
- * Throws on lookup failures rather than silently returning an empty list.
- */
-function findPidsByNonces(nonces: string[]): number[] {
-  const validNonces = nonces.filter((n) => typeof n === 'string' && n.trim().length > 0)
-  if (validNonces.length === 0) return []
-
-  if (process.platform === 'win32') {
-    const escapedNonces = validNonces.map((n) => `'*${n.replace(/'/g, "''")}*'`).join(',')
-    const runnerPid = process.pid
-    const script = [
-      `$n = @(${escapedNonces});`,
-      `Get-CimInstance Win32_Process | Where-Object {`,
-      `  if ($_.ProcessId -eq $PID -or $_.ProcessId -eq ${runnerPid}) { return $false };`,
-      `  $c = $_.CommandLine;`,
-      `  if (-not $c) { return $false };`,
-      `  foreach ($p in $n) { if ($c -like $p) { return $true } };`,
-      `  return $false`,
-      `} | ForEach-Object { $_.ProcessId }`,
-    ].join(' ')
-
-    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
-      encoding: 'utf8',
-      timeout: 30000,
-      windowsHide: true,
-    })
-    let res = run()
-    if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') res = run()
-
-    if (res.error) {
-      throw new Error(`Process enumeration failed: ${res.error.message}`)
-    }
-    if (res.status !== 0) {
-      throw new Error(
-        `Process enumeration command failed with exit code ${res.status}: ${res.stderr || res.stdout}`,
-      )
-    }
-
-    const pids: number[] = []
-    if (res.stdout) {
-      for (const line of res.stdout.split(/\r?\n/)) {
-        const trimmed = line.trim()
-        if (/^\d+$/.test(trimmed)) {
-          const pid = Number(trimmed)
-          if (pid > 0 && pid !== process.pid) {
-            pids.push(pid)
-          }
-        }
-      }
-    }
-    return Array.from(new Set(pids))
-  } else {
-    const pids: number[] = []
-    if (existsSync('/proc')) {
-      const entries = readdirSync('/proc')
-      for (const entry of entries) {
-        if (/^\d+$/.test(entry)) {
-          const pid = Number(entry)
-          if (pid === process.pid) continue
-          try {
-            const cmdline = readFileSync(`/proc/${entry}/cmdline`, 'utf8')
-            for (const n of validNonces) {
-              if (cmdline.includes(n)) {
-                pids.push(pid)
-                break
-              }
-            }
-          } catch {
-            // Process may have exited or access denied; continue
-          }
-        }
-      }
-    } else {
-      const ps = spawnSync('ps', ['-eo', 'pid,command'], {
-        encoding: 'utf8',
-        timeout: 10000,
-      })
-      if (ps.error) {
-        throw new Error(`ps command failed: ${ps.error.message}`)
-      }
-      if (ps.status !== 0) {
-        throw new Error(`ps command failed with status ${ps.status}: ${ps.stderr || ps.stdout}`)
-      }
-      if (ps.stdout) {
-        for (const line of ps.stdout.split('\n')) {
-          for (const n of validNonces) {
-            if (line.includes(n)) {
-              const match = line.trim().match(/^(\d+)/)
-              if (match) {
-                const pid = Number(match[1])
-                if (pid > 0 && pid !== process.pid) {
-                  pids.push(pid)
-                  break
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    return Array.from(new Set(pids))
-  }
-}
-
-function findPidsByNonce(nonce: string): number[] {
-  return findPidsByNonces([nonce])
 }
 
 /**
@@ -243,39 +131,29 @@ async function cleanupNonces(
 
   // 2. Repeatedly enumerate and identity-check survivors before killing them
   const deadline = Date.now() + timeoutMs
-  let survivors: number[] = []
-
   while (Date.now() < deadline) {
-    survivors = findPidsByNonces(nonceList)
+    const survivors = findProcessesWithNonces(nonceList, { deadlineMs: deadline })
     if (survivors.length === 0) {
       break
     }
 
-    for (const pid of survivors) {
-      if (pid === process.pid) continue
+    for (const survivor of survivors) {
+      if (survivor.pid === process.pid) continue
       try {
-        if (process.platform === 'win32') {
-          spawnSync('taskkill', ['/F', '/PID', String(pid)], {
-            timeout: 10000,
-            stdio: 'ignore',
-            windowsHide: true,
-          })
-        } else {
-          process.kill(pid, 'SIGKILL')
-        }
+        await killTree(survivor.pid, survivor.nonce)
       } catch {
         // ignore individual kill failure
       }
     }
 
-    await delay(150)
+    await delay(100)
   }
 
   // 3. Final verification: assert zero survivors remain
-  survivors = findPidsByNonces(nonceList)
-  if (survivors.length > 0) {
+  const remaining = findProcessesWithNonces(nonceList, { deadlineMs: deadline })
+  if (remaining.length > 0) {
     throw new Error(
-      `Cleanup failed to terminate all matching processes for nonces [${nonceList.join(', ')}]. Surviving PIDs: ${survivors.join(', ')}`,
+      `Cleanup failed to terminate all matching processes for nonces [${nonceList.join(', ')}]. Surviving PIDs: ${remaining.map((r) => r.pid).join(', ')}`,
     )
   }
 
@@ -284,17 +162,6 @@ async function cleanupNonces(
   for (const n of nonceList) {
     activeNonces.delete(n)
   }
-}
-
-async function waitForProcessDeath(pid: number, timeoutMs = 20000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) {
-      return true
-    }
-    await delay(50)
-  }
-  return !isProcessAlive(pid)
 }
 
 async function waitForFileContent(
@@ -417,7 +284,7 @@ describe('M3-04 process tree and kill contract', () => {
         expect(spawned.pid).toBeGreaterThan(0)
         expect(typeof spawned.nonce).toBe('string')
         expect(spawned.nonce.length).toBeGreaterThan(0)
-        expect(isProcessAlive(spawned.pid)).toBe(true)
+        expect(isProcessAliveWithNonce(spawned.pid, spawned.nonce)).toBe(true)
 
         // Verify stdout and stderr log files exist with distinguishable, unmerged streams
         const stdoutPath = join(runDir, 'stdout.log')
@@ -444,7 +311,7 @@ describe('M3-04 process tree and kill contract', () => {
         expect(worker.grandchildPid).not.toBe(spawned.pid)
 
         trackProcess(worker.grandchildPid, spawned.nonce)
-        expect(isProcessAlive(worker.grandchildPid)).toBe(true)
+        expect(isProcessAliveWithNonce(worker.grandchildPid, spawned.nonce)).toBe(true)
 
         // Poll boundedly for deterministic fake executor output file in cwd
         const fakeFile = join(cwd, 'factory-fake', `${taskId}.txt`)
@@ -522,16 +389,16 @@ describe('M3-04 process tree and kill contract', () => {
       expect(stubbornChildPid).toBeGreaterThan(0)
       trackProcess(stubbornChildPid, stubbornNonce)
 
-      expect(isProcessAlive(parentPid)).toBe(true)
-      expect(isProcessAlive(stubbornChildPid)).toBe(true)
+      expect(isProcessAliveWithNonce(parentPid, stubbornNonce)).toBe(true)
+      expect(isProcessAliveWithNonce(stubbornChildPid, stubbornNonce)).toBe(true)
 
       // killTree must terminate both parent and stubborn descendant before returning 'killed'
       const stubbornKillRes = (await killTree(parentPid, stubbornNonce)) as KillTreeResult
       expect(stubbornKillRes.result).toBe('killed')
 
       // Assert immediate termination without further delay
-      expect(isProcessAlive(parentPid)).toBe(false)
-      expect(isProcessAlive(stubbornChildPid)).toBe(false)
+      expect(isProcessAliveWithNonce(parentPid, stubbornNonce)).toBe(false)
+      expect(isProcessAliveWithNonce(stubbornChildPid, stubbornNonce)).toBe(false)
 
       // Part 2: Real worker spawned via spawnWorker
       const taskId = 'task-b-1'
@@ -553,20 +420,20 @@ describe('M3-04 process tree and kill contract', () => {
       const worker = await waitForWorkerJson(runDir, 20000)
       trackProcess(worker.grandchildPid, spawned.nonce)
 
-      expect(isProcessAlive(worker.pid)).toBe(true)
-      expect(isProcessAlive(worker.grandchildPid)).toBe(true)
+      expect(isProcessAliveWithNonce(worker.pid, spawned.nonce)).toBe(true)
+      expect(isProcessAliveWithNonce(worker.grandchildPid, spawned.nonce)).toBe(true)
 
       const killResult = (await killTree(worker.pid, worker.nonce)) as KillTreeResult
       expect(killResult.result).toBe('killed')
 
       // Independent verification that both processes are dead
-      const executorGone = await waitForProcessDeath(worker.pid, 20000)
-      const grandchildGone = await waitForProcessDeath(worker.grandchildPid, 20000)
+      const executorGone = await waitForProcessDeath(worker.pid, 20000, spawned.nonce)
+      const grandchildGone = await waitForProcessDeath(worker.grandchildPid, 20000, spawned.nonce)
 
       expect(executorGone).toBe(true)
       expect(grandchildGone).toBe(true)
-      expect(isProcessAlive(worker.pid)).toBe(false)
-      expect(isProcessAlive(worker.grandchildPid)).toBe(false)
+      expect(isProcessAliveWithNonce(worker.pid, spawned.nonce)).toBe(false)
+      expect(isProcessAliveWithNonce(worker.grandchildPid, spawned.nonce)).toBe(false)
     },
     90000,
   )
@@ -576,13 +443,13 @@ describe('M3-04 process tree and kill contract', () => {
     async () => {
       // 1. Identity mismatch on test runner's own PID (must assert it is still alive)
       const runnerPid = process.pid
-      expect(isProcessAlive(runnerPid)).toBe(true)
+      expect(probePid(runnerPid)).toBe('present')
 
       const runnerNonce = `non-matching-nonce-${randomUUID()}`
       const runnerRes = (await killTree(runnerPid, runnerNonce)) as KillTreeResult
 
       expect(runnerRes.result).toBe('identity-mismatch')
-      expect(isProcessAlive(runnerPid)).toBe(true)
+      expect(probePid(runnerPid)).toBe('present')
 
       // 2. Identity mismatch on a live worker process with wrong nonce
       const root = createFixtureDir('m3-04-c-')
@@ -614,8 +481,8 @@ describe('M3-04 process tree and kill contract', () => {
           `wrong-nonce-${randomUUID()}`,
         )) as KillTreeResult
         expect(mismatchRes.result).toBe('identity-mismatch')
-        expect(isProcessAlive(worker.pid)).toBe(true)
-        expect(isProcessAlive(worker.grandchildPid)).toBe(true)
+        expect(isProcessAliveWithNonce(worker.pid, spawned.nonce)).toBe(true)
+        expect(isProcessAliveWithNonce(worker.grandchildPid, spawned.nonce)).toBe(true)
       } finally {
         await cleanupNonces([spawned.nonce])
       }
@@ -624,10 +491,16 @@ describe('M3-04 process tree and kill contract', () => {
       const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], {
         timeout: 10000,
       })
-      const deadPid = deadChild.pid!
-      expect(isProcessAlive(deadPid)).toBe(false)
+      expect(deadChild.status).toBe(0)
+      const deadNonce = `dead-nonce-${randomUUID()}`
 
-      const notRunningRes = (await killTree(deadPid, 'any-nonce-for-dead-pid')) as KillTreeResult
+      // Deterministically exercise killTree not-running branch with a PID confirmed absent
+      let absentPid = 2147483647
+      while (probePid(absentPid) !== 'absent' && absentPid > 100000) {
+        absentPid--
+      }
+      expect(probePid(absentPid)).toBe('absent')
+      const notRunningRes = (await killTree(absentPid, deadNonce)) as KillTreeResult
       expect(notRunningRes.result).toBe('not-running')
     },
     90000,
@@ -671,7 +544,7 @@ describe('M3-04 process tree and kill contract', () => {
         expect(typeof failRes1.detail).toBe('string')
         expect(failRes1.detail!.length).toBeGreaterThan(0)
         expect(failRes1.result).not.toBe('killed')
-        expect(isProcessAlive(worker1.pid)).toBe(true)
+        expect(isProcessAliveWithNonce(worker1.pid, spawned1.nonce)).toBe(true)
       } finally {
         await cleanupNonces([spawned1.nonce])
       }
@@ -732,7 +605,7 @@ describe('M3-04 process tree and kill contract', () => {
         expect(typeof failRes2.detail).toBe('string')
         expect(failRes2.detail!.length).toBeGreaterThan(0)
         expect(failRes2.result).not.toBe('killed')
-        expect(isProcessAlive(worker2.pid)).toBe(true)
+        expect(isProcessAliveWithNonce(worker2.pid, spawned2.nonce)).toBe(true)
       } finally {
         await cleanupNonces([spawned2.nonce])
       }
@@ -777,8 +650,8 @@ describe('M3-04 process tree and kill contract', () => {
           const killResult = (await killTree(spawned.pid, spawned.nonce)) as KillTreeResult
           expect(killResult.result).toBe('killed')
 
-          const execGone = await waitForProcessDeath(spawned.pid, 20000)
-          const grandGone = await waitForProcessDeath(worker.grandchildPid, 20000)
+          const execGone = await waitForProcessDeath(spawned.pid, 20000, spawned.nonce)
+          const grandGone = await waitForProcessDeath(worker.grandchildPid, 20000, spawned.nonce)
           expect(execGone).toBe(true)
           expect(grandGone).toBe(true)
         }
@@ -786,7 +659,7 @@ describe('M3-04 process tree and kill contract', () => {
         expect(nonces).toHaveLength(20)
 
         // Batched CIM query: enumerate matching command lines for all 20 nonces at once
-        const survivors = findPidsByNonces(nonces)
+        const survivors = findProcessesWithNonces(nonces, 30000)
         expect(survivors).toHaveLength(0)
       } finally {
         await cleanupNonces(nonces, 30000)

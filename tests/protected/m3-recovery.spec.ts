@@ -133,6 +133,14 @@ import {
 import { appendCommand } from '../../supervisor/src/app/commands.ts'
 import type { EnsureWorktreeConfig } from '../../supervisor/src/app/worktree.ts'
 import type { FaultName } from '../../supervisor/src/app/faults.ts'
+import { killTree } from '../../supervisor/src/app/process-tree.ts'
+import {
+  findProcessesWithNonces,
+  isProcessAliveWithNonce,
+  killIfOurs,
+  probePid,
+  waitForProcessDeath,
+} from '../helpers/process-identity.ts'
 
 const ARABIC_REGEX = /[\u0600-\u06ff]/
 const cliPath = join(process.cwd(), 'supervisor/src/cli/main.ts')
@@ -155,44 +163,7 @@ const activeNonces = new Set<string>()
 const spawnedSupervisorChildren: TrackedSupervisorChild[] = []
 const activeContexts: TestContext[] = []
 
-function powershell(script: string) {
-  const run = () => spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
-    encoding: 'utf8',
-    timeout: 30000,
-    windowsHide: true,
-  })
-  let res = run()
-  if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') res = run()
-  return res
-}
 
-function getCommandLineForPid(pid: number): string | undefined {
-  if (!pid || pid <= 0) return undefined
-  try {
-    if (process.platform === 'win32') {
-      const res = powershell(`(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`)
-      if (res.status === 0 && res.stdout) {
-        return res.stdout.trim()
-      }
-      return undefined
-    } else {
-      const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
-        encoding: 'utf8',
-        timeout: 10000,
-      })
-      if (res.status === 0 && res.stdout) {
-        return res.stdout.trim()
-      }
-      return undefined
-    }
-  } catch {
-    return undefined
-  }
-}
-
-function isSupervisorProcess(pid: number, marker: string): boolean {
-  return isProcessAliveWithNonce(pid, marker)
-}
 
 function parseCreatedTaskId(stdout: string): string {
   const match = stdout.match(/^created\s+([0-9a-f-]+)/i)
@@ -243,182 +214,25 @@ function git(cwd: string, ...args: string[]): string {
   ).trim()
 }
 
-function isProcessAlive(pid: number): boolean {
-  if (!pid || pid <= 0) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function isProcessAliveWithNonce(pid: number, markerOrNonce: string): boolean {
-  if (!isProcessAlive(pid)) return false
-  const cmd = getCommandLineForPid(pid)
-  return typeof cmd === 'string' && cmd.includes(markerOrNonce)
-}
-
 function findPidsByNonces(
   nonces: string[],
   options?: { executorsOnly?: boolean },
 ): number[] {
-  const validNonces = nonces.filter((n) => typeof n === 'string' && n.trim().length > 0)
-  if (validNonces.length === 0) return []
-
-  const executorsOnly = options?.executorsOnly === true
-
-  if (process.platform === 'win32') {
-    const escapedNonces = validNonces.map((n) => `'*${n.replace(/'/g, "''")}*'`).join(',')
-    const runnerPid = process.pid
-    const script = [
-      `$n = @(${escapedNonces});`,
-      `$execOnly = ${executorsOnly ? '$true' : '$false'};`,
-      `Get-CimInstance Win32_Process | Where-Object {`,
-      `  if ($_.ProcessId -eq $PID -or $_.ProcessId -eq ${runnerPid}) { return $false };`,
-      `  $c = $_.CommandLine;`,
-      `  if (-not $c) { return $false };`,
-      `  if ($execOnly -and $c -like '*factory-grandchild-*') { return $false };`,
-      `  foreach ($p in $n) { if ($c -like $p) { return $true } };`,
-      `  return $false`,
-      `} | ForEach-Object { $_.ProcessId }`,
-    ].join(' ')
-
-    const res = powershell(script)
-
-    if (res.error) {
-      throw new Error(`Process enumeration failed: ${res.error.message}`)
-    }
-    if (res.status !== 0) {
-      throw new Error(
-        `Process enumeration command failed with status ${res.status}: ${res.stderr || res.stdout}`,
-      )
-    }
-
-    const pids: number[] = []
-    if (res.stdout) {
-      for (const line of res.stdout.split(/\r?\n/)) {
-        const trimmed = line.trim()
-        if (/^\d+$/.test(trimmed)) {
-          const pid = Number(trimmed)
-          if (pid > 0 && pid !== process.pid) {
-            pids.push(pid)
-          }
-        }
-      }
-    }
-    return Array.from(new Set(pids))
-  } else {
-    const pids: number[] = []
-    const ps = spawnSync('ps', ['-eo', 'pid,command'], {
-      encoding: 'utf8',
-      timeout: 10000,
-    })
-    if (ps.error) {
-      throw new Error(`ps command failed: ${ps.error.message}`)
-    }
-    if (ps.status !== 0) {
-      throw new Error(`ps command failed with status ${ps.status}: ${ps.stderr || ps.stdout}`)
-    }
-    if (ps.stdout) {
-      for (const line of ps.stdout.split('\n')) {
-        if (executorsOnly && line.includes('factory-grandchild-')) {
-          continue
-        }
-        for (const n of validNonces) {
-          if (line.includes(n)) {
-            const match = line.trim().match(/^(\d+)/)
-            const pidStr = match?.[1]
-            if (pidStr) {
-              const pid = Number(pidStr)
-              if (pid > 0 && pid !== process.pid) {
-                pids.push(pid)
-                break
-              }
-            }
-          }
-        }
-      }
-    }
-    return Array.from(new Set(pids))
-  }
+  const procs = findProcessesWithNonces(nonces, 5000)
+  return Array.from(new Set(
+    procs
+      .filter((p) => options?.executorsOnly ? !p.command.includes('factory-grandchild-') : true)
+      .map((p) => p.pid)
+  ))
 }
 
 function findGrandchildPidsByNonces(nonces: string[]): number[] {
-  const validNonces = nonces.filter((n) => typeof n === 'string' && n.trim().length > 0)
-  if (validNonces.length === 0) return []
-
-  if (process.platform === 'win32') {
-    const escapedNonces = validNonces.map((n) => `'*${n.replace(/'/g, "''")}*'`).join(',')
-    const runnerPid = process.pid
-    const script = [
-      `$n = @(${escapedNonces});`,
-      `Get-CimInstance Win32_Process | Where-Object {`,
-      `  if ($_.ProcessId -eq $PID -or $_.ProcessId -eq ${runnerPid}) { return $false };`,
-      `  $c = $_.CommandLine;`,
-      `  if (-not $c) { return $false };`,
-      `  if ($c -notlike '*factory-grandchild-*') { return $false };`,
-      `  foreach ($p in $n) { if ($c -like $p) { return $true } };`,
-      `  return $false`,
-      `} | ForEach-Object { $_.ProcessId }`,
-    ].join(' ')
-
-    const res = powershell(script)
-
-    if (res.error) {
-      throw new Error(`Grandchild process enumeration failed: ${res.error.message}`)
-    }
-    if (res.status !== 0) {
-      throw new Error(
-        `Grandchild process enumeration command failed with status ${res.status}: ${res.stderr || res.stdout}`,
-      )
-    }
-
-    const pids: number[] = []
-    if (res.stdout) {
-      for (const line of res.stdout.split(/\r?\n/)) {
-        const trimmed = line.trim()
-        if (/^\d+$/.test(trimmed)) {
-          const pid = Number(trimmed)
-          if (pid > 0 && pid !== process.pid) {
-            pids.push(pid)
-          }
-        }
-      }
-    }
-    return Array.from(new Set(pids))
-  } else {
-    const pids: number[] = []
-    const ps = spawnSync('ps', ['-eo', 'pid,command'], {
-      encoding: 'utf8',
-      timeout: 10000,
-    })
-    if (ps.error) {
-      throw new Error(`ps command failed: ${ps.error.message}`)
-    }
-    if (ps.status !== 0) {
-      throw new Error(`ps command failed with status ${ps.status}: ${ps.stderr || ps.stdout}`)
-    }
-    if (ps.stdout) {
-      for (const line of ps.stdout.split('\n')) {
-        if (!line.includes('factory-grandchild-')) continue
-        for (const n of validNonces) {
-          if (line.includes(n)) {
-            const match = line.trim().match(/^(\d+)/)
-            const pidStr = match?.[1]
-            if (pidStr) {
-              const pid = Number(pidStr)
-              if (pid > 0 && pid !== process.pid) {
-                pids.push(pid)
-                break
-              }
-            }
-          }
-        }
-      }
-    }
-    return Array.from(new Set(pids))
-  }
+  const procs = findProcessesWithNonces(nonces, 5000)
+  return Array.from(new Set(
+    procs
+      .filter((p) => p.command.includes('factory-grandchild-'))
+      .map((p) => p.pid)
+  ))
 }
 
 async function cleanupNonces(
@@ -431,60 +245,31 @@ async function cleanupNonces(
   if (nonceList.length === 0) return
 
   const deadline = Date.now() + timeoutMs
-  let survivors: number[] = []
-
   while (Date.now() < deadline) {
-    survivors = findPidsByNonces(nonceList)
+    const survivors = findProcessesWithNonces(nonceList, { deadlineMs: deadline })
     if (survivors.length === 0) break
 
-    for (const pid of survivors) {
-      if (pid === process.pid) continue
+    for (const survivor of survivors) {
+      if (survivor.pid === process.pid) continue
       try {
-        if (process.platform === 'win32') {
-          spawnSync('taskkill', ['/F', '/PID', String(pid)], {
-            timeout: 10000,
-            stdio: 'ignore',
-            windowsHide: true,
-          })
-        } else {
-          process.kill(pid, 'SIGKILL')
-        }
+        await killTree(survivor.pid, survivor.nonce)
       } catch {
         // ignore individual kill failure
       }
     }
-    await delay(150)
+    await delay(100)
   }
 
-  survivors = findPidsByNonces(nonceList)
-  if (survivors.length > 0) {
+  const remaining = findProcessesWithNonces(nonceList, { deadlineMs: deadline })
+  if (remaining.length > 0) {
     throw new Error(
-      `Cleanup failed to terminate all matching processes for nonces [${nonceList.join(', ')}]. Survivors: ${survivors.join(', ')}`,
+      `Cleanup failed to terminate all matching processes for nonces [${nonceList.join(', ')}]. Survivors: ${remaining.map((r) => r.pid).join(', ')}`,
     )
   }
 
   for (const n of nonceList) {
     activeNonces.delete(n)
   }
-}
-
-async function waitForProcessDeath(
-  pid: number,
-  timeoutMs = 20000,
-  markerOrNonce?: string,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const alive = markerOrNonce
-      ? isProcessAliveWithNonce(pid, markerOrNonce)
-      : isProcessAlive(pid)
-    if (!alive) return true
-    await delay(50)
-  }
-  const alive = markerOrNonce
-    ? isProcessAliveWithNonce(pid, markerOrNonce)
-    : isProcessAlive(pid)
-  return !alive
 }
 
 interface WorkerJson {
@@ -687,28 +472,11 @@ afterEach(async () => {
   const remainingSupervisors: TrackedSupervisorChild[] = []
 
   for (const item of spawnedSupervisorChildren) {
-    const { child, marker, pid } = item
-    if (pid && isProcessAlive(pid)) {
-      if (!isSupervisorProcess(pid, marker)) {
-        // PID reused; refusing to kill and treat as already gone
-        continue
-      }
-      try {
-        if (process.platform === 'win32') {
-          spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
-            timeout: 10000,
-            stdio: 'ignore',
-            windowsHide: true,
-          })
-        } else {
-          child.kill('SIGKILL')
-        }
-      } catch {
-        // ignore
-      }
-      const dead = await waitForProcessDeath(pid, 15000, marker)
+    if (item.child) {
+      await killIfOurs(item.child)
+      const dead = await waitForProcessDeath(item.pid, 15000, item.marker)
       if (!dead) {
-        supervisorKillFailures.push(`Supervisor process ${pid} failed to terminate within 15000ms`)
+        supervisorKillFailures.push(`Supervisor process ${item.pid} failed to terminate within 15000ms`)
         remainingSupervisors.push(item)
       }
     }
@@ -1230,12 +998,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
 
         const recoveryDeps: RecoveryDeps = {
           killTree: async (pid, nonce) => {
-            if (nonce === oldNonce && isProcessAliveWithNonce(pid, oldNonce)) {
-              if (process.platform === 'win32') {
-                spawnSync('taskkill', ['/F', '/PID', String(pid)], { stdio: 'ignore', timeout: 5000, windowsHide: true })
-              } else {
-                process.kill(pid, 'SIGKILL')
-              }
+            if (nonce === oldNonce && liveWorkerChild.exitCode === null && liveWorkerChild.signalCode === null) {
+              await killIfOurs(liveWorkerChild)
               return { result: 'killed' }
             }
             return { result: 'not-running' }
@@ -1728,7 +1492,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         const { stateDir, dbPath } = createInitializedProject('m3-06-b-mismatch-')
 
         const runnerPid = process.pid
-        expect(isProcessAlive(runnerPid)).toBe(true)
+        expect(probePid(runnerPid)).toBe('present')
 
         const taskId = 'task-b-mismatch'
         const oldAttemptId = 'att-b-mismatch-1'
@@ -1771,7 +1535,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
           expect(recResult.lostCount).toBe(1)
           expect(recResult.killedCount).toBe(0)
 
-          expect(isProcessAlive(runnerPid)).toBe(true)
+          expect(probePid(runnerPid)).toBe('present')
 
           const oldWorker = handleDb.prepare('SELECT state FROM workers WHERE attempt_id = ?').get(oldAttemptId) as { state: string }
           expect(oldWorker.state).toBe('lost')
@@ -1953,12 +1717,8 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
         expect(isProcessAliveWithNonce(grandchildPid, workerNonce)).toBe(true)
 
         // Kill supervisor1 first with verified identity and confirm termination BEFORE reading persisted evidence
-        expect(isSupervisorProcess(supervisor1.pid!, supervisor1.marker)).toBe(true)
-        if (process.platform === 'win32') {
-          spawnSync('taskkill', ['/F', '/PID', String(supervisor1.pid)], { timeout: 10000, windowsHide: true })
-        } else {
-          supervisor1.kill('SIGKILL')
-        }
+        expect(isProcessAliveWithNonce(supervisor1.pid!, supervisor1.marker)).toBe(true)
+        await killIfOurs(supervisor1, { tree: false })
 
         const supervisorDead = await waitForProcessDeath(supervisor1.pid!, 15000, supervisor1.marker)
         expect(supervisorDead).toBe(true)
@@ -2564,13 +2324,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
             dbAfter.close()
           }
         } finally {
-          if (workerChild.pid && isProcessAliveWithNonce(workerChild.pid, workerNonce)) {
-            if (process.platform === 'win32') {
-              spawnSync('taskkill', ['/F', '/PID', String(workerChild.pid)], { timeout: 5000, windowsHide: true })
-            } else {
-              workerChild.kill('SIGKILL')
-            }
-          }
+          await killIfOurs(workerChild)
         }
       },
       60000,
@@ -2662,13 +2416,7 @@ describe('M3-06 Recovery and Supervisor Loop Contract', () => {
             dbAfter.close()
           }
         } finally {
-          if (workerChild.pid && isProcessAliveWithNonce(workerChild.pid, workerNonce)) {
-            if (process.platform === 'win32') {
-              spawnSync('taskkill', ['/F', '/PID', String(workerChild.pid)], { timeout: 5000, windowsHide: true })
-            } else {
-              workerChild.kill('SIGKILL')
-            }
-          }
+          await killIfOurs(workerChild)
         }
       },
       60000,

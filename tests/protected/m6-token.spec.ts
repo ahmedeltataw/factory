@@ -1,3 +1,4 @@
+import { isProcessAliveWithNonce as alive } from '../helpers/process-identity.ts'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
@@ -80,10 +81,10 @@ it('CHK-M6-06-c: client failures and persisted poll results never disclose the c
   }
 }, 30000)
 
-function alive(pid: number): boolean { try { process.kill(pid, 0); return true } catch { return false } }
-async function waitUntil(check: () => boolean): Promise<void> {
+
+async function waitUntil(check: (deadline: number) => boolean): Promise<void> {
   const deadline = Date.now() + 10000
-  while (Date.now() < deadline) { if (check()) return; await delay(25) }
+  while (Date.now() < deadline) { if (check(deadline)) return; await delay(Math.min(25, Math.max(0, deadline - Date.now()))) }
   throw new Error('Worker did not finish before deadline')
 }
 function envKeys(log: string, label: string): string[] {
@@ -117,19 +118,19 @@ it.each(['default', 'process', 'explicit', 'child'])('CHK-M6-06-d: worker and gr
           expect(keys.includes('FACTORY_M6_OTHER')).toBe(true)
           expect(keys.includes('FAKE_EXIT_CODE')).toBe(true)
         }
-        await waitUntil(() => !alive(spawned.pid) && !alive(grandchildPid))
+        await waitUntil(deadline => !alive(spawned.pid, spawned.nonce, { deadlineMs: deadline }) && !alive(grandchildPid, `factory-grandchild-${spawned.nonce}`, { deadlineMs: deadline }))
       } finally {
         const workerFile = join(runDir, 'worker.json')
         if (existsSync(workerFile)) {
           const worker = JSON.parse(readFileSync(workerFile, 'utf8')) as { pid: number; nonce: string; grandchildPid?: number }
           if (worker.pid === spawned.pid && worker.nonce === spawned.nonce) grandchildPid = worker.grandchildPid ?? 0
         }
-        for (const pid of [spawned.pid, grandchildPid]) if (pid > 0 && alive(pid)) {
+        for (const pid of [spawned.pid, grandchildPid]) if (pid > 0 && alive(pid, pid === spawned.pid ? spawned.nonce : `factory-grandchild-${spawned.nonce}`)) {
           const killed = await killTree(pid, spawned.nonce)
           if (killed.result !== 'killed' && killed.result !== 'not-running') throw new Error(`Worker cleanup failed: ${killed.result}`)
         }
-        expect(alive(spawned.pid)).toBe(false)
-        if (grandchildPid > 0) expect(alive(grandchildPid)).toBe(false)
+        expect(alive(spawned.pid, spawned.nonce)).toBe(false)
+        if (grandchildPid > 0) expect(alive(grandchildPid, `factory-grandchild-${spawned.nonce}`)).toBe(false)
       }
     }
   } finally {
