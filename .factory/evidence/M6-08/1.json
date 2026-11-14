@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M6-08",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "2f267f8",
+  "checks": [
+    {
+      "id": "CHK-M6-08-a",
+      "command": "powershell -File acceptance/M6.ps1 -SkipBaseline -Ref card/M6-08 (steps 1-6 and 10-15 PASS; -SkipBaseline always ends in FAIL by design as in M5); verify dispatch",
+      "result": "pass",
+      "output": "verify run 43556775579 all four cells success; acceptance run 13 steps 1-6 and 10-15 PASS (7-9 skipped by -SkipBaseline); no mutation run (PowerShell script and a test server, no product TypeScript); script and fake server by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 5 rounds; accepted residual: an external kill between response headers and the client read is not witnessed in the crash demo, boundary proven by unchanged cursor state)"
+    },
+    {
+      "id": "CHK-M6-08-b",
+      "command": "powershell -File acceptance/M6.ps1 -SkipBaseline -Ref card/M6-08 (steps 1-6 and 10-15 PASS; -SkipBaseline always ends in FAIL by design as in M5); verify dispatch",
+      "result": "pass",
+      "output": "verify run 43556775579 all four cells success; acceptance run 13 steps 1-6 and 10-15 PASS (7-9 skipped by -SkipBaseline); no mutation run (PowerShell script and a test server, no product TypeScript); script and fake server by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 5 rounds; accepted residual: an external kill between response headers and the client read is not witnessed in the crash demo, boundary proven by unchanged cursor state)"
+    },
+    {
+      "id": "CHK-M6-08-c",
+      "command": "powershell -File acceptance/M6.ps1 -SkipBaseline -Ref card/M6-08 (steps 1-6 and 10-15 PASS; -SkipBaseline always ends in FAIL by design as in M5); verify dispatch",
+      "result": "pass",
+      "output": "verify run 43556775579 all four cells success; acceptance run 13 steps 1-6 and 10-15 PASS (7-9 skipped by -SkipBaseline); no mutation run (PowerShell script and a test server, no product TypeScript); script and fake server by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 5 rounds; accepted residual: an external kill between response headers and the client read is not witnessed in the crash demo, boundary proven by unchanged cursor state)"
+    },
+    {
+      "id": "CHK-M6-08-d",
+      "command": "powershell -File acceptance/M6.ps1 -SkipBaseline -Ref card/M6-08 (steps 1-6 and 10-15 PASS; -SkipBaseline always ends in FAIL by design as in M5); verify dispatch",
+      "result": "pass",
+      "output": "verify run 43556775579 all four cells success; acceptance run 13 steps 1-6 and 10-15 PASS (7-9 skipped by -SkipBaseline); no mutation run (PowerShell script and a test server, no product TypeScript); script and fake server by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 5 rounds; accepted residual: an external kill between response headers and the client read is not witnessed in the crash demo, boundary proven by unchanged cursor state)"
+    },
+    {
+      "id": "CHK-M6-08-e",
+      "command": "powershell -File acceptance/M6.ps1 -SkipBaseline -Ref card/M6-08 (steps 1-6 and 10-15 PASS; -SkipBaseline always ends in FAIL by design as in M5); verify dispatch",
+      "result": "pass",
+      "output": "verify run 43556775579 all four cells success; acceptance run 13 steps 1-6 and 10-15 PASS (7-9 skipped by -SkipBaseline); no mutation run (PowerShell script and a test server, no product TypeScript); script and fake server by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 5 rounds; accepted residual: an external kill between response headers and the client read is not witnessed in the crash demo, boundary proven by unchanged cursor state)"
+    },
+    {
+      "id": "CHK-M6-08-f",
+      "command": "powershell -File acceptance/M6.ps1 -SkipBaseline -Ref card/M6-08 (steps 1-6 and 10-15 PASS; -SkipBaseline always ends in FAIL by design as in M5); verify dispatch",
+      "result": "pass",
+      "output": "verify run 43556775579 all four cells success; acceptance run 13 steps 1-6 and 10-15 PASS (7-9 skipped by -SkipBaseline); no mutation run (PowerShell script and a test server, no product TypeScript); script and fake server by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve after 5 rounds; accepted residual: an external kill between response headers and the client read is not witnessed in the crash demo, boundary proven by unchanged cursor state)"
+    }
+  ],
+  "ended_at": "2026-11-14T04:39:31.174Z"
+}
