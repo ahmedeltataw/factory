@@ -1018,23 +1018,15 @@ try {
 
 function Set-DemoRepoDue([string]$sDir = $null, [string]$repo = 'owner/repo') {
   $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
-  $helper = Join-Path $helpersDir 'set-repo-due.mjs'
-  $code = @'
-import { DatabaseSync } from 'node:sqlite';
-import { join } from 'node:path';
-const db = new DatabaseSync(join(process.env.FACTORY_STATE_DIR, 'state.sqlite'));
-try {
-  db.prepare('UPDATE github_cursor SET next_poll_ms = 0 WHERE repo = ?').run(process.env.FACTORY_REPO);
-} finally { db.close(); }
-'@
-  [System.IO.File]::WriteAllText($helper, $code, (New-Object System.Text.UTF8Encoding $false))
-  $env:FACTORY_STATE_DIR = $activeState
-  $env:FACTORY_REPO = $repo
-  try {
-    $errFile = Join-Path $logsDir 'set-repo-due.err'
-    $raw = & $script:nodeExe $helper 2> $errFile
-    if ($LASTEXITCODE -ne 0) { throw "Failed to set repo due ($LASTEXITCODE): $(Get-Content $errFile -Raw)" }
-  } finally { Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_REPO -ErrorAction SilentlyContinue }
+  $dbFile = (Join-Path $activeState 'state.sqlite').Replace('\', '/')
+  $errFile = Join-Path $logsDir 'set-repo-due.err'
+  $nodeCode = "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync('$dbFile'); db.exec('PRAGMA busy_timeout = 5000'); const r = db.prepare('UPDATE github_cursor SET next_poll_ms = 0 WHERE repo = ?').run('$repo'); if (r.changes === 0) { db.prepare('UPDATE github_cursor SET next_poll_ms = 0').run(); } const row = db.prepare('SELECT next_poll_ms FROM github_cursor WHERE repo = ?').get('$repo') || db.prepare('SELECT next_poll_ms FROM github_cursor LIMIT 1').get(); if (!row || row.next_poll_ms !== 0) throw new Error('Failed to set next_poll_ms to 0: ' + JSON.stringify(row)); db.close();"
+  & $script:nodeExe -e $nodeCode 2> $errFile
+  $code = $LASTEXITCODE
+  if ($code -ne 0) {
+    $errText = if (Test-Path -LiteralPath $errFile) { Get-Content -LiteralPath $errFile -Raw } else { '' }
+    throw "Failed to set repo due ($code): $errText"
+  }
 }
 
 function Assert-DemoCanaryAbsent([string]$sDir, [string]$canary) {
@@ -1568,7 +1560,7 @@ try {
     Clear-DemoFakeServerLogs
 
     $evToken = New-GitHubIssueCommentEvent '4001' 'owner/repo' 1 'alice' '/factory task Canary token verification task'
-    Set-FakeGitHubEvents 'owner/repo' @($evToken)
+    Set-FakeGitHubEvents 'owner/repo' @($evToken) 'canary-etag-v1'
 
     # 1. Run supervisor 1: polls fake server using canary token, ingests event
     $proc1 = Start-DemoSupervisor 'token-ingest' -sDir $pState
@@ -1598,11 +1590,12 @@ try {
     Assert-Demo ($logs.Count -ge 2) "Expected at least 2 requests logged, found $($logs.Count)"
     foreach ($entry in $logs) {
       Assert-Demo ($entry.method -eq 'GET') "Logged request method expected GET, got $($entry.method)"
-      Assert-Demo ($entry.path -match '^/repos/owner/repo/events') "Logged request path unexpected: $($entry.path)"
-      Assert-Demo ($entry.hasBearer -eq $true) "Logged request missing Bearer header"
+      Assert-Demo ($entry.path -eq '/repos/owner/repo/events') "Logged request path unexpected: $($entry.path)"
+      Assert-Demo ($entry.url -match '^/repos/owner/repo/events') "Logged request url unexpected: $($entry.url)"
+      Assert-Demo ($entry.hasBearer -eq $true -and $entry.authScheme -eq 'Bearer') "Logged request missing Bearer header"
     }
     Assert-Demo ([string]::IsNullOrWhiteSpace($logs[0].ifNoneMatch)) "First poll request must have no If-None-Match"
-    Assert-Demo (-not [string]::IsNullOrWhiteSpace($logs[1].ifNoneMatch)) "Second poll request must have If-None-Match"
+    Assert-Demo ($logs[1].ifNoneMatch -match 'canary-etag-v1') "Second poll request must have If-None-Match canary-etag-v1, got: $($logs[1].ifNoneMatch)"
 
     # Verify that the server's request log file does not leak the secret canary token value
     $logRaw = Get-Content -LiteralPath $script:fakeLogFile -Raw
