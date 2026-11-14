@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "card": "M6-07",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "dfcb396",
+  "checks": [
+    {
+      "id": "CHK-M6-07-a",
+      "command": "pnpm exec vitest run tests/protected/m6-status.spec.ts tests/m6-07-scope.spec.ts; full suite 1244 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43540066192 all four cells success; mutation run 43540068997 status.ts 91.13 >= 80; protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, 3 rounds); edits of older protected status/schema tests (additive github field) approved by gpt-6.1-sol; implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve)"
+    },
+    {
+      "id": "CHK-M6-07-b",
+      "command": "pnpm exec vitest run tests/protected/m6-status.spec.ts tests/m6-07-scope.spec.ts; full suite 1244 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43540066192 all four cells success; mutation run 43540068997 status.ts 91.13 >= 80; protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, 3 rounds); edits of older protected status/schema tests (additive github field) approved by gpt-6.1-sol; implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve)"
+    },
+    {
+      "id": "CHK-M6-07-c",
+      "command": "pnpm exec vitest run tests/protected/m6-status.spec.ts tests/m6-07-scope.spec.ts; full suite 1244 pass; verify + mutation dispatch",
+      "result": "pass",
+      "output": "verify run 43540066192 all four cells success; mutation run 43540068997 status.ts 91.13 >= 80; protected tests by gemini-3.8-flash-high reviewed by gpt-6.1-sol (approve, 3 rounds); edits of older protected status/schema tests (additive github field) approved by gpt-6.1-sol; implementation by gpt-6.1-terra reviewed by gemini-3.8-flash-high (approve)"
+    }
+  ],
+  "ended_at": "2026-11-14T01:36:43.523Z"
+}
