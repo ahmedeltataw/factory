@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M6-FIX1",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "96492b7f01ee202db0c86be1e255fc2455a18797",
+  "checks": [
+    {
+      "id": "CHK-M6-FIX1-a",
+      "command": "node scripts/check-evidence.mjs .factory/evidence/M4-01/1.json .factory/evidence/M4-01/2.json; node scripts/check-traceability.mjs --all --require-passing",
+      "result": "pass",
+      "output": "M4-report.md has the dated correction note (2026-11-14); .factory/evidence/M4-01/2.json (attempt 2, checks a-d pass) is an annotation record at head_sha 96492b7 where CI verify run 43575612400 passed all four cells; 1.json untouched; strict traceability green"
+    }
+  ],
+  "ended_at": "2026-11-14T08:34:59.128Z"
+}
