@@ -35,7 +35,7 @@ describe('M3-01 Schema v5 contract', () => {
     const path = databasePath()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
       expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
       expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
       expect(db.prepare('PRAGMA busy_timeout').get()).toMatchObject({ timeout: 5000 })
@@ -60,7 +60,7 @@ describe('M3-01 Schema v5 contract', () => {
       // Reopening is idempotent
       const observer = new DatabaseSync(path)
       try {
-        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
       } finally {
         observer.close()
       }
@@ -102,7 +102,7 @@ describe('M3-01 Schema v5 contract', () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const db = openStore(path)
       try {
-        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
         expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
         expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
         expect(db.prepare('SELECT name FROM projects WHERE id = ?').get('p1')).toMatchObject({ name: 'Alpha' })
@@ -763,12 +763,12 @@ describe('M3-01 Schema v5 contract', () => {
       const noLeaseStatus = readStatus(dir, { nowMs: 2000, staleAfterMs: 500 })
       expect(fileHash(path)).toBe(beforeHash)
       expect(m2Status(noLeaseStatus)).toEqual({
-        schemaVersion: 8,
+        schemaVersion: 9,
         recordedCommandCount: 2,
         lease: null,
       })
       const noLeaseArabic = formatStatus(noLeaseStatus)
-      expect(noLeaseArabic).toContain('إصدار المخطط: 8')
+      expect(noLeaseArabic).toContain('إصدار المخطط: 9')
       expect(noLeaseArabic).toContain('عدد الأوامر المسجلة: 2')
       expect(noLeaseArabic).toContain('الملكية: غير موجود')
 
@@ -777,7 +777,7 @@ describe('M3-01 Schema v5 contract', () => {
       try {
         const activeStatus = readStatus(dir, { nowMs: 2000, staleAfterMs: 500 })
         expect(m2Status(activeStatus)).toEqual({
-          schemaVersion: 8,
+          schemaVersion: 9,
           recordedCommandCount: 2,
           lease: {
             ownerId: handle.ownerId,
@@ -790,7 +790,7 @@ describe('M3-01 Schema v5 contract', () => {
         expect(JSON.stringify(activeStatus)).not.toContain('never-disclosed')
 
         const activeArabic = formatStatus(activeStatus)
-        expect(activeArabic).toContain('إصدار المخطط: 8')
+        expect(activeArabic).toContain('إصدار المخطط: 9')
         expect(activeArabic).toContain('عدد الأوامر المسجلة: 2')
         expect(activeArabic).toContain(
           `الملكية: المالك="${handle.ownerId}", الجيل=${handle.generation}, وقت النبض (Unix timestamp)=1800 ميلي ثانية, الحالة=نشط, حداثة النبض=حديث (لا يشكل دليلاً على أن العملية قيد التشغيل)`,

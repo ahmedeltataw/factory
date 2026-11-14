@@ -136,7 +136,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
     const path = databasePath()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
       expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
       expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
       expect(db.prepare('PRAGMA busy_timeout').get()).toMatchObject({ timeout: 5000 })
@@ -230,7 +230,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
       // Reopening is idempotent
       const observer = new DatabaseSync(path)
       try {
-        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
       } finally {
         observer.close()
       }
@@ -298,7 +298,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
         timeAfterUpgrade = new Date(Date.now() + 100).toISOString()
       }
       try {
-        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
         expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
         expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
 
@@ -979,7 +979,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
 
         const expectedStatus = {
           phases: [],
-          schemaVersion: 8,
+          schemaVersion: 9,
           recordedCommandCount: 6,
           commands: { recorded: 6, applied: 1, rejected: 2, pending: 3 },
           lease: {
@@ -1033,7 +1033,7 @@ describe('M5-03 Schema v7 and phase seeding contract', () => {
         expect(status).toEqual(expectedStatus)
 
         const arabic = formatStatus(status as unknown as Status)
-        expect(arabic).toContain('إصدار المخطط: 8')
+        expect(arabic).toContain('إصدار المخطط: 9')
         expect(arabic).toContain('عدد الأوامر المسجلة: 6')
         expect(arabic).toContain('Example task')
         expect(arabic).toContain('task-one')
