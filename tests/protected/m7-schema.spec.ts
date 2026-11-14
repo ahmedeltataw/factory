@@ -229,11 +229,15 @@ it('CHK-M7-01-c: constraints and triggers on v9 tables and tasks.provider', () =
     db.exec(`
       INSERT INTO projects (id, name, created_at) VALUES ('p', 'Project', 'now');
       INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES ('c1', 'p', 'task.create', '{}', 'now');
+      INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES ('c2', 'p', 'task.create', '{}', 'now');
+      INSERT INTO commands (id, project_id, kind, payload_json, created_at) VALUES ('c3', 'p', 'task.create', '{}', 'now');
       INSERT INTO phases (project_id, name, ord, status, opened_at, closed_at) VALUES ('p', 'intake', 1, 'open', 'now', NULL);
       INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, provider) VALUES ('t1', 'p', 'c1', 'Task 1', 'ready', 'now', 'now', 'default');
+      INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, provider) VALUES ('t2', 'p', 'c2', 'Task 2', 'ready', 'now', 'now', 'default');
+      INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, provider) VALUES ('t3', 'p', 'c3', 'Task 3', 'ready', 'now', 'now', 'default');
       INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation) VALUES ('a1', 't1', 1, 'running', 1);
-      INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation) VALUES ('a2', 't1', 2, 'pending', 1);
-      INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation) VALUES ('a3', 't1', 3, 'pending', 1);
+      INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation) VALUES ('a2', 't2', 1, 'pending', 1);
+      INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation) VALUES ('a3', 't3', 1, 'pending', 1);
     `)
 
     // 1. budget_caps level outside project/phase/task

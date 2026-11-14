@@ -209,13 +209,13 @@ describe('M3-01 Schema v5 contract', () => {
     }
   })
 
-  it('CHK-M3-01-b: refuses a v8 database unmodified', () => {
+  it('CHK-M3-01-b: refuses a v10 database unmodified', () => {
     const path = databasePath()
     const future = new DatabaseSync(path)
     future.exec(`
       CREATE TABLE future_data (value TEXT NOT NULL);
       INSERT INTO future_data VALUES ('preserved');
-      PRAGMA user_version = 9;
+      PRAGMA user_version = 10;
     `)
     future.close()
 
@@ -230,7 +230,7 @@ describe('M3-01 Schema v5 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow('store: unsupported schema version 9')
+      }).toThrow('store: unsupported schema version 10')
     } finally {
       unexpectedDb?.close()
     }
@@ -258,7 +258,7 @@ describe('M3-01 Schema v5 contract', () => {
       simulatedVersionChangeOccurred = true
       const second = new DatabaseSync(path)
       try {
-        origExec.call(second, 'PRAGMA user_version = 9')
+        origExec.call(second, 'PRAGMA user_version = 10')
       } finally {
         second.close()
       }
@@ -275,7 +275,7 @@ describe('M3-01 Schema v5 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow(/unsupported schema version 9/i)
+      }).toThrow(/unsupported schema version 10/i)
     } finally {
       unexpectedDb?.close()
       DatabaseSync.prototype.exec = origExec
@@ -285,7 +285,7 @@ describe('M3-01 Schema v5 contract', () => {
 
     const check = new DatabaseSync(path)
     try {
-      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
+      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 10 })
       const v5TableNames = ['project_config', 'command_outcomes', 'tasks', 'attempts', 'workers', 'outbox', 'evidence']
       for (const name of v5TableNames) {
         expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name)).toBeUndefined()

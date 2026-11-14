@@ -121,6 +121,7 @@ it('CHK-M6-02-a: fresh and v7 databases upgrade without data loss and preserve c
   try { expect(fresh.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 }) } finally { fresh.close() }
   const path = databasePath(); fixture(path)
   const before = new DatabaseSync(path); const rows = snapshot(before); before.close()
+  ;(rows['tasks'] as Array<Record<string, unknown>>).forEach(r => { r['provider'] = 'default' })
   for (let pass = 0; pass < 2; pass++) {
     const db = openStore(path)
     try {
@@ -162,14 +163,14 @@ it('CHK-M6-02-b: migration failure rolls back and future version is refused unch
     expect(check.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('github_events','github_cursor')").all()).toEqual([])
   } finally { check.close() }
   const futurePath = databasePath(); const future = new DatabaseSync(futurePath)
-  future.exec("CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('preserved'); PRAGMA user_version = 9"); future.close()
+  future.exec("CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('preserved'); PRAGMA user_version = 10"); future.close()
   const hash = () => createHash('sha256').update(readFileSync(futurePath)).digest('hex')
   const before = hash()
   let futureOpened: DatabaseSync | undefined
   try { expect(() => { futureOpened = openStore(futurePath) }).toThrow() } finally { futureOpened?.close() }
   expect(hash()).toBe(before)
   const probe = new DatabaseSync(futurePath)
-  try { expect(probe.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 }); expect(probe.prepare('SELECT * FROM future_data').all()).toEqual([{ value: 'preserved' }]) } finally { probe.close() }
+  try { expect(probe.prepare('PRAGMA user_version').get()).toEqual({ user_version: 10 }); expect(probe.prepare('SELECT * FROM future_data').all()).toEqual([{ value: 'preserved' }]) } finally { probe.close() }
 })
 
 it('CHK-M6-02-c: event and cursor constraints and transitions', () => {

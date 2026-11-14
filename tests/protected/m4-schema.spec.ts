@@ -274,6 +274,7 @@ describe('M4-01 Schema v6 contract', () => {
           expect(after).toEqual({
             ...before,
             phase: 'intake',
+            provider: 'default',
             scope_json: '["."]',
             max_attempts: 3,
             timeout_ms: null,
@@ -379,13 +380,13 @@ describe('M4-01 Schema v6 contract', () => {
     }
   })
 
-  it('CHK-M4-01-b: refuses a v8 database unmodified', () => {
+  it('CHK-M4-01-b: refuses a v10 database unmodified', () => {
     const path = databasePath()
     const future = new DatabaseSync(path)
     future.exec(`
       CREATE TABLE future_data (value TEXT NOT NULL);
       INSERT INTO future_data VALUES ('preserved');
-      PRAGMA user_version = 9;
+      PRAGMA user_version = 10;
     `)
     future.close()
 
@@ -400,7 +401,7 @@ describe('M4-01 Schema v6 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow('store: unsupported schema version 9')
+      }).toThrow('store: unsupported schema version 10')
     } finally {
       unexpectedDb?.close()
     }
@@ -428,7 +429,7 @@ describe('M4-01 Schema v6 contract', () => {
       simulatedVersionChangeOccurred = true
       const second = new DatabaseSync(path)
       try {
-        origExec.call(second, 'PRAGMA user_version = 9')
+        origExec.call(second, 'PRAGMA user_version = 10')
       } finally {
         second.close()
       }
@@ -445,7 +446,7 @@ describe('M4-01 Schema v6 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow(/unsupported schema version 9/i)
+      }).toThrow(/unsupported schema version 10/i)
     } finally {
       unexpectedDb?.close()
       DatabaseSync.prototype.exec = origExec
@@ -455,7 +456,7 @@ describe('M4-01 Schema v6 contract', () => {
 
     const check = new DatabaseSync(path)
     try {
-      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
+      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 10 })
     } finally {
       check.close()
     }
