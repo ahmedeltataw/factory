@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { openStore } from '../supervisor/src/app/store.ts'
 import { ensureWorktree } from '../supervisor/src/app/worktree.ts'
 import { commitAttempt, recordEvidence } from '../supervisor/src/app/evidence.ts'
+import { identityOf, killIfOurs } from './helpers/process-identity.ts'
 
 const dirs: string[] = []
 const executor = join(process.cwd(), 'supervisor/src/executors/fake-executor.ts')
@@ -364,10 +365,12 @@ describe('M3-03 Unit / Contract tests', () => {
     mkdirSync(runDir)
 
     // Case 1: Normal completion kills grandchild before exit
+    const nonce1 = randomUUID()
+    const grandchildMarker1 = `factory-grandchild-${nonce1}`
     const child = spawn(
       process.execPath,
-      [executor, 'task-lifecycle', 'nonce-norm', runDir],
-      { cwd, env: { ...process.env, FAKE_SLEEP_MS: '100', FAKE_EXIT_CODE: '0' }, stdio: 'ignore' },
+      [executor, 'task-lifecycle', nonce1, runDir],
+      { cwd, env: { ...process.env, FAKE_SLEEP_MS: '8000', FAKE_EXIT_CODE: '0' }, stdio: 'ignore' },
     )
     const childExit = new Promise<number | null>((resolve) => {
       child.once('exit', resolve)
@@ -390,17 +393,25 @@ describe('M3-03 Unit / Contract tests', () => {
       await delay(20)
     }
 
-    expect(grandchildPid).toBeGreaterThan(0)
-    // Grandchild is alive while child sleeps
-    expect(() => process.kill(grandchildPid, 0)).not.toThrow()
+    try {
+      expect(grandchildPid).toBeGreaterThan(0)
+      // Observation window (8000ms) accommodates bounded identity lookup (4000ms) while child sleeps
+      expect(identityOf(grandchildPid, grandchildMarker1, 4000)).toBe('ours')
 
-    // Wait for normal completion
-    const exitCode = await childExit
-    expect(exitCode).toBe(0)
+      // Wait for normal completion
+      const exitCode = await childExit
+      expect(exitCode).toBe(0)
 
-    // Grandchild must have been stopped and awaited by the executor
-    await delay(100)
-    expect(() => process.kill(grandchildPid, 0)).toThrow()
+      // Grandchild must have been stopped and awaited by the executor; original 100ms timing guarantee
+      await delay(100)
+      const id1 = identityOf(grandchildPid, grandchildMarker1, 4000)
+      expect(id1).not.toBe('ours')
+      expect(['absent', 'not-ours']).toContain(id1)
+    } finally {
+      if (grandchildPid > 0) {
+        await killIfOurs({ pid: grandchildPid, nonce: nonce1, marker: grandchildMarker1 })
+      }
+    }
 
     // Case 2: Parent death handling (grandchild detects dead parent and exits itself)
     rmSync(workerPath)
@@ -408,10 +419,12 @@ describe('M3-03 Unit / Contract tests', () => {
     mkdirSync(runDir2)
     const workerPath2 = join(runDir2, 'worker.json')
 
+    const nonce2 = randomUUID()
+    const grandchildMarker2 = `factory-grandchild-${nonce2}`
     const child2 = spawn(
       process.execPath,
-      [executor, 'task-parent-death', 'nonce-death', runDir2],
-      { cwd, env: { ...process.env, FAKE_SLEEP_MS: '10000', FAKE_EXIT_CODE: '0' }, stdio: 'ignore' },
+      [executor, 'task-parent-death', nonce2, runDir2],
+      { cwd, env: { ...process.env, FAKE_SLEEP_MS: '15000', FAKE_EXIT_CODE: '0' }, stdio: 'ignore' },
     )
     const child2Exit = new Promise<number | null>((resolve) => {
       child2.once('exit', resolve)
@@ -433,15 +446,23 @@ describe('M3-03 Unit / Contract tests', () => {
       await delay(20)
     }
 
-    expect(grandchildPid2).toBeGreaterThan(0)
-    expect(() => process.kill(grandchildPid2, 0)).not.toThrow()
+    try {
+      expect(grandchildPid2).toBeGreaterThan(0)
+      expect(identityOf(grandchildPid2, grandchildMarker2, 4000)).toBe('ours')
 
-    // Abruptly kill the executor parent
-    child2.kill('SIGTERM')
-    await child2Exit
+      // Abruptly kill the executor parent
+      child2.kill('SIGTERM')
+      await child2Exit
 
-    // Grandchild should detect dead parent within its 200 ms check interval and exit
-    await delay(500)
-    expect(() => process.kill(grandchildPid2, 0)).toThrow()
+      // Grandchild should detect dead parent within its 200 ms check interval and exit; original 500ms timing guarantee
+      await delay(500)
+      const id2 = identityOf(grandchildPid2, grandchildMarker2, 4000)
+      expect(id2).not.toBe('ours')
+      expect(['absent', 'not-ours']).toContain(id2)
+    } finally {
+      if (grandchildPid2 > 0) {
+        await killIfOurs({ pid: grandchildPid2, nonce: nonce2, marker: grandchildMarker2 })
+      }
+    }
   })
 })

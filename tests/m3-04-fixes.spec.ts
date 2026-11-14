@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { setTimeout as delay } from 'node:timers/promises'
 import { killTree, parseLinuxStat, parseWindowsProcesses, spawnWorker, treeMembers, aliveMembers } from '../supervisor/src/app/process-tree.ts'
+import { cleanupNonces, findProcessesWithNonces } from './helpers/process-identity.ts'
 
 vi.mock('node:child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:child_process')>()
@@ -317,7 +318,7 @@ describe.skipIf(process.platform !== 'win32')('Windows process enumeration', () 
     } finally {
       helper.kill()
       if (worker) {
-        try { process.kill(worker.pid) } catch { /* Worker has already exited. */ }
+        await killTree(worker.pid, worker.nonce)
       }
       rmSync(runDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
     }
@@ -332,44 +333,12 @@ async function waitForFile(path: string): Promise<void> {
   }
 }
 
-function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: string }> {
-  if (!nonces.length) return []
-  if (process.platform === 'win32') {
-    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      "$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Property ProcessId,CommandLine | Where-Object { $_.CommandLine } | ForEach-Object { @{ ProcessId = $_.ProcessId; CommandLine = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_.CommandLine)) } }); ConvertTo-Json -InputObject $p -Compress"],
-    { encoding: 'utf8', timeout: 30000, windowsHide: true })
-    let query = run()
-    if ((query.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') query = run()
-    if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
-    const rows = JSON.parse(query.stdout) as Array<{ ProcessId: number; CommandLine: string }>
-    return rows.flatMap((row) => {
-      if (typeof row.CommandLine !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(row.CommandLine)) throw new Error('Invalid process command')
-      const bytes = Buffer.from(row.CommandLine, 'base64')
-      if (bytes.length % 2 !== 0 || bytes.toString('base64') !== row.CommandLine) throw new Error('Invalid process command')
-      const command = bytes.toString('utf16le')
-      return nonces.filter((nonce) => command.includes(nonce)).map((nonce) => ({ pid: row.ProcessId, nonce }))
-    })
-  }
-  const query = spawnSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 10000 })
-  if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
-  return query.stdout.split('\n').flatMap((line) => {
-    const match = line.trim().match(/^(\d+)\s+(.*)$/)
-    return match ? nonces.filter((nonce) => match[2]!.includes(nonce)).map((nonce) => ({ pid: Number(match[1]), nonce })) : []
-  })
-}
+const processesWithNonces = (nonces: string[]) =>
+  findProcessesWithNonces(nonces, 20000).map((p) => ({ pid: p.pid, nonce: p.nonce }))
 
 async function cleanupWorkers(workers: Array<{ pid: number; nonce: string }>): Promise<void> {
   for (const worker of workers) await killTree(worker.pid, worker.nonce)
-  // Any orphan is killed only after its own command line has been checked for the nonce.
-  for (const survivor of processesWithNonces(workers.map((worker) => worker.nonce))) {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/T', '/F', '/PID', String(survivor.pid)], { timeout: 5000, windowsHide: true })
-    } else {
-      try { process.kill(survivor.pid, 'SIGKILL') } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-      }
-    }
-  }
+  await cleanupNonces(workers.map((w) => w.nonce), 20000)
 }
 
 describe.skipIf(process.platform !== 'win32')('Windows command line encoding', () => {

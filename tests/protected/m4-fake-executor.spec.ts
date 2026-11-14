@@ -1,4 +1,5 @@
-﻿import { spawn, type ChildProcess } from 'node:child_process'
+import { isProcessAliveWithNonce as alive } from '../helpers/process-identity.ts'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -49,14 +50,20 @@ async function cleanup(f: Fixture): Promise<void> {
     const workerPath = join(f.run, 'worker.json')
     if (existsSync(workerPath)) {
       const w = JSON.parse(readFileSync(workerPath, 'utf8')) as Worker
-      if (w.pid === f.child.pid && w.nonce === f.nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0 && alive(w.grandchildPid)) {
+      if (w.pid === f.child.pid && w.nonce === f.nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0 && alive(w.grandchildPid, `factory-grandchild-${f.nonce}`)) {
         const killed = await killTree(w.grandchildPid, f.nonce)
         if (killed.result !== 'killed' && killed.result !== 'not-running') throw new Error(`Identity-checked grandchild cleanup failed: ${killed.result} ${killed.detail ?? ''}`)
       }
+      if (w.pid === f.child.pid && w.nonce === f.nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0) expect(alive(w.grandchildPid, `factory-grandchild-${f.nonce}`)).toBe(false)
     }
     await waitForExit(f)
   } finally {
-    rmSync(f.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    try {
+      if (f.child.exitCode === null && f.child.signalCode === null) f.child.kill()
+      await waitForExit(f)
+    } finally {
+      rmSync(f.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    }
   }
 }
 
@@ -66,7 +73,7 @@ async function run(env: Record<string, string>, check: (f: Fixture, code: number
 }
 function result(f: Fixture): unknown { return JSON.parse(readFileSync(join(f.run, 'result.json'), 'utf8')) }
 function output(f: Fixture): string { return join(f.cwd, 'factory-fake', `${task}.txt`) }
-function alive(pid: number): boolean { try { process.kill(pid, 0); return true } catch { return false } }
+
 async function worker(f: Fixture): Promise<Worker> {
   const deadline = Date.now() + 10000
   while (Date.now() < deadline) {
@@ -97,14 +104,20 @@ it('CHK-M4-04-b: hang keeps both processes alive beyond three seconds until tree
   try {
     const w = await worker(f)
     await delay(3100)
-    expect(alive(w.pid)).toBe(true); expect(alive(w.grandchildPid)).toBe(true)
+    expect(alive(w.pid, f.nonce)).toBe(true); expect(alive(w.grandchildPid, `factory-grandchild-${f.nonce}`)).toBe(true)
     expect(existsSync(join(f.run, 'result.json'))).toBe(false)
     const killed = await killTree(w.pid, f.nonce)
     expect(killed).toEqual({ result: 'killed' })
     await waitForExit(f)
     const deadline = Date.now() + 5000
-    while (alive(w.grandchildPid) && Date.now() < deadline) await delay(50)
-    expect(alive(w.pid)).toBe(false); expect(alive(w.grandchildPid)).toBe(false)
+    let workerAlive = true, grandchildAlive = true
+    while (Date.now() < deadline) {
+      workerAlive = alive(w.pid, f.nonce, { deadlineMs: deadline })
+      grandchildAlive = alive(w.grandchildPid, `factory-grandchild-${f.nonce}`, { deadlineMs: deadline })
+      if (!workerAlive && !grandchildAlive) break
+      await delay(Math.min(50, Math.max(0, deadline - Date.now())))
+    }
+    expect(workerAlive).toBe(false); expect(grandchildAlive).toBe(false)
   } finally { await cleanup(f) }
 }, 40000)
 
@@ -115,7 +128,7 @@ it('CHK-M5-QA1-a: grandchild survives executor-only kill with watchdog disabled'
     expect(f.child.kill('SIGKILL')).toBe(true)
     await waitForExit(f)
     await delay(1000)
-    expect(alive(w.grandchildPid)).toBe(true)
+    expect(alive(w.grandchildPid, `factory-grandchild-${f.nonce}`)).toBe(true)
   } finally { await cleanup(f) }
 }, 40000)
 

@@ -1,3 +1,4 @@
+import { isProcessAliveWithNonce as alive } from '../helpers/process-identity.ts'
 // M3-03 test interface (the implementer owns these exports):
 // ensureWorktree({ stateDir, repoPath, baseRef }, taskId) -> worktree path.
 // commitAttempt(worktreePath, attemptId) -> head SHA.
@@ -16,11 +17,13 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as fc from 'fast-check'
 import { openStore } from '../../supervisor/src/app/store.ts'
+import { killTree } from '../../supervisor/src/app/process-tree.ts'
 import { ensureWorktree } from '../../supervisor/src/app/worktree.ts'
 import { commitAttempt, recordEvidence } from '../../supervisor/src/app/evidence.ts'
 
 const dirs: string[] = []
 const executor = join(process.cwd(), 'supervisor/src/executors/fake-executor.ts')
+
 const hash = (data: string | Buffer) => createHash('sha256').update(data).digest('hex')
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.name=Factory Test', '-c', 'user.email=factory@example.test', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -79,13 +82,13 @@ describe('M3-03 worktree and evidence', () => {
   it('CHK-M3-03-b: executor identifies itself first, creates a child and deterministic output, and respects sleep and exit code', async () => {
     const f = fixture(); const cwd = join(f.root, 'cwd'); const runDir = join(f.root, 'run')
     mkdirSync(cwd); mkdirSync(runDir)
-    const start = Date.now()
-    const child = spawn(process.execPath, [executor, 'task-1', 'nonce-123', runDir], { cwd, env: { ...process.env, FAKE_SLEEP_MS: '1200', FAKE_EXIT_CODE: '7' }, stdio: 'ignore' })
+    const start = Date.now(); const nonce = randomUUID(); const secondNonce = randomUUID()
+    const child = spawn(process.execPath, [executor, 'task-1', nonce, runDir], { cwd, env: { ...process.env, FAKE_SLEEP_MS: '12000', FAKE_EXIT_CODE: '7' }, stdio: 'ignore' })
     const childExit = new Promise<number | null>(resolve => {
       child.once('exit', resolve)
       child.once('error', () => resolve(null))
     })
-    const grandchildPids = new Set<number>()
+    const grandchildPids = new Map<number, string>()
     const workerPath = join(runDir, 'worker.json')
     try {
       const deadline = Date.now() + 5000
@@ -95,7 +98,7 @@ describe('M3-03 worktree and evidence', () => {
           const candidate = JSON.parse(readFileSync(workerPath, 'utf8')) as typeof worker
           if (candidate && typeof candidate.grandchildPid === 'number') {
             worker = candidate
-            grandchildPids.add(candidate.grandchildPid)
+            grandchildPids.set(candidate.grandchildPid, nonce)
             break
           }
         } catch { /* wait for the complete payload */ }
@@ -103,10 +106,10 @@ describe('M3-03 worktree and evidence', () => {
       }
       expect(worker).toBeDefined()
       if (!worker) throw new Error('worker.json did not contain a complete worker')
-      expect(worker.pid).toBe(child.pid); expect(worker.nonce).toBe('nonce-123')
+      expect(worker.pid).toBe(child.pid); expect(worker.nonce).toBe(nonce)
       expect(worker.grandchildPid).toBeGreaterThan(0)
       expect(worker.grandchildPid).not.toBe(worker.pid)
-      expect(() => process.kill(worker!.grandchildPid, 0)).not.toThrow()
+      expect(alive(worker.grandchildPid, `factory-grandchild-${nonce}`)).toBe(true)
       expect(child.exitCode).toBeNull()
       const code = await childExit
       expect(code).toBe(7); expect(Date.now() - start).toBeGreaterThanOrEqual(1000)
@@ -115,21 +118,32 @@ describe('M3-03 worktree and evidence', () => {
       expect(output.length).toBeGreaterThan(0)
       rmSync(outputPath)
       rmSync(workerPath)
-      const second = spawnSync(process.execPath, [executor, 'task-1', 'nonce-456', runDir], { cwd, env: { ...process.env, FAKE_SLEEP_MS: '0', FAKE_EXIT_CODE: '0' }, encoding: 'utf8', timeout: 10000 })
+      const second = spawnSync(process.execPath, [executor, 'task-1', secondNonce, runDir], { cwd, env: { ...process.env, FAKE_SLEEP_MS: '0', FAKE_EXIT_CODE: '0' }, encoding: 'utf8', timeout: 10000 })
       if (existsSync(workerPath)) {
         const secondWorker = JSON.parse(readFileSync(workerPath, 'utf8')) as { grandchildPid: number }
-        if (typeof secondWorker.grandchildPid === 'number') grandchildPids.add(secondWorker.grandchildPid)
+        if (typeof secondWorker.grandchildPid === 'number') grandchildPids.set(secondWorker.grandchildPid, secondNonce)
       }
       expect(second.status).toBe(0)
       expect(readFileSync(outputPath, 'utf8')).toBe(output)
       expect(git(f.repoPath, 'status', '--porcelain')).toBe('')
       expect(existsSync(join(f.root, 'factory-fake'))).toBe(false)
     } finally {
-      for (const pid of grandchildPids) { if (pid > 0) { try { process.kill(pid) } catch { /* already exited */ } } }
-      if (child.exitCode === null && child.signalCode === null) child.kill()
-      await childExit
+      try {
+        for (const [pid, marker] of grandchildPids) {
+          if (pid <= 0) continue
+          const identity = `factory-grandchild-${marker}`
+          if (alive(pid, identity)) {
+            const killed = await killTree(pid, marker)
+            if (killed.result !== 'killed' && killed.result !== 'not-running') throw new Error(`Grandchild cleanup failed: ${killed.result}`)
+          }
+          expect(alive(pid, identity)).toBe(false)
+        }
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill()
+        await childExit
+      }
     }
-  }, 20000)
+  }, 25000)
 
   it('CHK-M3-03-c: commits without hooks and returns the same trailer-bearing commit on retry', async () => {
     const f = fixture(); const path = await ensureWorktree(f, 'task-1')

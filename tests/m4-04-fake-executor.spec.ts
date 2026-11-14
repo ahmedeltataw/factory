@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { killTree } from '../supervisor/src/app/process-tree.ts'
+import { identityOf, killIfOurs } from './helpers/process-identity.ts'
 
 const executor = fileURLToPath(new URL('../supervisor/src/executors/fake-executor.ts', import.meta.url))
 const task = 'task-m4-04'
@@ -47,29 +48,27 @@ async function waitForExit(f: Fixture): Promise<number | null> {
   }
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
 async function cleanup(f: Fixture): Promise<void> {
   try {
-    if (f.child.pid && f.child.exitCode === null && f.child.signalCode === null) {
-      await killTree(f.child.pid, f.nonce)
-    }
+    await killIfOurs(f.child)
     const workerPath = join(f.run, 'worker.json')
     if (existsSync(workerPath)) {
       try {
         const w = JSON.parse(readFileSync(workerPath, 'utf8')) as Worker
-        if (w.pid === f.child.pid && w.nonce === f.nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0 && alive(w.grandchildPid)) {
-          await killTree(w.grandchildPid, f.nonce)
+        if (w.pid === f.child.pid && w.nonce === f.nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0) {
+          const deadline = Date.now() + 5000
+          if (identityOf(w.grandchildPid, f.nonce, { deadlineMs: deadline }) === 'ours') {
+            const res = await killTree(w.grandchildPid, f.nonce)
+            if (res.result !== 'killed' && res.result !== 'not-running') {
+              throw new Error(`Grandchild cleanup failed: ${res.result} ${res.detail ?? ''}`)
+            }
+          }
+          if (identityOf(w.grandchildPid, f.nonce, 5000) === 'ours') {
+            throw new Error(`Grandchild PID ${w.grandchildPid} remained alive after cleanup`)
+          }
         }
-      } catch {
-        // ignore parse error if worker.json was partial
+      } catch (err) {
+        if (!(err instanceof SyntaxError)) throw err
       }
     }
     await waitForExit(f)
@@ -256,24 +255,32 @@ describe('M4-04 unit tests for fake-executor', () => {
       expect(workerData.nonce).toBe(nonce)
     } finally {
       try {
-        let killRes: Awaited<ReturnType<typeof killTree>> | undefined
-        if (child?.pid && child.exitCode === null && child.signalCode === null && nonce) {
-          killRes = await killTree(child.pid, nonce)
+        if (child) {
+          await killIfOurs(child)
         }
         if (alias && nonce) {
           const workerPath = join(alias, 'worker.json')
           if (existsSync(workerPath)) {
             try {
               const w = JSON.parse(readFileSync(workerPath, 'utf8')) as Worker
-              if (w.pid === child?.pid && w.nonce === nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0 && alive(w.grandchildPid)) {
-                await killTree(w.grandchildPid, nonce)
+              if (w.pid === child?.pid && w.nonce === nonce && Number.isSafeInteger(w.grandchildPid) && w.grandchildPid > 0) {
+                const deadline = Date.now() + 5000
+                if (identityOf(w.grandchildPid, nonce, { deadlineMs: deadline }) === 'ours') {
+                  const res = await killTree(w.grandchildPid, nonce)
+                  if (res.result !== 'killed' && res.result !== 'not-running') {
+                    throw new Error(`Grandchild cleanup failed: ${res.result} ${res.detail ?? ''}`)
+                  }
+                }
+                if (identityOf(w.grandchildPid, nonce, 5000) === 'ours') {
+                  throw new Error(`Grandchild PID ${w.grandchildPid} remained alive after cleanup`)
+                }
               }
-            } catch {
-              // ignore
+            } catch (err) {
+              if (!(err instanceof SyntaxError)) throw err
             }
           }
         }
-        if (exitPromise && child && (child.exitCode !== null || killRes?.result === 'killed' || killRes?.result === 'not-running')) {
+        if (exitPromise && child) {
           let timer: ReturnType<typeof setTimeout> | undefined
           try {
             await Promise.race([

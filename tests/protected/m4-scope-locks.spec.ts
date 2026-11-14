@@ -9,6 +9,15 @@ import { applyPendingCommands } from '../../supervisor/src/app/apply-commands.ts
 import { killTree } from '../../supervisor/src/app/process-tree.ts'
 import { openStore } from '../../supervisor/src/app/store.ts'
 import { acquireSupervisor } from '../../supervisor/src/app/supervisor-lease.ts'
+import {
+  cleanupNonces as helperCleanupNonces,
+  findProcessesWithNonces,
+  isProcessAliveWithNonce,
+  killIfOurs,
+  probePid,
+  readCommandLine,
+  waitForProcessDeath,
+} from '../helpers/process-identity.ts'
 
 const cliPath = join(process.cwd(), 'supervisor/src/cli/main.ts')
 const directories: string[] = []
@@ -20,113 +29,6 @@ interface TrackedSupervisorChild {
   readonly marker: string
 }
 const spawnedSupervisors: TrackedSupervisorChild[] = []
-
-function getCommandLineForPid(pid: number): string | undefined {
-  if (!pid || pid <= 0) return undefined
-  try {
-    if (process.platform === 'win32') {
-      const run = () => spawnSync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
-        ],
-        { encoding: 'utf8', timeout: 30000, windowsHide: true },
-      )
-      let res = run()
-      if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') res = run()
-      return res.status === 0 && res.stdout ? res.stdout.trim() : undefined
-    } else {
-      const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
-        encoding: 'utf8',
-        timeout: 10000,
-      })
-      return res.status === 0 && res.stdout ? res.stdout.trim() : undefined
-    }
-  } catch {
-    return undefined
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  if (!pid || pid <= 0) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function isProcessAliveWithNonce(pid: number, markerOrNonce: string): boolean {
-  if (!isProcessAlive(pid)) return false
-  const cmd = getCommandLineForPid(pid)
-  return typeof cmd === 'string' && cmd.includes(markerOrNonce)
-}
-
-async function waitForProcessDeath(
-  pid: number,
-  timeoutMs = 15000,
-  markerOrNonce?: string,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const alive = markerOrNonce
-      ? isProcessAliveWithNonce(pid, markerOrNonce)
-      : isProcessAlive(pid)
-    if (!alive) return true
-    await delay(50)
-  }
-  const alive = markerOrNonce
-    ? isProcessAliveWithNonce(pid, markerOrNonce)
-    : isProcessAlive(pid)
-  return !alive
-}
-
-function processesWithNonces(nonces: string[]): Array<{ pid: number; nonce: string }> {
-  const validNonces = nonces.filter((n) => typeof n === 'string' && n.length > 0)
-  if (!validNonces.length) return []
-  if (process.platform === 'win32') {
-    const run = () => spawnSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        "$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Property ProcessId,CommandLine | Where-Object { $_.CommandLine } | ForEach-Object { @{ ProcessId = $_.ProcessId; CommandLine = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_.CommandLine)) } }); ConvertTo-Json -InputObject $p -Compress",
-      ],
-      { encoding: 'utf8', timeout: 30000, windowsHide: true },
-    )
-    let query = run()
-    if ((query.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') query = run()
-    if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
-    const rows = JSON.parse(query.stdout) as Array<{ ProcessId: number; CommandLine: string }>
-    return rows.flatMap((row) => {
-      if (
-        typeof row.CommandLine !== 'string' ||
-        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(row.CommandLine)
-      ) {
-        throw new Error('Invalid process command')
-      }
-      const bytes = Buffer.from(row.CommandLine, 'base64')
-      if (bytes.length % 2 !== 0 || bytes.toString('base64') !== row.CommandLine) {
-        throw new Error('Invalid process command')
-      }
-      const command = bytes.toString('utf16le')
-      return validNonces.filter((nonce) => command.includes(nonce)).map((nonce) => ({ pid: row.ProcessId, nonce }))
-    })
-  }
-  const query = spawnSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 10000 })
-  if (query.error || query.status !== 0) throw new Error(query.error?.message || query.stderr)
-  return query.stdout.split('\n').flatMap((line) => {
-    const match = line.trim().match(/^(\d+)\s+(.*)$/)
-    return match
-      ? validNonces.filter((nonce) => match[2]!.includes(nonce)).map((nonce) => ({ pid: Number(match[1]), nonce }))
-      : []
-  })
-}
 
 function collectNoncesFromDatabases(): void {
   for (const root of directories) {
@@ -155,14 +57,8 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
   // 1. Terminate tracked supervisors
   const remainingSupervisors: TrackedSupervisorChild[] = []
   for (const s of spawnedSupervisors) {
-    if (s.pid && isProcessAliveWithNonce(s.pid, s.marker)) {
-      try {
-        if (process.platform === 'win32') {
-          spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
-        } else {
-          try { s.child.kill('SIGKILL') } catch {}
-        }
-      } catch {}
+    if (s.child) {
+      await killIfOurs(s.child)
       const dead = await waitForProcessDeath(s.pid, 15000, s.marker)
       if (!dead) {
         cleanupFailures.push(`Supervisor process ${s.pid} failed to terminate within 15000ms`)
@@ -179,33 +75,11 @@ async function cleanupAllProcesses(timeoutMs = 25000): Promise<void> {
   // 3. Sweep workers by verified identity until empty or deadline
   const nonces = Array.from(activeNonces).filter((n) => typeof n === 'string' && n.length > 0)
   if (nonces.length > 0) {
-    const deadline = Date.now() + timeoutMs
-    let survivors: Array<{ pid: number; nonce: string }> = []
-    while (Date.now() < deadline) {
-      survivors = processesWithNonces(nonces)
-      if (survivors.length === 0) break
-      for (const s of survivors) {
-        if (s.pid === process.pid) continue
-        let killRes: { result: string } = { result: 'kill-failed' }
-        try {
-          killRes = await killTree(s.pid, s.nonce)
-        } catch {}
-        if (killRes.result !== 'identity-mismatch' && isProcessAliveWithNonce(s.pid, s.nonce)) {
-          if (process.platform === 'win32') {
-            spawnSync('taskkill', ['/T', '/F', '/PID', String(s.pid)], { timeout: 10000, windowsHide: true })
-          } else {
-            try { process.kill(s.pid, 'SIGKILL') } catch {}
-          }
-        }
-      }
-      await delay(100)
-    }
-
-    survivors = processesWithNonces(nonces)
-    if (survivors.length > 0) {
-      cleanupFailures.push(`Cleanup failed to terminate all matching processes for nonces [${nonces.join(', ')}]. Survivors: ${survivors.map(s => s.pid).join(', ')}`)
-    } else {
+    try {
+      await helperCleanupNonces(nonces, timeoutMs)
       activeNonces.clear()
+    } catch (err: any) {
+      cleanupFailures.push(err?.message || String(err))
     }
   }
 
@@ -827,19 +701,12 @@ describe('M4-06 scope locks and scope enforcement', () => {
         }
 
         // Verify Supervisor identity before kill
-        const sup1Cmd = getCommandLineForPid(sup1.pid!)
-        expect(sup1Cmd).toBeDefined()
+        const sup1Cmd = readCommandLine(sup1.pid!, 5000)
         expect(sup1Cmd).toContain(cliPath)
         expect(sup1Cmd).toContain(stateDir)
 
         // Hard-kill supervisor 1's PID only with exit confirmation
-        if (process.platform === 'win32') {
-          const killRes = spawnSync('taskkill', ['/F', '/PID', String(sup1.pid!)], { timeout: 10000, windowsHide: true })
-          expect(killRes.error).toBeUndefined()
-          expect(killRes.status).toBe(0)
-        } else {
-          process.kill(sup1.pid!, 'SIGKILL')
-        }
+        await killIfOurs(sup1, { tree: false })
 
         const sup1Dead = await waitForProcessDeath(sup1.pid!, 15000, stateDir)
         expect(sup1Dead).toBe(true)
