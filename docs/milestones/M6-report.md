@@ -66,7 +66,7 @@ Card results come from `.factory/evidence/<card>/1.json` on `m6-integration`.
 ## Close
 
 - **CI:** push runs on `m6-integration` green; per-card verify dispatches 4/4 on every card.
-- **Full mutation dispatch:** run 43579710833 on `m6-integration` (module list now includes `status.ts` and the four GitHub intake files). Result: see the line added at the end of this section.
+- **Full mutation dispatch:** run 43579710833 on `m6-integration` (module list now includes `status.ts` and the four GitHub intake files). Result: success. Total 89.52, lowest file `supervisor-lease.ts` 81.19 (break 80); every module at or above 80.
 - **Acceptance (Lead, Windows, Node 26, fresh clone of `m6-integration`, no `-Source`, no `-SkipBaseline`):** `M6.ps1`, `M5.ps1`, `M4.ps1`, `M3.ps1` all end `PASS` (M6: 15 steps).
 - **Owner's machine:** the owner repeats the four runs from an `m6-integration` checkout.
 - **Docs:** everything under `docs/manual` stays local and is not pushed.
