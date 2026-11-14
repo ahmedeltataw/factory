@@ -73,3 +73,7 @@ Card results come from `.factory/evidence/<card>/1.json` on `m4-integration`.
 - `process-tree.ts` starts a new PowerShell for every call (about 1 s each on the owner machine). Consider one persistent session.
 - Acceptance scripts must test the milestone branch without a `-Source` override (M4.ps1 cloned `main`).
 - Muse is the GitHub monitor and QA (inbox README). Route its `qa-bug` and `ci-issue` issues to builders.
+
+## Correction note (2026-11-14, M6-FIX1)
+
+qa-bug #13: CHK-M4-01-d was recorded `pass` at the M4-01 merge while the full suite had 2 failures (572 of 574 tests; both in `tests/m3-04-fixes.spec.ts`, from a host-wide CIM JSON parse error caused by another tool's process). Those 2 failures were fixed by M4-TH. The recorded `pass` was therefore not true at merge time. `.factory/evidence/M4-01/2.json` (attempt 2) records that the check is satisfied once M4-TH landed: the full suite passes at `96492b7f01ee202db0c86be1e255fc2455a18797` (`m6-integration`, CI verify run 43575612400, all four cells success). `1.json` is unchanged. A recorded `fail` cannot be used here because `scripts/check-evidence.mjs` rejects it and strict traceability needs `pass` at the highest attempt (Lead amendment 2026-11-12, Muse #22-B2).

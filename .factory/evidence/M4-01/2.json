@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card": "M4-01",
+  "attempt": 2,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "96492b7f01ee202db0c86be1e255fc2455a18797",
+  "checks": [
+    {
+      "id": "CHK-M4-01-a",
+      "command": "CI verify (workflow_dispatch) on m6-integration at head_sha: pnpm typecheck, pnpm test, pnpm build, four cells",
+      "result": "pass",
+      "output": "Annotation record, not a restatement of the merge-time result. CHK-M4-01-d was recorded pass at M4-01 merge while the full suite had 2 failures (572 of 574, tests/m3-04-fixes.spec.ts, a host-wide CIM JSON parse error); those 2 failures were fixed by M4-TH. The check is satisfied once M4-TH landed: the full suite passes at head_sha 96492b7f01ee202db0c86be1e255fc2455a18797 (m6-integration; CI verify run 43575612400, all four cells success, workflow_dispatch started by the Lead). Local note: on the Lead's Windows machine the full suite shows one extra failure under parallel load, CHK-M5-06-a, which passes alone and on CI."
+    },
+    {
+      "id": "CHK-M4-01-b",
+      "command": "CI verify (workflow_dispatch) on m6-integration at head_sha: pnpm typecheck, pnpm test, pnpm build, four cells",
+      "result": "pass",
+      "output": "Annotation record, not a restatement of the merge-time result. CHK-M4-01-d was recorded pass at M4-01 merge while the full suite had 2 failures (572 of 574, tests/m3-04-fixes.spec.ts, a host-wide CIM JSON parse error); those 2 failures were fixed by M4-TH. The check is satisfied once M4-TH landed: the full suite passes at head_sha 96492b7f01ee202db0c86be1e255fc2455a18797 (m6-integration; CI verify run 43575612400, all four cells success, workflow_dispatch started by the Lead). Local note: on the Lead's Windows machine the full suite shows one extra failure under parallel load, CHK-M5-06-a, which passes alone and on CI."
+    },
+    {
+      "id": "CHK-M4-01-c",
+      "command": "CI verify (workflow_dispatch) on m6-integration at head_sha: pnpm typecheck, pnpm test, pnpm build, four cells",
+      "result": "pass",
+      "output": "Annotation record, not a restatement of the merge-time result. CHK-M4-01-d was recorded pass at M4-01 merge while the full suite had 2 failures (572 of 574, tests/m3-04-fixes.spec.ts, a host-wide CIM JSON parse error); those 2 failures were fixed by M4-TH. The check is satisfied once M4-TH landed: the full suite passes at head_sha 96492b7f01ee202db0c86be1e255fc2455a18797 (m6-integration; CI verify run 43575612400, all four cells success, workflow_dispatch started by the Lead). Local note: on the Lead's Windows machine the full suite shows one extra failure under parallel load, CHK-M5-06-a, which passes alone and on CI."
+    },
+    {
+      "id": "CHK-M4-01-d",
+      "command": "CI verify (workflow_dispatch) on m6-integration at head_sha: pnpm typecheck, pnpm test, pnpm build, four cells",
+      "result": "pass",
+      "output": "Annotation record, not a restatement of the merge-time result. CHK-M4-01-d was recorded pass at M4-01 merge while the full suite had 2 failures (572 of 574, tests/m3-04-fixes.spec.ts, a host-wide CIM JSON parse error); those 2 failures were fixed by M4-TH. The check is satisfied once M4-TH landed: the full suite passes at head_sha 96492b7f01ee202db0c86be1e255fc2455a18797 (m6-integration; CI verify run 43575612400, all four cells success, workflow_dispatch started by the Lead). Local note: on the Lead's Windows machine the full suite shows one extra failure under parallel load, CHK-M5-06-a, which passes alone and on CI."
+    }
+  ],
+  "ended_at": "2026-11-14T08:34:41.308Z"
+}
