@@ -57,9 +57,21 @@ function attachLogger(req, res, url) {
   const reqTime = new Date().toISOString()
   const reqHeaders = Object.keys(req.headers)
 
+  const harnessHeader = req.headers['x-harness']
+  const isHarness = harnessHeader === '1' || harnessHeader === 'true'
+
+  const pathname = url?.pathname ?? ''
+  let initialRoute = 'other'
+  if (pathname === '/__control' || pathname === '/__control/requests' || pathname.startsWith('/__control')) {
+    initialRoute = 'control'
+  } else if (/^\/repos\/[^/]+\/[^/]+\/events$/.test(pathname)) {
+    initialRoute = 'events'
+  }
+
   const meta = {
     eventCount: 0,
     etag: null,
+    route: initialRoute,
   }
 
   res.on('finish', () => {
@@ -68,8 +80,10 @@ function attachLogger(req, res, url) {
       timestamp: reqTime,
       method: req.method ?? '',
       url: req.url ?? '',
-      path: url?.pathname ?? '',
+      path: pathname,
       query: url?.search ?? '',
+      route: meta.route,
+      harness: isHarness,
       hasBearer,
       authScheme: hasBearer ? 'Bearer' : (typeof auth === 'string' ? auth.split(' ')[0] : null),
       ifNoneMatch,
@@ -107,6 +121,9 @@ const server = createServer((req, res) => {
     return
   }
 
+  // Attach finish logger to record request after response is finished
+  const logMeta = attachLogger(req, res, url)
+
   // Handle control endpoints
   if (url.pathname === '/__control' && req.method === 'POST') {
     let body = ''
@@ -142,9 +159,6 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify(memoryState.requests))
     return
   }
-
-  // Attach finish logger to record request after response is finished
-  const logMeta = attachLogger(req, res, url)
 
   // Match /repos/:owner/:repo/events
   const eventsMatch = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/events$/)

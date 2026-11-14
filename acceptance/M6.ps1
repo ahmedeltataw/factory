@@ -1275,12 +1275,14 @@ function Format-DemoServerDiagnostics([string]$sDir, [string[]]$supervisorNames)
       $hb = [string]$entry.hasBearer
       $sc = if ($null -ne $entry.statusCode) { [string]$entry.statusCode } else { '?' }
       $ec = if ($null -ne $entry.eventCount) { [string]$entry.eventCount } else { '?' }
+      $rt = if ($null -ne $entry.route) { [string]$entry.route } else { '?' }
+      $hn = if ($null -ne $entry.harness) { [string]$entry.harness } else { 'false' }
       $inm = if ([string]::IsNullOrWhiteSpace([string]$entry.ifNoneMatch)) { '<none>' } else { [string]$entry.ifNoneMatch }
       if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
         $inm = $inm.Replace([string]$script:canaryToken, '[canary]')
       }
       $inm = [System.Text.RegularExpressions.Regex]::Replace($inm, 'ghp_[A-Za-z0-9_]+', '[canary]')
-      [void]$sb.AppendLine("  [$i] method=$m path=$p status=$sc events=$ec hasBearer=$hb ifNoneMatch=$inm")
+      [void]$sb.AppendLine("  [$i] method=$m path=$p route=$rt harness=$hn status=$sc events=$ec hasBearer=$hb ifNoneMatch=$inm")
     }
   }
 
@@ -1972,26 +1974,42 @@ try {
     Assert-Demo ($tToken.status -eq 'done') "Token task status expected done, got $($tToken.status)"
 
     # A. Verify server request log
-    $logs = @(Get-DemoFakeServerLogs)
-    $logCount = if ($logs) { $logs.Count } else { 0 }
-    if ($logCount -lt 2) {
+    # Harness calls (if any) are marked with header x-harness: 1 and recorded as harness: true.
+    # Supervisor calls are non-harness (harness: false/unset).
+    $allLogs = @(Get-DemoFakeServerLogs)
+    $supervisorLogs = @($allLogs | Where-Object { $null -ne $_ -and $_.harness -ne $true })
+    $supLogCount = $supervisorLogs.Count
+    if ($supLogCount -lt 2) {
       $diag = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('token-ingest', 'token-run')
-      Assert-Demo ($logCount -ge 2) "Expected at least 2 requests logged, found $logCount`n$diag"
+      Assert-Demo ($supLogCount -ge 2) "Expected at least 2 supervisor requests logged, found $supLogCount`n$diag"
     }
-    foreach ($entry in $logs) {
-      if ($null -eq $entry) { continue }
-      Assert-Demo ($entry.method -eq 'GET') "Logged request method expected GET, got $($entry.method)"
-      Assert-Demo ($entry.path -eq '/repos/owner/repo/events') "Logged request path unexpected: $($entry.path)"
-      Assert-Demo ($entry.url -match '^/repos/owner/repo/events') "Logged request url unexpected: $($entry.url)"
-      Assert-Demo ($entry.hasBearer -eq $true -and $entry.authScheme -eq 'Bearer') "Logged request missing Bearer header"
+
+    # Assert that every non-harness logged request (made by the Supervisor) is GET /repos/owner/repo/events with bearer header,
+    # and that no non-harness request touches a control route.
+    foreach ($entry in $supervisorLogs) {
+      Assert-Demo ($entry.method -eq 'GET') "Supervisor request method expected GET, got $($entry.method)"
+      Assert-Demo ($entry.path -eq '/repos/owner/repo/events') "Supervisor request path unexpected: $($entry.path)"
+      Assert-Demo ($entry.url -match '^/repos/owner/repo/events') "Supervisor request url unexpected: $($entry.url)"
+      Assert-Demo ($entry.hasBearer -eq $true -and $entry.authScheme -eq 'Bearer') "Supervisor request missing Bearer header"
+      Assert-Demo ($entry.route -ne 'control') "Supervisor request must not touch a control route, got route='$($entry.route)'"
+      Assert-Demo ($entry.path -notlike '/__control*') "Supervisor request path must not touch control route, got path='$($entry.path)'"
     }
-    if ($logs.Count -lt 1 -or -not [string]::IsNullOrWhiteSpace($logs[0].ifNoneMatch)) {
+
+    # Ensure no non-harness request anywhere in the entire log touched a control route
+    foreach ($entry in $allLogs) {
+      if ($null -ne $entry -and $entry.harness -ne $true) {
+        Assert-Demo ($entry.route -ne 'control') "Non-harness request touched control route: $($entry.path)"
+        Assert-Demo ($entry.path -notlike '/__control*') "Non-harness request path touched control route: $($entry.path)"
+      }
+    }
+
+    if ($supervisorLogs.Count -lt 1 -or -not [string]::IsNullOrWhiteSpace($supervisorLogs[0].ifNoneMatch)) {
       $diag = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('token-ingest', 'token-run')
-      Assert-Demo ($logs.Count -ge 1 -and [string]::IsNullOrWhiteSpace($logs[0].ifNoneMatch)) "First poll request must have no If-None-Match`n$diag"
+      Assert-Demo ($supervisorLogs.Count -ge 1 -and [string]::IsNullOrWhiteSpace($supervisorLogs[0].ifNoneMatch)) "First supervisor poll request must have no If-None-Match`n$diag"
     }
-    if ($logs.Count -lt 2 -or [string]$logs[1].ifNoneMatch -notmatch 'canary-etag-v1') {
+    if ($supervisorLogs.Count -lt 2 -or [string]$supervisorLogs[1].ifNoneMatch -notmatch 'canary-etag-v1') {
       $diag = Format-DemoServerDiagnostics -sDir $pState -supervisorNames @('token-ingest', 'token-run')
-      Assert-Demo ($logs.Count -ge 2 -and [string]$logs[1].ifNoneMatch -match 'canary-etag-v1') "Second poll request must have If-None-Match canary-etag-v1, got: $(if ($logs.Count -ge 2) { $logs[1].ifNoneMatch } else { '' })`n$diag"
+      Assert-Demo ($supervisorLogs.Count -ge 2 -and [string]$supervisorLogs[1].ifNoneMatch -match 'canary-etag-v1') "Second supervisor poll request must have If-None-Match canary-etag-v1, got: $(if ($supervisorLogs.Count -ge 2) { $supervisorLogs[1].ifNoneMatch } else { '' })`n$diag"
     }
 
     # Verify that the server's request log file does not leak the secret canary token value (fail-closed)
@@ -2081,7 +2099,22 @@ try {
     }
     Assert-Demo ($proc2.HasExited) "Supervisor 2 did not terminate under github-after-poll fault"
 
-    # Positive evidence that second-round poll occurred, received events result, and response finished before the kill
+    # Proof of fault termination at the exact boundary (poll result received, killed before ingest commit):
+    # On Windows, SIGKILL via TerminateProcess produces exit code 1, which is also an ordinary process failure code.
+    # We distinguish fault termination from ordinary failure using state that only the exact boundary can leave:
+    # 1. Server received and finished request with HTTP 200, >= 1 event, and If-None-Match matching old committed ETag;
+    # 2. Process is gone with exit code matching SIGKILL fault termination (1 on Windows, 137 on POSIX);
+    # 3. In state SQLite, github_cursor is EXACTLY as before the faulted round:
+    #    - etag equals the old committed ETag;
+    #    - next_poll_ms is still exactly 0 (the value Set-DemoRepoDue set before the round);
+    #    - error is NULL (an ordinary client-side failure, network error, parse error or timeout would have called
+    #      ingestPoll which sets error and advances next_poll_ms; a startup refusal would never have polled.
+    #      Thus, NULL error + 0 next_poll_ms + old ETag after a 200 server response positively proves the process
+    #      received the events result and died before ingest commit);
+    # 4. None of the faulted round's new event IDs (5002) exist in github_events;
+    # 5. Stderr contains no unexpected error text beyond what triggerFault produces ('process termination failed' or empty).
+
+    # (a) Server logged faulted round's request with status 200, >= 1 event, If-None-Match = old ETag
     $allLogsAfterFault = @(Get-DemoFakeServerLogs)
     $faultLogs = @($allLogsAfterFault | Select-Object -Skip $logCountBeforeFault | Where-Object { $null -ne $_ })
     if ($faultLogs.Count -lt 1) {
@@ -2090,20 +2123,41 @@ try {
     }
     $faultReq = $faultLogs[0]
     Assert-Demo ($faultReq.method -eq 'GET' -and $faultReq.path -eq '/repos/owner/repo/events') "Fault round poll request path unexpected: $($faultReq.path)"
-    Assert-Demo ([string]$faultReq.ifNoneMatch -match 'etag-committed-old') "Fault round poll must send old committed ETag in If-None-Match, got: $(if ($faultReq) { $faultReq.ifNoneMatch } else { '' })"
     Assert-Demo ($faultReq.statusCode -eq 200 -or $faultReq.status -eq 200) "Fault round response status must be 200, got: $($faultReq.statusCode)"
     Assert-Demo ($faultReq.eventCount -ge 1) "Fault round response must contain at least 1 event, got: $($faultReq.eventCount)"
 
-    # Assert faulted Supervisor exit status equals what the fault produces:
-    # supervisor/src/app/faults.ts triggerFault terminates with process.kill(process.pid, 'SIGKILL').
-    # On Windows, TerminateProcess produces exit code 1; on POSIX systems, SIGKILL produces exit code 137.
+    $oldEtag = [string]$data1.cursors[0].etag
+    $cleanOldEtag = $oldEtag.Replace('"', '').Replace('W/', '')
+    $cleanIfNoneMatch = ([string]$faultReq.ifNoneMatch).Replace('"', '').Replace('W/', '')
+    Assert-Demo ($cleanIfNoneMatch -eq $cleanOldEtag) "Fault round poll must send old committed ETag in If-None-Match (expected '$cleanOldEtag', got '$cleanIfNoneMatch')"
+
+    # (b) Faulted Supervisor process is gone with exactly the exit status triggerFault produces
+    Assert-Demo ($proc2.HasExited) "Supervisor 2 did not terminate under github-after-poll fault"
     $expectedFaultExitCodes = @(1, 137)
     Assert-Demo ($expectedFaultExitCodes -contains $proc2.ExitCode) "Supervisor 2 exit code must match SIGKILL fault termination (1 on Windows, 137 on POSIX), got $($proc2.ExitCode)"
 
-    # Boundary assertions: DB still holds round 1 committed state (no event 5002, ETag is still old)
+    # (c) In state SQLite, github_cursor is EXACTLY as before the faulted round, and no new events in github_events
     $data2 = Get-DemoGitHubData $pState
-    Assert-Demo ($data2.cursors.Count -ge 1 -and [string]$data2.cursors[0].etag -match 'etag-committed-old') "Cursor ETag must remain old committed ETag after fault crash"
-    Assert-Demo ($data2.events.Count -eq 1 -and $data2.events[0].event_id -eq '5001') "Event 5002 must not be committed before crash"
+    $cursorRows = @($data2.cursors | Where-Object { $_.repo -eq 'owner/repo' })
+    Assert-Demo ($cursorRows.Count -eq 1) "Expected exactly 1 cursor row for owner/repo, got $($cursorRows.Count)"
+    $c2 = $cursorRows[0]
+    Assert-Demo ([string]$c2.etag -match 'etag-committed-old') "Cursor ETag must remain old committed ETag after fault crash, got: $($c2.etag)"
+    Assert-Demo ([long]$c2.next_poll_ms -eq 0) "Cursor next_poll_ms must remain exactly 0 (the 0 the demo set), got: $($c2.next_poll_ms)"
+    Assert-Demo ($null -eq $c2.error -or [string]::IsNullOrWhiteSpace([string]$c2.error)) "Cursor error must be NULL after fault crash, got: $($c2.error)"
+
+    # Assert none of the faulted round's new event ids exist in github_events
+    $ev5002Found = @($data2.events | Where-Object { $_.event_id -eq '5002' })
+    Assert-Demo ($ev5002Found.Count -eq 0) "Event 5002 must not exist in github_events before crash"
+    $ev5001Found = @($data2.events | Where-Object { $_.event_id -eq '5001' })
+    Assert-Demo ($ev5001Found.Count -eq 1) "Event 5001 must exist exactly once in github_events"
+    Assert-Demo ($data2.events.Count -eq 1) "github_events must contain only round 1 events (count 1), got $($data2.events.Count)"
+
+    # (d) Supervisor stderr contains no unexpected error text beyond what the fault produces
+    $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+    $faultErrPath = Join-Path $activeLogsDir 'crash-faulted.err'
+    $faultErrText = if (Test-Path -LiteralPath $faultErrPath) { (Read-DemoTextStrict $faultErrPath).Trim() } else { '' }
+    Assert-Demo ([string]::IsNullOrWhiteSpace($faultErrText) -or $faultErrText -match 'process termination failed') "Supervisor stderr contained unexpected error text: $faultErrText"
+    Assert-Demo (-not ($faultErrText -match 'SyntaxError|TypeError|ReferenceError|unhandledRejection|uncaughtException|EADDRINUSE|ENOENT|missing database')) "Supervisor stderr contained runtime error: $faultErrText"
 
     # Read lease to prepare takeover
     $snap2 = Invoke-FactoryStatus $pState
