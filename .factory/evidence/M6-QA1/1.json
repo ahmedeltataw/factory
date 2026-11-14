@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M6-QA1",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "39eecba",
+  "checks": [
+    {
+      "id": "CHK-M6-QA1-a",
+      "command": "pnpm typecheck; pnpm exec vitest run (full suite 1243/1244 locally, the one failure is the known load flake CHK-M5-06-a which passes alone); verify dispatch",
+      "result": "pass",
+      "output": "verify run 43574000518 all four cells success; audit by gemini-3.8-flash-high (Flash files) and gpt-6.1-terra (its three protected tests: m3-worktree-evidence, m4-fake-executor, m6-token), 12 test files now use the shared strict helper tests/helpers/process-identity.ts (probe errors other than ESRCH throw, empty/malformed command lines are unresolved, kills only through an unexited child handle or the product killTree, deadline-bounded lookups); reviewed by gpt-6.1-sol (approve after 4 rounds). Recorded residual: helper failure-path cleanup budget and survivor reporting (only matters when a test is already failing)"
+    }
+  ],
+  "ended_at": "2026-11-14T08:14:43.170Z"
+}
