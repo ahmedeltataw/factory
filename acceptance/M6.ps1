@@ -194,7 +194,7 @@ function Register-TrackedPid([int]$targetPid, [string]$nonce = $null) {
       }
     }
   }
-  if (-not $script:ownedPids.Contains($targetPid)) {
+  if ($null -ne $script:ownedPids -and -not $script:ownedPids.Contains($targetPid)) {
     $script:ownedPids.Add($targetPid)
   }
 }
@@ -238,7 +238,10 @@ function Test-TrackedPidIdentityValid($rec) {
   if ($null -eq $curr) {
     return $false
   }
-  $dateMatch = ($curr.CreationDate -eq $rec.CreationDate) -or ([Math]::Abs(($curr.CreationDate - $rec.CreationDate).TotalMilliseconds) -lt 1000)
+  $dateMatch = $false
+  if ($null -ne $curr.CreationDate -and $null -ne $rec.CreationDate) {
+    $dateMatch = ($curr.CreationDate -eq $rec.CreationDate) -or ([Math]::Abs(($curr.CreationDate - $rec.CreationDate).TotalMilliseconds) -lt 1000)
+  }
   if (-not $dateMatch) {
     return $false
   }
@@ -554,14 +557,17 @@ function Invoke-FactoryStatus([string]$sDir) {
     throw "factory status timed out after ${timeoutMs}ms (exited: $exited, drained: $drained)"
   }
 
-  $stdout = $outTask.Result
-  $stderr = $errTask.Result
+  $stdout = [string]$outTask.Result
+  $stderr = [string]$errTask.Result
   $code = $proc.ExitCode
   if ($code -ne 0) {
     throw "factory status failed with exit code ${code}: $stderr"
   }
   try {
     $parsed = ($stdout | ConvertFrom-Json)
+    if ($null -eq $parsed) {
+      throw "factory status returned empty or null JSON"
+    }
     if ($null -ne $parsed) {
       if ($null -ne $parsed.tasks) {
         $parsed.tasks = @(@(ConvertFrom-JsonArray $parsed.tasks) | ForEach-Object {
@@ -609,14 +615,15 @@ function Invoke-FactoryStatusText([string]$sDir) {
   } else {
     'lib/factory.mjs'
   }
-  $errFile = Join-Path $logsDir 'status-text.err'
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $errFile = Join-Path $activeLogsDir 'status-text.err'
   $raw = & $script:nodeExe $cliPath status --state-dir $sDir 2> $errFile
   $code = $LASTEXITCODE
   if ($code -ne 0) {
-    $errText = if (Test-Path -LiteralPath $errFile) { (Get-Content -LiteralPath $errFile -Raw) } else { '' }
+    $errText = if (Test-Path -LiteralPath $errFile) { [string](Get-Content -LiteralPath $errFile -Raw) } else { '' }
     throw "factory status text failed with code ${code}: $errText"
   }
-  return ($raw -join "`n")
+  return ([string]($raw -join "`n"))
 }
 
 function Step($n, $label, [scriptblock]$cmd = $null, [switch]$Skip) {
@@ -633,7 +640,33 @@ function Step($n, $label, [scriptblock]$cmd = $null, [switch]$Skip) {
     foreach ($line in $out) { Write-Host $line }
     $script:stepOk = $code -eq 0
   } catch {
-    Write-Host $_.Exception.Message -ForegroundColor Red
+    $errMsg = [string]$_.Exception.Message
+    $lineNum = 0
+    $lineText = ''
+    if ($null -ne $_.InvocationInfo) {
+      $lineNum = [int]$_.InvocationInfo.ScriptLineNumber
+      if ($null -ne $_.InvocationInfo.Line) {
+        $lineText = ([string]$_.InvocationInfo.Line).Trim()
+      }
+    }
+    $stack = ''
+    if ($_.ScriptStackTrace) {
+      $stackLines = @([string]$_.ScriptStackTrace -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 5)
+      $stack = $stackLines -join "`n"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      $canary = [string]$script:canaryToken
+      $errMsg = $errMsg.Replace($canary, '[REDACTED_CANARY]')
+      $lineText = $lineText.Replace($canary, '[REDACTED_CANARY]')
+      $stack = $stack.Replace($canary, '[REDACTED_CANARY]')
+    }
+    Write-Host $errMsg -ForegroundColor Red
+    if ($lineNum -gt 0 -or -not [string]::IsNullOrWhiteSpace($lineText)) {
+      Write-Host "At line ${lineNum}: ${lineText}" -ForegroundColor Red
+    }
+    if (-not [string]::IsNullOrWhiteSpace($stack)) {
+      Write-Host $stack -ForegroundColor Red
+    }
     $script:stepOk = $false
   }
   $ok = $script:stepOk
@@ -761,7 +794,8 @@ function Start-FakeGitHubServer {
   if (-not (Test-Path -LiteralPath $portFile)) {
     throw "Fake GitHub server did not write port file within 15s"
   }
-  $rawUrl = (Get-Content -LiteralPath $portFile -Raw).Trim()
+  $portRaw = if (Test-Path -LiteralPath $portFile) { [string](Get-Content -LiteralPath $portFile -Raw) } else { '' }
+  $rawUrl = $portRaw.Trim()
   if ([string]::IsNullOrWhiteSpace($rawUrl) -or -not $rawUrl.StartsWith('http://127.0.0.1:')) {
     throw "Invalid URL from Fake GitHub server: $rawUrl"
   }
@@ -789,25 +823,25 @@ function Set-FakeGitHubEvents([string]$repo, [array]$events, [string]$etag = $nu
 }
 
 function Get-DemoFakeServerLogs {
-  if (-not (Test-Path -LiteralPath $script:fakeLogFile)) {
+  if ([string]::IsNullOrWhiteSpace($script:fakeLogFile) -or -not (Test-Path -LiteralPath $script:fakeLogFile)) {
     return @()
   }
-  $lines = @(Get-Content -LiteralPath $script:fakeLogFile)
+  $lines = if (Test-Path -LiteralPath $script:fakeLogFile) { @(Get-Content -LiteralPath $script:fakeLogFile) } else { @() }
   $records = [System.Collections.Generic.List[object]]::new()
   foreach ($line in $lines) {
-    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    if ($null -eq $line -or [string]::IsNullOrWhiteSpace([string]$line)) { continue }
     try {
-      $rec = ($line | ConvertFrom-Json)
+      $rec = ([string]$line | ConvertFrom-Json)
       if ($null -ne $rec) {
         $records.Add($rec)
       }
     } catch {}
   }
-  return $records.ToArray()
+  return ,$records.ToArray()
 }
 
 function Clear-DemoFakeServerLogs {
-  if (Test-Path -LiteralPath $script:fakeLogFile) {
+  if (-not [string]::IsNullOrWhiteSpace($script:fakeLogFile) -and (Test-Path -LiteralPath $script:fakeLogFile)) {
     [System.IO.File]::WriteAllText($script:fakeLogFile, '', (New-Object System.Text.UTF8Encoding $false))
   }
 }
@@ -922,7 +956,8 @@ function Wait-DemoSupervisor($proc, [string]$name, [int]$timeoutSec = 90) {
 function Get-DemoTask([string]$taskId, [string]$sDir = $null) {
   $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
   $snapshot = Invoke-FactoryStatus $activeState
-  $found = @($snapshot.tasks | Where-Object { $_.id -eq $taskId })
+  $tasks = if ($null -ne $snapshot -and $null -ne $snapshot.tasks) { @($snapshot.tasks) } else { @() }
+  $found = @($tasks | Where-Object { $null -ne $_ -and $_.id -eq $taskId })
   if ($found.Count -ne 1) { throw "Expected task $taskId once, found $($found.Count)" }
   return $found[0]
 }
@@ -1030,7 +1065,15 @@ function Set-DemoRepoDue([string]$sDir = $null, [string]$repo = 'owner/repo') {
 }
 
 function Assert-DemoCanaryAbsent([string]$sDir, [string]$canary) {
-  $helper = Join-Path $helpersDir 'scan-canary.mjs'
+  if ([string]::IsNullOrWhiteSpace($canary)) {
+    throw "Assert-DemoCanaryAbsent: canary token is empty or null"
+  }
+  if ([string]::IsNullOrWhiteSpace($sDir) -or -not (Test-Path -LiteralPath $sDir)) {
+    throw "Assert-DemoCanaryAbsent: state directory does not exist: $sDir"
+  }
+  $activeHelpersDir = if ($helpersDir) { $helpersDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'helpers' } else { $env:TEMP }
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $helper = Join-Path $activeHelpersDir 'scan-canary.mjs'
   $code = @'
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -1063,10 +1106,13 @@ process.stdout.write(JSON.stringify(matches));
   $env:FACTORY_SCAN_DIR = $sDir
   $env:FACTORY_CANARY = $canary
   try {
-    $errFile = Join-Path $logsDir 'scan-canary.err'
+    $errFile = Join-Path $activeLogsDir 'scan-canary.err'
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) { throw "Failed to scan canary ($exitCode): $(Get-Content $errFile -Raw)" }
+    if ($exitCode -ne 0) {
+      $errContent = if (Test-Path -LiteralPath $errFile) { [string](Get-Content $errFile -Raw) } else { '' }
+      throw "Failed to scan canary ($exitCode): $errContent"
+    }
     $matches = @(ConvertFrom-JsonArray $raw)
     if ($matches.Count -gt 0) {
       throw "Canary token was found in files: $($matches -join ', ')"
@@ -1086,12 +1132,20 @@ function Assert-WorkerEnvNoSecrets([string]$sDir) {
   $secretKeys = @('FACTORY_GITHUB_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_PAT')
   $foundAnyEnvKeys = $false
   foreach ($logFile in $stdoutLogs) {
-    $content = Get-Content -LiteralPath $logFile.FullName -Raw
-    $lines = @($content -split "`r?`n" | Where-Object { $_.StartsWith('ENV_KEYS ') -or $_.StartsWith('ENV_KEYS_CHILD ') })
+    if ($null -eq $logFile -or -not (Test-Path -LiteralPath $logFile.FullName)) { continue }
+    $content = [string](Get-Content -LiteralPath $logFile.FullName -Raw)
+    if ([string]::IsNullOrWhiteSpace($content)) { continue }
+    $splitLines = @($content -split "`r?`n")
+    $lines = @($splitLines | Where-Object {
+      if ([string]::IsNullOrWhiteSpace($_)) { return $false }
+      $strLine = [string]$_
+      return ($strLine.StartsWith('ENV_KEYS ') -or $strLine.StartsWith('ENV_KEYS_CHILD '))
+    })
     foreach ($line in $lines) {
       $foundAnyEnvKeys = $true
-      $spaceIdx = $line.IndexOf(' ')
-      $jsonText = $line.Substring($spaceIdx + 1).Trim()
+      $str = [string]$line
+      $spaceIdx = $str.IndexOf(' ')
+      $jsonText = if ($spaceIdx -ge 0) { $str.Substring($spaceIdx + 1).Trim() } else { '' }
       $keys = @(ConvertFrom-JsonArray $jsonText)
       foreach ($sk in $secretKeys) {
         if ($keys -contains $sk) {
@@ -1109,18 +1163,26 @@ function Register-DemoWorkerNonces([string]$sDir) {
   $runsDir = Join-Path $sDir 'runs'
   if (-not (Test-Path -LiteralPath $runsDir)) { return }
   $workers = @(Get-ChildItem -LiteralPath $runsDir -Filter worker.json -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-    try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }
+    try {
+      $workerRaw = [string](Get-Content $_.FullName -Raw)
+      if (-not [string]::IsNullOrWhiteSpace($workerRaw)) {
+        $workerRaw | ConvertFrom-Json
+      } else { $null }
+    } catch { $null }
   })
   foreach ($w in $workers) {
     if ($null -ne $w) {
-      if ($w.nonce -and -not $script:trackedWorkerNonces.Contains($w.nonce)) {
-        $script:trackedWorkerNonces.Add($w.nonce)
+      $wNonce = if ($w.nonce) { [string]$w.nonce } else { $null }
+      if ($null -ne $script:trackedWorkerNonces -and -not [string]::IsNullOrWhiteSpace($wNonce)) {
+        if (-not $script:trackedWorkerNonces.Contains($wNonce)) {
+          $script:trackedWorkerNonces.Add($wNonce)
+        }
       }
       if ($w.pid) {
-        Register-TrackedPid $w.pid $w.nonce
+        Register-TrackedPid ([int]$w.pid) $wNonce
       }
       if ($w.grandchildPid) {
-        Register-TrackedPid $w.grandchildPid $w.nonce
+        Register-TrackedPid ([int]$w.grandchildPid) $wNonce
       }
     }
   }
@@ -1498,8 +1560,9 @@ try {
     $evStored = @($dbData.events | Where-Object { $_.event_id -eq '3001' })[0]
     Assert-Demo ($evStored.status -eq 'pending') "Event 3001 status expected pending, got $($evStored.status)"
     Assert-Demo ($evStored.title -eq 'Fix login bug reversed') "Stored title must be sanitized to 'Fix login bug reversed', got '$($evStored.title)'"
-    Assert-Demo (-not $evStored.title.Contains([string]$bidiRlo)) "Stored title must not contain bidi override character"
-    Assert-Demo (-not $evStored.title.Contains('/etc/passwd')) "Stored title must not contain hostile scope text"
+    $sTitle = [string]$evStored.title
+    Assert-Demo (-not $sTitle.Contains([string]$bidiRlo)) "Stored title must not contain bidi override character"
+    Assert-Demo (-not $sTitle.Contains('/etc/passwd')) "Stored title must not contain hostile scope text"
 
     $storedScope = @(ConvertFrom-JsonArray $evStored.scope_json)
     Assert-Demo ($storedScope.Count -eq $policyScope.Count) "Scope must have exactly $($policyScope.Count) elements from policy, got $($storedScope.Count)"
@@ -1519,7 +1582,7 @@ try {
     Assert-Demo ($pendingItem.scope -notcontains '/etc/passwd') "Status JSON scope must not contain hostile scope line"
 
     # Status Arabic text view verification
-    $statusText = Invoke-FactoryStatusText $pState
+    $statusText = [string](Invoke-FactoryStatusText $pState)
     Assert-Demo ($statusText.Contains('Fix login bug reversed')) "Status text must contain sanitized title"
     Assert-Demo (-not $statusText.Contains('/etc/passwd')) "Status text must not contain hostile text"
     Assert-Demo (-not $statusText.Contains([string]$bidiRlo)) "Status text must not contain bidi override characters"
@@ -1569,9 +1632,11 @@ try {
     # 2. Approve event 4001
     $cmdToken = [guid]::NewGuid().ToString()
     $cliPath = if ($dest -and (Test-Path -LiteralPath (Join-Path $dest 'lib\factory.mjs'))) { Join-Path $dest 'lib\factory.mjs' } else { 'lib/factory.mjs' }
-    $errFile = Join-Path $logsDir 'approve-token.err'
+    $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+    $errFile = Join-Path $activeLogsDir 'approve-token.err'
     $rawApprove = & $script:nodeExe $cliPath github approve --state-dir $pState --event 4001 --command-id $cmdToken 2> $errFile
-    Assert-Demo ($LASTEXITCODE -eq 0) "github approve token failed: $rawApprove"
+    $approveText = if ($rawApprove) { ($rawApprove -join "`n") } else { '' }
+    Assert-Demo ($LASTEXITCODE -eq 0) "github approve token failed: $approveText"
 
     # Make repo due so supervisor 2 performs second poll round sending If-None-Match
     Set-DemoRepoDue $pState 'owner/repo'
@@ -1587,35 +1652,49 @@ try {
 
     # A. Verify server request log
     $logs = @(Get-DemoFakeServerLogs)
-    Assert-Demo ($logs.Count -ge 2) "Expected at least 2 requests logged, found $($logs.Count)"
+    $logCount = if ($logs) { $logs.Count } else { 0 }
+    Assert-Demo ($logCount -ge 2) "Expected at least 2 requests logged, found $logCount"
     foreach ($entry in $logs) {
+      if ($null -eq $entry) { continue }
       Assert-Demo ($entry.method -eq 'GET') "Logged request method expected GET, got $($entry.method)"
       Assert-Demo ($entry.path -eq '/repos/owner/repo/events') "Logged request path unexpected: $($entry.path)"
       Assert-Demo ($entry.url -match '^/repos/owner/repo/events') "Logged request url unexpected: $($entry.url)"
       Assert-Demo ($entry.hasBearer -eq $true -and $entry.authScheme -eq 'Bearer') "Logged request missing Bearer header"
     }
-    Assert-Demo ([string]::IsNullOrWhiteSpace($logs[0].ifNoneMatch)) "First poll request must have no If-None-Match"
-    Assert-Demo ($logs[1].ifNoneMatch -match 'canary-etag-v1') "Second poll request must have If-None-Match canary-etag-v1, got: $($logs[1].ifNoneMatch)"
+    Assert-Demo ($logs.Count -ge 1 -and [string]::IsNullOrWhiteSpace($logs[0].ifNoneMatch)) "First poll request must have no If-None-Match"
+    Assert-Demo ($logs.Count -ge 2 -and [string]$logs[1].ifNoneMatch -match 'canary-etag-v1') "Second poll request must have If-None-Match canary-etag-v1, got: $(if ($logs.Count -ge 2) { $logs[1].ifNoneMatch } else { '' })"
 
     # Verify that the server's request log file does not leak the secret canary token value
-    $logRaw = Get-Content -LiteralPath $script:fakeLogFile -Raw
-    Assert-Demo (-not $logRaw.Contains($script:canaryToken)) "Canary token was leaked into server request log!"
+    $logRaw = if (-not [string]::IsNullOrWhiteSpace($script:fakeLogFile) -and (Test-Path -LiteralPath $script:fakeLogFile)) {
+      [string](Get-Content -LiteralPath $script:fakeLogFile -Raw)
+    } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-Demo (-not $logRaw.Contains([string]$script:canaryToken)) "Canary token was leaked into server request log!"
+    }
 
     # B. Canary token appears in none of the files under state directory
-    Assert-DemoCanaryAbsent $pState $script:canaryToken
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-DemoCanaryAbsent $pState ([string]$script:canaryToken)
+    }
 
     # Also verify supervisor stdout/stderr and status outputs do not leak canary
-    foreach ($outPath in @((Join-Path $logsDir 'token-ingest.out'), (Join-Path $logsDir 'token-ingest.err'), (Join-Path $logsDir 'token-run.out'), (Join-Path $logsDir 'token-run.err'))) {
+    foreach ($outPath in @((Join-Path $activeLogsDir 'token-ingest.out'), (Join-Path $activeLogsDir 'token-ingest.err'), (Join-Path $activeLogsDir 'token-run.out'), (Join-Path $activeLogsDir 'token-run.err'))) {
       if (Test-Path -LiteralPath $outPath) {
-        $c = Get-Content -LiteralPath $outPath -Raw
-        Assert-Demo (-not $c.Contains($script:canaryToken)) "Canary token leaked in supervisor log: $outPath"
+        $c = [string](Get-Content -LiteralPath $outPath -Raw)
+        if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+          Assert-Demo (-not $c.Contains([string]$script:canaryToken)) "Canary token leaked in supervisor log: $outPath"
+        }
       }
     }
     $snapJson = Invoke-FactoryStatus $pState
-    $snapRaw = ConvertTo-Json -InputObject $snapJson -Depth 10
-    Assert-Demo (-not $snapRaw.Contains($script:canaryToken)) "Canary token leaked in status --json"
-    $statusText = Invoke-FactoryStatusText $pState
-    Assert-Demo (-not $statusText.Contains($script:canaryToken)) "Canary token leaked in status text"
+    $snapRaw = [string](ConvertTo-Json -InputObject $snapJson -Depth 10)
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-Demo (-not $snapRaw.Contains([string]$script:canaryToken)) "Canary token leaked in status --json"
+    }
+    $statusText = [string](Invoke-FactoryStatusText $pState)
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-Demo (-not $statusText.Contains([string]$script:canaryToken)) "Canary token leaked in status text"
+    }
 
     # C. Worker printed environment has no token variables
     Assert-WorkerEnvNoSecrets $pState
@@ -1780,7 +1859,11 @@ try {
     $results | Format-Table -AutoSize
     $failed = $SkipBaseline -or $script:overallFailed -or ($results.Result -contains 'FAIL') -or ($results.Count -lt 15)
     if ($failed -and $script:failureReason -and -not $script:failureReason.StartsWith('Step ')) {
-      Write-Host "Failure details: $script:failureReason" -ForegroundColor Red
+      $reasonToPrint = [string]$script:failureReason
+      if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+        $reasonToPrint = $reasonToPrint.Replace($script:canaryToken, '[REDACTED_CANARY]')
+      }
+      Write-Host "Failure details: $reasonToPrint" -ForegroundColor Red
     }
     if ($SkipBaseline) {
       Write-Host 'Baseline skipped: dev run, not an acceptance result' -ForegroundColor Yellow
