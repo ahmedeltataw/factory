@@ -40,6 +40,43 @@ $helpersDir = Join-Path $acceptanceBase 'helpers'
 $fakeServerDir = Join-Path $acceptanceBase 'fake-server'
 $origLocation = $null
 
+function ConvertFrom-JsonArray($jsonInput) {
+  if ($null -eq $jsonInput) { return @() }
+  if ($jsonInput -is [System.Array]) {
+    if ($jsonInput.Count -gt 0 -and ($jsonInput[0] -is [string])) {
+      $text = ($jsonInput -join "`n").Trim()
+      if ($text.StartsWith('[') -and $text.EndsWith(']')) {
+        try {
+          $parsed = $text | ConvertFrom-Json
+          if ($null -eq $parsed) { return @() }
+          return @($parsed | ForEach-Object { $_ })
+        } catch {}
+      }
+    }
+    return @($jsonInput | ForEach-Object { $_ })
+  }
+  if ($jsonInput -is [string]) {
+    $text = $jsonInput.Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { return @() }
+    if ($text.StartsWith('[') -and $text.EndsWith(']')) {
+      $parsed = $text | ConvertFrom-Json
+      if ($null -eq $parsed) { return @() }
+      return @($parsed | ForEach-Object { $_ })
+    }
+    if ($text.StartsWith('{') -and $text.EndsWith('}')) {
+      try {
+        $parsed = $text | ConvertFrom-Json
+        if ($null -eq $parsed) { return @() }
+        return @($parsed | ForEach-Object { $_ })
+      } catch {
+        return @($jsonInput)
+      }
+    }
+    return @($jsonInput)
+  }
+  return @($jsonInput | ForEach-Object { $_ })
+}
+
 function Remove-AcceptanceTempDir([string]$dir) {
   if ([string]::IsNullOrWhiteSpace($dir)) { return }
   if (-not (Test-Path -LiteralPath $dir)) { return }
@@ -396,7 +433,7 @@ process.stdout.write(JSON.stringify(canonical));
       throw "Path canonicalization failed with code ${helperCodeExit}: $(Get-Content -LiteralPath $helperErrFile -Raw)"
     }
     try {
-      $canonicalPaths = @($rawPaths | ConvertFrom-Json)
+      $canonicalPaths = ConvertFrom-JsonArray $rawPaths
     } catch {
       throw "Invalid path canonicalization JSON: $rawPaths"
     }
@@ -524,7 +561,43 @@ function Invoke-FactoryStatus([string]$sDir) {
     throw "factory status failed with exit code ${code}: $stderr"
   }
   try {
-    return ($stdout | ConvertFrom-Json)
+    $parsed = ($stdout | ConvertFrom-Json)
+    if ($null -ne $parsed) {
+      if ($null -ne $parsed.tasks) {
+        $parsed.tasks = @(ConvertFrom-JsonArray $parsed.tasks | ForEach-Object {
+          $t = $_
+          if ($null -ne $t.scope) { $t.scope = ConvertFrom-JsonArray $t.scope }
+          if ($null -ne $t.attempts) { $t.attempts = ConvertFrom-JsonArray $t.attempts }
+          if ($null -ne $t.blockedBy) { $t.blockedBy = ConvertFrom-JsonArray $t.blockedBy }
+          if ($null -ne $t.dependsOn) { $t.dependsOn = ConvertFrom-JsonArray $t.dependsOn }
+          $t
+        })
+      } else {
+        $parsed.tasks = @()
+      }
+      if ($null -ne $parsed.phases) {
+        $parsed.phases = ConvertFrom-JsonArray $parsed.phases
+      } else {
+        $parsed.phases = @()
+      }
+      if ($null -ne $parsed.github) {
+        if ($null -ne $parsed.github.repos) {
+          $parsed.github.repos = ConvertFrom-JsonArray $parsed.github.repos
+        } else {
+          $parsed.github.repos = @()
+        }
+        if ($null -ne $parsed.github.pending) {
+          $parsed.github.pending = @(ConvertFrom-JsonArray $parsed.github.pending | ForEach-Object {
+            $p = $_
+            if ($null -ne $p.scope) { $p.scope = ConvertFrom-JsonArray $p.scope }
+            $p
+          })
+        } else {
+          $parsed.github.pending = @()
+        }
+      }
+    }
+    return $parsed
   } catch {
     throw "factory status JSON parse failed: $($_.Exception.Message)`nRaw stdout: $stdout`nRaw stderr: $stderr"
   }
@@ -725,10 +798,12 @@ function Get-DemoFakeServerLogs {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     try {
       $rec = ($line | ConvertFrom-Json)
-      $records.Add($rec)
+      if ($null -ne $rec) {
+        $records.Add($rec)
+      }
     } catch {}
   }
-  return $records
+  return ,@($records | ForEach-Object { $_ })
 }
 
 function Clear-DemoFakeServerLogs {
@@ -875,7 +950,14 @@ try {
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) { throw "Database read failed ($exitCode): $(Get-Content $errFile -Raw)" }
-    try { return (($raw -join "`n") | ConvertFrom-Json) } catch { throw "Invalid database JSON: $raw" }
+    try {
+      $parsed = (($raw -join "`n") | ConvertFrom-Json)
+      return [pscustomobject]@{
+        attemptBase = $parsed.attemptBase
+        evidence    = $parsed.evidence
+        attempts    = ConvertFrom-JsonArray $parsed.attempts
+      }
+    } catch { throw "Invalid database JSON: $raw" }
   } finally { Remove-Item env:FACTORY_STATE_DIR, env:FACTORY_TASK_ID -ErrorAction SilentlyContinue }
 }
 
@@ -924,7 +1006,13 @@ try {
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) { throw "Failed to read GitHub database data ($exitCode): $(Get-Content $errFile -Raw)" }
-    try { return (($raw -join "`n") | ConvertFrom-Json) } catch { throw "Invalid GitHub database JSON: $raw" }
+    try {
+      $parsed = (($raw -join "`n") | ConvertFrom-Json)
+      return [pscustomobject]@{
+        events  = ConvertFrom-JsonArray $parsed.events
+        cursors = ConvertFrom-JsonArray $parsed.cursors
+      }
+    } catch { throw "Invalid GitHub database JSON: $raw" }
   } finally { Remove-Item env:FACTORY_STATE_DIR -ErrorAction SilentlyContinue }
 }
 
@@ -987,7 +1075,7 @@ process.stdout.write(JSON.stringify(matches));
     $raw = & $script:nodeExe $helper 2> $errFile
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) { throw "Failed to scan canary ($exitCode): $(Get-Content $errFile -Raw)" }
-    $matches = @(($raw -join "`n") | ConvertFrom-Json)
+    $matches = ConvertFrom-JsonArray $raw
     if ($matches.Count -gt 0) {
       throw "Canary token was found in files: $($matches -join ', ')"
     }
@@ -1012,7 +1100,7 @@ function Assert-WorkerEnvNoSecrets([string]$sDir) {
       $foundAnyEnvKeys = $true
       $spaceIdx = $line.IndexOf(' ')
       $jsonText = $line.Substring($spaceIdx + 1).Trim()
-      $keys = @($jsonText | ConvertFrom-Json)
+      $keys = ConvertFrom-JsonArray $jsonText
       foreach ($sk in $secretKeys) {
         if ($keys -contains $sk) {
           throw "Worker environment in $($logFile.FullName) leaked secret variable: $sk"
@@ -1421,7 +1509,7 @@ try {
     Assert-Demo (-not $evStored.title.Contains([string]$bidiRlo)) "Stored title must not contain bidi override character"
     Assert-Demo (-not $evStored.title.Contains('/etc/passwd')) "Stored title must not contain hostile scope text"
 
-    $storedScope = @($evStored.scope_json | ConvertFrom-Json)
+    $storedScope = ConvertFrom-JsonArray $evStored.scope_json
     Assert-Demo ($storedScope.Count -eq $policyScope.Count) "Scope must have exactly $($policyScope.Count) elements from policy, got $($storedScope.Count)"
     foreach ($sc in $policyScope) {
       Assert-Demo ($storedScope -contains $sc) "Scope must contain policy element '$sc'"
@@ -1506,7 +1594,7 @@ try {
     Assert-Demo ($tToken.status -eq 'done') "Token task status expected done, got $($tToken.status)"
 
     # A. Verify server request log
-    $logs = Get-DemoFakeServerLogs
+    $logs = @(Get-DemoFakeServerLogs)
     Assert-Demo ($logs.Count -ge 2) "Expected at least 2 requests logged, found $($logs.Count)"
     foreach ($entry in $logs) {
       Assert-Demo ($entry.method -eq 'GET') "Logged request method expected GET, got $($entry.method)"
@@ -1597,14 +1685,14 @@ try {
     # Make repo due for takeover run
     Set-DemoRepoDue $pState 'owner/repo'
 
-    $logCountBeforeTakeover = (Get-DemoFakeServerLogs).Count
+    $logCountBeforeTakeover = @(Get-DemoFakeServerLogs).Count
 
     # Round 3: restart with --takeover
     $proc3 = Start-DemoSupervisor 'crash-takeover' -takeover $takeover -sDir $pState
     Wait-DemoSupervisor $proc3 'crash-takeover'
 
     # Assert that takeover poll sent old ETag in If-None-Match
-    $allLogs = Get-DemoFakeServerLogs
+    $allLogs = @(Get-DemoFakeServerLogs)
     $takeoverLogs = @($allLogs | Select-Object -Skip $logCountBeforeTakeover)
     Assert-Demo ($takeoverLogs.Count -ge 1) "No requests recorded during takeover poll"
     $takeoverReq = $takeoverLogs[0]
