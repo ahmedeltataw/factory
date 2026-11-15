@@ -55,6 +55,7 @@ Every hash comparison normalizes CRLF to LF first: on the Designer's PC git has 
 
 - `tests/protected/**` is written or imported by the Lead before the Builder starts. In M1 they are dsh tests copied with only the documented import-path rewrite; after reverting it and normalizing CRLF to LF they must match `blob_sha256` in `SOURCE_MANIFEST.json`.
 - A Builder diff touching `tests/protected/**`, `schemas/**`, `docs/**` or `.factory/**` fails the scope check.
+- Timing rule (Muse #31, M7): a new test must not assert a strict wall-clock inequality on millisecond timestamps taken from real processes (for example `started_at` of one attempt `<` `ended_at` of another). Use an injected clock (`nowMs`) where the code has one, assert on ordering facts stored in the database, or give the assertion a margin that a loaded runner cannot erase (fake worker lifetimes of several seconds, ceilings in tens of seconds). A flaky timing test is fixed at its cause, never by a retry.
 
 ## 6. Merge rule
 
