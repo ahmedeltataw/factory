@@ -13,6 +13,7 @@ interface CreateTaskParams {
   readonly projectId: string
   readonly createdByCommand: string
   readonly title: unknown
+  readonly provider?: unknown
   readonly scope: unknown
   readonly maxAttempts: unknown
   readonly timeoutMs: unknown
@@ -23,6 +24,8 @@ interface CreateTaskParams {
 }
 
 function createTask(db: DatabaseSync, params: CreateTaskParams): string | null {
+  const provider = params.provider === undefined ? 'default' : params.provider
+  if (!validProvider(provider) || (provider !== 'default' && !db.prepare('SELECT 1 FROM quota_windows WHERE project_id = ? AND provider = ?').get(params.projectId, provider))) return 'unknown-provider'
   const scope = parseScope(params.scope)
   const maxAttempts = params.maxAttempts
   const timeoutMs = params.timeoutMs
@@ -49,8 +52,8 @@ function createTask(db: DatabaseSync, params: CreateTaskParams): string | null {
   const target = selected as { name: string; status: string } | undefined
   const phaseLess = !target && !db.prepare('SELECT 1 FROM phases WHERE project_id = ? LIMIT 1').get(params.projectId)
   if (phaseLess && phase === null && deps.deps.length === 0) {
-    db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)")
-      .run(params.id, params.projectId, params.createdByCommand, params.title, params.createdAt, params.now, JSON.stringify(scope.scope), maxAttempts, timeoutMs)
+    db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms, provider) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?)")
+      .run(params.id, params.projectId, params.createdByCommand, params.title, params.createdAt, params.now, JSON.stringify(scope.scope), maxAttempts, timeoutMs, provider)
     return null
   }
   if (!target || target.status === 'done') return 'phase is not available'
@@ -60,9 +63,48 @@ function createTask(db: DatabaseSync, params: CreateTaskParams): string | null {
       return `invalid dependency: ${dep}`
     }
   }
-  db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms, phase) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?)")
-    .run(params.id, params.projectId, params.createdByCommand, params.title, params.createdAt, params.now, JSON.stringify(scope.scope), maxAttempts, timeoutMs, target.name)
+  db.prepare("INSERT INTO tasks (id, project_id, created_by_command, title, status, created_at, updated_at, scope_json, max_attempts, timeout_ms, phase, provider) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?)")
+    .run(params.id, params.projectId, params.createdByCommand, params.title, params.createdAt, params.now, JSON.stringify(scope.scope), maxAttempts, timeoutMs, target.name, provider)
   for (const dep of deps.deps) db.prepare('INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)').run(params.id, dep)
+  return null
+}
+
+function validProvider(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,31}$/.test(value)
+}
+
+function validNumber(value: unknown, min = 1): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= min
+}
+
+function applyLimitsQuotaBudget(db: DatabaseSync, command: PendingCommand, object: Record<string, unknown>, now: string): string | null {
+  const project = command.project_id
+  if (command.kind === 'limits.clear') {
+    db.prepare('DELETE FROM project_limits WHERE project_id = ?').run(project)
+  } else if (command.kind === 'limits.set') {
+    if (!validNumber(object.maxParallel)) return 'invalid-number'
+    db.prepare('INSERT INTO project_limits (project_id, max_parallel, updated_at) VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET max_parallel = excluded.max_parallel, updated_at = excluded.updated_at').run(project, object.maxParallel, now)
+  } else if (command.kind === 'quota.set' || command.kind === 'quota.clear') {
+    if (!validProvider(object.provider)) return 'unknown-provider'
+    if (command.kind === 'quota.clear') db.prepare('DELETE FROM quota_windows WHERE project_id = ? AND provider = ?').run(project, object.provider)
+    else {
+      if (!validNumber(object.windowMs, 1000) || !validNumber(object.maxUnits)) return 'invalid-number'
+      db.prepare('INSERT INTO quota_windows (project_id, provider, window_ms, max_units, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, provider) DO UPDATE SET window_ms = excluded.window_ms, max_units = excluded.max_units, updated_at = excluded.updated_at').run(project, object.provider, object.windowMs, object.maxUnits, now)
+    }
+  } else {
+    const level = object.level
+    if (level !== 'project' && level !== 'phase' && level !== 'task') return 'unknown-level'
+    if (level === 'project' && object.key !== undefined) return 'key-not-allowed'
+    if (level !== 'project' && (typeof object.key !== 'string' || !object.key.trim())) return 'missing-key'
+    const key = level === 'project' ? '' : object.key as string
+    if (level === 'phase' && !db.prepare('SELECT 1 FROM phases WHERE project_id = ? AND name = ?').get(project, key)) return 'unknown-key'
+    if (level === 'task' && !db.prepare('SELECT 1 FROM tasks WHERE project_id = ? AND id = ?').get(project, key)) return 'unknown-key'
+    if (command.kind === 'budget.clear') db.prepare('DELETE FROM budget_caps WHERE project_id = ? AND level = ? AND key = ?').run(project, level, key)
+    else {
+      if (!validNumber(object.cap)) return 'invalid-number'
+      db.prepare('INSERT INTO budget_caps (project_id, level, key, cap_units, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, level, key) DO UPDATE SET cap_units = excluded.cap_units, updated_at = excluded.updated_at').run(project, level, key, object.cap, now)
+    }
+  }
   return null
 }
 
@@ -77,13 +119,16 @@ export function applyPendingCommands(db: DatabaseSync, handle: SupervisorLeaseHa
       let payload: unknown
       try { payload = JSON.parse(command.payload_json) } catch { payload = null }
       const object = payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {}
-      if (command.kind === 'task.create') {
-        const legacy = Object.keys(object).length === 1 && Object.hasOwn(object, 'title')
+      if (['limits.set', 'limits.clear', 'quota.set', 'quota.clear', 'budget.set', 'budget.clear'].includes(command.kind)) {
+        reason = applyLimitsQuotaBudget(db, command, object, now)
+      } else if (command.kind === 'task.create') {
+        const legacy = Object.keys(object).every((key) => key === 'title' || key === 'provider') && Object.hasOwn(object, 'title')
         reason = createTask(db, {
           id: command.id,
           projectId: command.project_id,
           createdByCommand: command.id,
           title: object.title,
+          provider: object.provider,
           scope: legacy ? ['.'] : object.scope,
           maxAttempts: legacy ? 3 : object.maxAttempts,
           timeoutMs: legacy ? null : object.timeoutMs,

@@ -243,14 +243,72 @@ async function runGitHub(argv: readonly string[]): Promise<number> {
   }
 }
 
+async function runLimitsQuotaBudget(argv: readonly string[]): Promise<number> {
+  const [group, action] = argv
+  const usage = (): number => { process.stderr.write('\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0648\u0633\u0627\u0626\u0637: factory limits|quota|budget\n'); return 2 }
+  if (!['limits', 'quota', 'budget'].includes(group ?? '') || !['set', 'clear'].includes(action ?? '') || (group === 'limits' && action !== 'set')) return usage()
+  const allowed = group === 'limits' ? ['--state-dir', '--command-id', '--max-parallel', '--clear-parallel']
+    : group === 'quota' ? ['--state-dir', '--command-id', '--provider', ...(action === 'set' ? ['--window-ms', '--max-units'] : [])]
+      : ['--state-dir', '--command-id', '--level', '--key', ...(action === 'set' ? ['--cap'] : [])]
+  const values: Record<string, string> = {}
+  let clearParallel = false
+  for (let i = 2; i < argv.length; i++) {
+    const key = argv[i]!
+    if (!allowed.includes(key)) return usage()
+    if (key === '--clear-parallel') { if (clearParallel) return usage(); clearParallel = true; continue }
+    const value = argv[++i]
+    if (values[key] !== undefined || value === undefined || value.startsWith('-') || !value.trim() || !value.isWellFormed()) return usage()
+    values[key] = value
+  }
+  if (!values['--state-dir'] || (values['--command-id'] !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(values['--command-id']))) return usage()
+  if (group === 'limits' && (clearParallel === (values['--max-parallel'] !== undefined))) return usage()
+  if (group === 'quota' && (!values['--provider'] || (action === 'set' && (!values['--window-ms'] || !values['--max-units'])))) return usage()
+  if (group === 'budget' && (!values['--level'] || (action === 'set' && !values['--cap']))) return usage()
+  const number = (key: string, minimum: number): number | undefined => {
+    const value = values[key]
+    if (value === undefined || !/^[0-9]+$/.test(value)) return undefined
+    const n = Number(value)
+    return Number.isSafeInteger(n) && n >= minimum ? n : undefined
+  }
+  const maxParallel = number('--max-parallel', 1)
+  const windowMs = number('--window-ms', 1000)
+  const maxUnits = number('--max-units', 1)
+  const cap = number('--cap', 1)
+  if ((group === 'limits' && !clearParallel && maxParallel === undefined) || (group === 'quota' && action === 'set' && (windowMs === undefined || maxUnits === undefined)) || (group === 'budget' && action === 'set' && cap === undefined)) return usage()
+  const kind = group === 'limits' ? (clearParallel ? 'limits.clear' : 'limits.set') : `${group}.${action}`
+  const payload = group === 'limits' ? (clearParallel ? {} : { maxParallel })
+    : group === 'quota' ? (action === 'set' ? { provider: values['--provider'], windowMs, maxUnits } : { provider: values['--provider'] })
+      : { level: values['--level'], ...(values['--key'] !== undefined ? { key: values['--key'] } : {}), ...(action === 'set' ? { cap } : {}) }
+  try {
+    const path = join(values['--state-dir']!, 'state.sqlite')
+    if (!existsSync(path)) throw new Error('missing database')
+    const db = new DatabaseSync(path)
+    try {
+      db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000')
+      const project = db.prepare('SELECT project_id FROM project_config').get() as { project_id: string } | undefined
+      if (!project) throw new Error('missing project')
+      const id = values['--command-id'] ?? randomUUID()
+      const existing = db.prepare('SELECT created_at FROM commands WHERE id = ?').get(id) as { created_at: string } | undefined
+      const { appendCommand } = await import('../app/commands.ts')
+      const result = appendCommand(db, { id, projectId: project.project_id, kind, payloadJson: JSON.stringify(payload), createdAt: existing?.created_at ?? new Date().toISOString() })
+      process.stdout.write(`${result} ${id}\n\u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0623\u0645\u0631\n`)
+      return 0
+    } finally { db.close() }
+  } catch (error) {
+    process.stderr.write(`\u062a\u0639\u0630\u0631 \u062a\u0646\u0641\u064a\u0630 \u0627\u0644\u0623\u0645\u0631: ${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
+  }
+}
+
 async function runTaskOrInit(argv: readonly string[]): Promise<number> {
   if (argv[0] === 'github') return await runGitHub(argv)
+  if (['limits', 'quota', 'budget'].includes(argv[0] ?? '')) return await runLimitsQuotaBudget(argv)
   const isInit = argv[0] === 'init'
   const action = argv[1]
   const isPhase = argv[0] === 'phase' && action === 'advance'
   const start = isInit ? 1 : 2
   if (!isInit && !isPhase && (argv[0] !== 'task' || (action !== 'create' && action !== 'kill' && action !== 'retry'))) return await run(argv)
-  const allowed = isInit ? ['--state-dir', '--repo'] : isPhase ? ['--state-dir', '--phase', '--command-id'] : ['--state-dir', action === 'create' ? '--title' : '--task', '--command-id', ...(action === 'create' ? ['--scope', '--max-attempts', '--timeout-ms', '--phase', '--after'] : [])]
+  const allowed = isInit ? ['--state-dir', '--repo'] : isPhase ? ['--state-dir', '--phase', '--command-id'] : ['--state-dir', action === 'create' ? '--title' : '--task', '--command-id', ...(action === 'create' ? ['--scope', '--max-attempts', '--timeout-ms', '--phase', '--after', '--provider'] : [])]
   const values: Record<string, string> = {}
   const scopes: string[] = []
   const after: string[] = []
@@ -301,7 +359,7 @@ async function runTaskOrInit(argv: readonly string[]): Promise<number> {
         const id = values['--command-id'] ?? randomUUID()
         const existing = db.prepare('SELECT created_at FROM commands WHERE id = ?').get(id) as { created_at: string } | undefined
         const { appendCommand } = await import('../app/commands.ts')
-        const result = appendCommand(db, { id, projectId: project.project_id, kind: isPhase ? 'phase.advance' : `task.${action}`, payloadJson: JSON.stringify(isPhase ? { phase } : action === 'create' ? { title: values['--title'], scope: scope.scope, maxAttempts, timeoutMs, phase: phase ?? null, deps: deps.deps } : { taskId: values['--task'] }), createdAt: existing?.created_at ?? new Date().toISOString() })
+        const result = appendCommand(db, { id, projectId: project.project_id, kind: isPhase ? 'phase.advance' : `task.${action}`, payloadJson: JSON.stringify(isPhase ? { phase } : action === 'create' ? { title: values['--title'], scope: scope.scope, maxAttempts, timeoutMs, phase: phase ?? null, deps: deps.deps, ...(values['--provider'] !== undefined ? { provider: values['--provider'] } : {}) } : { taskId: values['--task'] }), createdAt: existing?.created_at ?? new Date().toISOString() })
         process.stdout.write(`${result} ${id}\n\u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0623\u0645\u0631\n`)
       } finally { db.close() }
     }
