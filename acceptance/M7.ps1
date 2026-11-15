@@ -1535,7 +1535,7 @@ try {
     # 3. Start supervisor
     $proc = Start-DemoSupervisor 'quota-sup' -sDir $pState
 
-    # 4. Poll status: observe first 2 run, third waits with reason 'quota', retryAtMs, dispatch = waiting-quota
+    # 4. Poll status: observe first 2 run, third waits with reason 'quota', quota.windows resetsAt, dispatch = waiting-quota
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $sawWaitingQuota = $false
     $observedRetryAtMs = 0
@@ -1552,8 +1552,11 @@ try {
       if ($waitingTasks.Count -gt 0) {
         $sawWaitingQuota = $true
         $wt = $waitingTasks[0]
-        if ($null -ne $wt.waiting.retryAtMs -and $wt.waiting.retryAtMs -gt 0) {
-          $observedRetryAtMs = [long]$wt.waiting.retryAtMs
+        if ($null -ne $snap.quota -and $null -ne $snap.quota.windows) {
+          $defWindow = @($snap.quota.windows | Where-Object { $_.provider -eq 'default' })
+          if ($defWindow.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($defWindow[0].resetsAt)) {
+            $observedRetryAtMs = [long][DateTimeOffset]::Parse($defWindow[0].resetsAt).ToUnixTimeMilliseconds()
+          }
         }
 
         # Assert third task has NO attempt row while waiting (in status and in DB)
@@ -1582,7 +1585,7 @@ try {
 
     $finalSnap = Invoke-FactoryStatus $pState
     Assert-Demo $sawWaitingQuota "No task was observed waiting with reason 'quota'"
-    Assert-Demo ($observedRetryAtMs -gt 0) "Waiting task did not show a valid retryAtMs"
+    Assert-Demo ($observedRetryAtMs -gt 0) "quota.windows resetsAt was not observed while the third task waited"
     Assert-Demo $checkedBeforeExpiry "Did not verify that exactly two attempts started before window expiry"
     Assert-Demo $sawDispatchWaitingQuota "Status dispatch was not observed as 'waiting-quota'"
     Assert-Demo (@($finalSnap.tasks | Where-Object { $_.status -eq 'done' }).Count -eq 3) "Not all three tasks completed done"
