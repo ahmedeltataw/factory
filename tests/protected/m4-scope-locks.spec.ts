@@ -368,7 +368,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
           {
             cwd: tempCwd,
             env: cleanTestEnv({
-              FAKE_SLEEP_MS: '1500',
+              FAKE_SLEEP_MS: '6000',
             }),
             timeout: 60000,
           },
