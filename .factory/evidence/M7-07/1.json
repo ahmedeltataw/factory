@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "card": "M7-07",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "00bd87e",
+  "checks": [
+    {
+      "id": "CHK-M7-07-a",
+      "command": "verify CI run 43716519719 (4 cells) + sol approve round 2 (no mutation required for this card)",
+      "result": "pass",
+      "output": "all jobs success"
+    },
+    {
+      "id": "CHK-M7-07-b",
+      "command": "verify CI run 43716519719 (4 cells) + sol approve round 2 (no mutation required for this card)",
+      "result": "pass",
+      "output": "all jobs success"
+    },
+    {
+      "id": "CHK-M7-07-c",
+      "command": "verify CI run 43716519719 (4 cells) + sol approve round 2 (no mutation required for this card)",
+      "result": "pass",
+      "output": "all jobs success"
+    }
+  ],
+  "ended_at": "2026-11-15T13:11:46.690Z"
+}

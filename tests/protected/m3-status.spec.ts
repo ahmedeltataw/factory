@@ -76,7 +76,7 @@ it('CHK-M3-07-a: JSON reports command, task and outbox facts without writing', a
       const result = run(dir, '--json')
       expect(result.status).toBe(0)
       const status = JSON.parse(result.stdout)
-      expect(Object.keys(status).sort()).toEqual(['commands', 'github', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
+      expect(Object.keys(status).sort()).toEqual(['commands', 'github', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks', 'limits', 'quota', 'budget', 'dispatch'].sort())
       expect(status.schemaVersion).toBe(9)
       expect(status.recordedCommandCount).toBe(6)
       expect(status.commands).toEqual({ recorded: 6, applied: 1, rejected: 2, pending: 3 })

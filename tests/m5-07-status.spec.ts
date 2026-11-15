@@ -1482,6 +1482,10 @@ describe('M5-07 status unit and mutation tests', () => {
           schemaVersion: 9,
           recordedCommandCount: 1,
           lease: null,
+          limits: null,
+          quota: null,
+          budget: null,
+          dispatch: 'open',
           phases: [{ name: 'intake', ord: 1, status: s, openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } }],
         }
         return formatStatus(dummy)
@@ -1499,6 +1503,10 @@ describe('M5-07 status unit and mutation tests', () => {
           schemaVersion: 9,
           recordedCommandCount: 1,
           lease: null,
+          limits: null,
+          quota: null,
+          budget: null,
+          dispatch: 'open',
           phases: [],
           tasks: [{
             id: 't',
@@ -1527,6 +1535,10 @@ describe('M5-07 status unit and mutation tests', () => {
           schemaVersion: 9,
           recordedCommandCount: 1,
           lease: null,
+          limits: null,
+          quota: null,
+          budget: null,
+          dispatch: 'open',
           phases: [],
           tasks: [{
             id: 't',
@@ -1563,6 +1575,10 @@ describe('M5-07 status unit and mutation tests', () => {
           schemaVersion: 9,
           recordedCommandCount: 1,
           lease: null,
+          limits: null,
+          quota: null,
+          budget: null,
+          dispatch: 'open',
           phases: [],
           tasks: [{
             id: 't',
@@ -1599,6 +1615,10 @@ describe('M5-07 status unit and mutation tests', () => {
           schemaVersion: 9,
           recordedCommandCount: 1,
           lease: null,
+          limits: null,
+          quota: null,
+          budget: null,
+          dispatch: 'open',
           phases: [],
           tasks: [{
             id: 't',
@@ -1646,6 +1666,10 @@ describe('M5-07 status unit and mutation tests', () => {
             state: fr === 'not-applicable' ? 'released' : 'active',
             freshness: fr,
           },
+          limits: null,
+          quota: null,
+          budget: null,
+          dispatch: 'open',
           phases: [],
         }
         expect(formatStatus(dummy)).toContain(`حداثة النبض=${expected[idx]}`)
@@ -1658,6 +1682,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         outbox: { pending: 0, done: 0, failed: 0, failedRows: [] },
         phases: [],
       }
@@ -1668,6 +1696,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         outbox: { pending: 2, done: 0, failed: 0, failedRows: [] },
         phases: [],
       }
@@ -1679,6 +1711,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         outbox: {
           pending: 0,
           done: 3,
@@ -1702,12 +1738,15 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 0,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [],
       }
-      const text = formatStatus(dummyEmpty)
-      expect(text).not.toContain('المرحلة:')
-      expect(text).not.toContain('المهمة:')
+      expect(formatStatus(dummyEmpty)).not.toContain('المرحلة:')
+      expect(formatStatus(dummyEmpty)).not.toContain('المهمة:')
     })
 
     it('accurately computes task attempt budget in formatStatus', () => {
@@ -1716,6 +1755,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [
           Object.defineProperty(
@@ -1749,6 +1792,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [{
           id: 't2',
@@ -1775,6 +1822,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [{
           id: 't-full',
@@ -1803,6 +1854,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [{
           id: 't-omitted',
@@ -1830,6 +1885,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [{
           id: 't-wait',
@@ -1857,6 +1916,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [{
           id: 't',
@@ -1891,6 +1954,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [{
           id: 't',
@@ -1942,6 +2009,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [
           {
             name: 'development',
@@ -1994,6 +2065,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [
           {
             name: 'qa',
@@ -2016,6 +2091,10 @@ describe('M5-07 status unit and mutation tests', () => {
         schemaVersion: 9,
         recordedCommandCount: 1,
         lease: null,
+        limits: null,
+        quota: null,
+        budget: null,
+        dispatch: 'open',
         phases: [],
         tasks: [
           {
