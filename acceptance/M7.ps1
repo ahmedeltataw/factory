@@ -629,7 +629,7 @@ function Cleanup-TaskWorktrees {
   }
 }
 
-function Invoke-FactoryStatus([string]$sDir) {
+function Invoke-FactoryStatus([string]$sDir, [int]$staleAfterMs = 0) {
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = if ($script:nodeExe) { $script:nodeExe } else { 'node' }
   $cliPath = if ($dest -and (Test-Path -LiteralPath (Join-Path $dest 'lib\factory.mjs'))) {
@@ -637,7 +637,8 @@ function Invoke-FactoryStatus([string]$sDir) {
   } else {
     'lib/factory.mjs'
   }
-  $psi.Arguments = "`"$cliPath`" status --state-dir `"$sDir`" --json"
+  $staleArg = if ($staleAfterMs -gt 0) { " --stale-after-ms $staleAfterMs" } else { '' }
+  $psi.Arguments = "`"$cliPath`" status --state-dir `"$sDir`"$staleArg --json"
   $psi.WorkingDirectory = if ($dest -and (Test-Path -LiteralPath $dest)) { $dest } else { $PWD.Path }
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
@@ -1773,60 +1774,55 @@ try {
     Assert-Demo ($proc1.WaitForExit(10000)) 'Supervisor did not exit after kill'
 
     # Read takeover token from lease
-    $snapCrash = Invoke-FactoryStatus $pState
+    $snapCrash = Invoke-FactoryStatus $pState 2000
     $takeover = $snapCrash.lease.takeover
     Assert-Demo (-not [string]::IsNullOrWhiteSpace($takeover)) 'Missing takeover token after crash'
 
-    # Bounded polling on the actual condition: lease takeover possible (lease is stale) AND workers finished
+    # Poll (bounded) until lease.freshness is stale
     $swRestart = [System.Diagnostics.Stopwatch]::StartNew()
-    $takeoverReady = $false
+    $leaseStale = $false
     $timeoutRestartSec = 30
     $lastPollSnap = $null
 
     while ($swRestart.Elapsed.TotalSeconds -lt $timeoutRestartSec) {
-      $lastPollSnap = Invoke-FactoryStatus $pState
+      $lastPollSnap = Invoke-FactoryStatus $pState 2000
       Register-DemoWorkerNonces $pState
 
-      # Check if lease takeover is possible (lease freshness is stale)
-      $leaseTakeoverPossible = ($null -ne $lastPollSnap.lease -and $lastPollSnap.lease.freshness -eq 'stale')
-
-      # Check if workers finished (no process matching tracked worker nonces / process records is alive)
-      $workersAlive = $false
-      foreach ($rec in $script:trackedProcessRecords) {
-        if (Test-TrackedPidIdentityValid $rec) {
-          $workersAlive = $true
-          break
+      if ($null -ne $lastPollSnap.lease -and $lastPollSnap.lease.freshness -eq 'stale') {
+        $leaseStale = $true
+        if (-not [string]::IsNullOrWhiteSpace($lastPollSnap.lease.takeover)) {
+          $takeover = $lastPollSnap.lease.takeover
         }
-      }
-      if (-not $workersAlive) {
-        foreach ($wn in $script:trackedWorkerNonces) {
-          if ([string]::IsNullOrWhiteSpace($wn)) { continue }
-          $matching = @(Get-CimInstance Win32_Process -Property ProcessId, CommandLine -ErrorAction SilentlyContinue | Where-Object {
-            $_.CommandLine -and $_.CommandLine.Contains($wn)
-          })
-          if ($matching.Count -gt 0) {
-            $workersAlive = $true
-            break
-          }
-        }
-      }
-
-      if ($leaseTakeoverPossible -and -not $workersAlive) {
-        $takeoverReady = $true
         break
       }
       Start-Sleep -Milliseconds 100
     }
 
-    if (-not $takeoverReady) {
+    if (-not $leaseStale) {
       $snapJsonStr = if ($lastPollSnap) { ConvertTo-Json -InputObject $lastPollSnap -Depth 10 } else { '<no snapshot>' }
-      throw "Timeout after ${timeoutRestartSec}s waiting for lease takeover possibility (stale lease) and worker process completion.`nStatus JSON:`n$snapJsonStr"
+      throw "Timeout after ${timeoutRestartSec}s waiting for lease freshness to become stale.`nStatus JSON:`n$snapJsonStr"
     }
 
     # 6. Restart supervisor with --takeover
     $proc2 = Start-DemoSupervisor 'restart-sup2' -takeover $takeover -sDir $pState
     Wait-DemoSupervisor $proc2 'restart-sup2' 35
     Register-DemoWorkerNonces $pState
+
+    # Wait (bounded) for the two tasks to finish
+    $swTasks = [System.Diagnostics.Stopwatch]::StartNew()
+    $tasksFinished = $false
+    $timeoutTasksSec = 30
+
+    while ($swTasks.Elapsed.TotalSeconds -lt $timeoutTasksSec) {
+      $pollTasksSnap = Invoke-FactoryStatus $pState
+      $activeTasks = @($pollTasksSnap.tasks | Where-Object { ($_.id -eq $t1 -or $_.id -eq $t2) -and ($_.status -eq 'ready' -or $_.status -eq 'progress') })
+      if ($activeTasks.Count -eq 0) {
+        $tasksFinished = $true
+        break
+      }
+      Start-Sleep -Milliseconds 100
+    }
+    Assert-Demo $tasksFinished "Timeout after ${timeoutTasksSec}s waiting for tasks $t1 and $t2 to reach terminal state"
 
     # 7. Assertions: after completion, quota.windows[0].used equals started attempts (a worker row exists)
     $finalSnap = Invoke-FactoryStatus $pState
