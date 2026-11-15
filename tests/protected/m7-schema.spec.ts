@@ -343,6 +343,7 @@ it('CHK-M7-01-d: status on a v9 DB with M6-shaped data gives the M6 output with 
           { name: 'handover', ord: 5, status: 'locked', openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } },
         ],
         schemaVersion: 9,
+        limits: null, quota: null, budget: null, dispatch: 'open',
         recordedCommandCount: 6,
         commands: { recorded: 6, applied: 1, rejected: 2, pending: 3 },
         lease: {
@@ -413,7 +414,7 @@ it('CHK-M7-01-d: status on a v9 DB with M6-shaped data gives the M6 output with 
       })
       expect(cliResult.status).toBe(0)
       const cliJson = JSON.parse(cliResult.stdout)
-      expect(Object.keys(cliJson).sort()).toEqual(['commands', 'github', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
+      expect(Object.keys(cliJson).sort()).toEqual(['commands', 'github', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks', 'limits', 'quota', 'budget', 'dispatch'].sort())
       expect(cliJson).toEqual(expectedStatus)
       expect(cliResult.stdout).not.toContain('private-payload')
       expect(cliResult.stdout).not.toContain('nonce-1')

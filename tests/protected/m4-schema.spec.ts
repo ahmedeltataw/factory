@@ -598,6 +598,7 @@ describe('M4-01 Schema v6 contract', () => {
         const expectedStatus = {
           phases: [],
           schemaVersion: 9,
+          limits: null, quota: null, budget: null, dispatch: 'open',
           recordedCommandCount: 6,
           commands: { recorded: 6, applied: 1, rejected: 2, pending: 3 },
           lease: {
@@ -671,7 +672,7 @@ describe('M4-01 Schema v6 contract', () => {
         })
         expect(cliResult.status).toBe(0)
         const cliJson = JSON.parse(cliResult.stdout)
-        expect(Object.keys(cliJson).sort()).toEqual(['commands', 'github', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks'].sort())
+        expect(Object.keys(cliJson).sort()).toEqual(['commands', 'github', 'lease', 'outbox', 'phases', 'recordedCommandCount', 'schemaVersion', 'tasks', 'limits', 'quota', 'budget', 'dispatch'].sort())
         expect(cliJson).toEqual(expectedStatus)
         expect(cliResult.stdout).not.toContain('private-payload')
         expect(cliResult.stdout).not.toContain('nonce-1')
