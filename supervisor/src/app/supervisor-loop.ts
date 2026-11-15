@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { applyPendingCommands } from './apply-commands.ts'
 import { fencedWrite } from './fence.ts'
+import { check, closeReservation } from './quota.ts'
 import { triggerFault, type FaultName } from './faults.ts'
 import { createEffectHandlers, runDue } from './outbox.ts'
 import { failExhaustedEffects, finishAttempt, readWorker, reconcileWorkers, retryTask, scheduleAttempt, stateDirectory, type RecoveryDeps } from './recovery.ts'
@@ -30,8 +31,15 @@ function dispatchInput(db: DatabaseSync, nowMs: number): DispatchInput {
   for (const row of rows) {
     if (!projectsWithPhases.has(row.project_id)) phaseInfo.push({ name: phaseKey(row.project_id, row.phase), status: 'open' })
   }
+  const limit = db.prepare('SELECT max_parallel FROM project_limits LIMIT 1').get() as { max_parallel: number } | undefined
+  const gates: NonNullable<DispatchInput['gates']> = {}
+  for (const row of rows) {
+    if (row.status !== 'ready') continue
+    const result = check(db, row.id, nowMs)
+    if (!result.ok) gates[row.id] = { reason: result.reason, retryAtMs: result.retryAtMs }
+  }
   return {
-    nowMs, phases: phaseInfo,
+    nowMs, phases: phaseInfo, maxParallel: limit?.max_parallel ?? null, gates,
     tasks: rows.map((row) => {
       const parsed = parseScope(JSON.parse(row.scope_json))
       if (!parsed.ok) throw new Error(`invalid task scope: ${parsed.reason}`)
@@ -124,7 +132,13 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
     const { attemptId } = JSON.parse(row.payload_json) as { attemptId: string }
     const attempt = db.prepare('SELECT a.lease_generation, a.status, t.status AS task_status FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE a.id = ?').get(attemptId) as { lease_generation: number; status: string; task_status: string } | undefined
     if (!attempt || attempt.lease_generation !== handle.generation || !['pending', 'running'].includes(attempt.status) || attempt.task_status === 'dropped') {
-      fencedWrite(db, handle, () => db.prepare("UPDATE outbox SET last_error = 'superseded' WHERE id = ? AND status = 'pending'").run(row.id))
+      fencedWrite(db, handle, () => {
+        db.prepare("UPDATE outbox SET last_error = 'superseded' WHERE id = ? AND status = 'pending'").run(row.id)
+        if (attempt && (attempt.status !== 'running' && attempt.status !== 'pending' || attempt.task_status === 'dropped')) {
+          db.prepare("UPDATE attempts SET status = 'interrupted', ended_at = ? WHERE id = ? AND status IN ('pending','running')").run(new Date(nowMs).toISOString(), attemptId)
+          closeReservation(db, attemptId, nowMs)
+        }
+      })
       return
     }
     const prerequisite = db.prepare('SELECT status FROM outbox WHERE idempotency_key = ?').get(`worktree.ensure:${attemptId}`) as { status: string } | undefined
@@ -146,6 +160,7 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
       db.prepare('UPDATE workers SET state = ?, ended_at = ? WHERE attempt_id = ?').run(workerState, now, attemptId)
       db.prepare("UPDATE attempts SET status = 'killed', ended_at = ? WHERE id = ? AND status IN ('pending','running')").run(now, attemptId)
       db.prepare("UPDATE outbox SET status = 'done', last_error = 'superseded', updated_at = ? WHERE idempotency_key = ? AND status = 'pending'").run(now, `attempt.start:${attemptId}`)
+      closeReservation(db, attemptId, nowMs)
     })
   }
   const runEffects = async () => { await runDue(db, handle, handlers, nowMs, options); failExhaustedEffects(db, handle, nowMs) }
@@ -157,21 +172,22 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
   await phase('dispatch-tasks', deps.wrapDispatchTasks, async () => {
     // Kill commands applied this tick before creating any new work.
     await runEffects()
-    fencedWrite(db, handle, () => {
+    {
       let released: boolean
       do {
         released = false
         const plan = planDispatch(dispatchInput(db, nowMs))
         for (const id of plan.block) {
-          db.prepare("UPDATE tasks SET status = 'blocked', updated_at = ? WHERE id = ? AND status = 'ready'").run(new Date(nowMs).toISOString(), id)
+          fencedWrite(db, handle, () => db.prepare("UPDATE tasks SET status = 'blocked', updated_at = ? WHERE id = ? AND status = 'ready'").run(new Date(nowMs).toISOString(), id))
         }
         for (const id of plan.schedule) {
-          scheduleAttempt(db, handle, id, stateDir, nowMs)
+          const scheduled = scheduleAttempt(db, handle, id, stateDir, nowMs)
+          if (scheduled?.ok && options?.fault === 'quota-after-reserve') triggerFault(options.fault)
           const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id) as { status: string }
           if (task.status === 'failed') released = true
         }
       } while (released)
-    })
+    }
     await runEffects()
   })
   await phase('worker-liveness', deps.wrapWorkerLiveness, async () => {
@@ -188,6 +204,7 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
               const now = new Date(nowMs).toISOString()
               db.prepare("UPDATE workers SET state = 'lost', ended_at = ? WHERE attempt_id = ?").run(now, worker.id)
               db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'lost', ended_at = ? WHERE id = ?").run(now, worker.id)
+              closeReservation(db, worker.id, nowMs)
               db.prepare("UPDATE tasks SET status = 'ready', updated_at = ? WHERE id = ? AND status = 'progress'").run(now, worker.task_id)
             })
             continue
@@ -196,6 +213,7 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
             const now = new Date(nowMs).toISOString()
             db.prepare('UPDATE workers SET state = ?, ended_at = ? WHERE attempt_id = ?').run(killed.result === 'killed' ? 'killed' : 'lost', now, worker.id)
             db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'timeout', ended_at = ? WHERE id = ?").run(now, worker.id)
+            closeReservation(db, worker.id, nowMs)
             retryTask(db, worker.task_id, worker.id, nowMs)
           })
           continue
@@ -208,6 +226,7 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
           const now = new Date(nowMs).toISOString()
           db.prepare("UPDATE workers SET state = 'lost', ended_at = ? WHERE attempt_id = ?").run(now, worker.id)
           db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'lost', ended_at = ? WHERE id = ?").run(now, worker.id)
+          closeReservation(db, worker.id, nowMs)
           db.prepare("UPDATE tasks SET status = 'ready', updated_at = ? WHERE id = ? AND status = 'progress'").run(now, worker.task_id)
         })
       }
@@ -221,7 +240,7 @@ export async function runTick(db: DatabaseSync, handle: SupervisorLeaseHandle, d
   const plan = planDispatch(input)
   const byId = new Map(input.tasks.map((task) => [task.id, task]))
   const busy = plan.schedule.length > 0 || plan.block.length > 0 || plan.wait.some((wait) =>
-    wait.reason === 'scope' || wait.reason === 'backoff' ||
+    wait.reason === 'scope' || wait.reason === 'backoff' || wait.reason === 'slots' || (wait.reason === 'quota' && wait.retryAtMs != null) ||
     (wait.reason === 'deps' && wait.on.some((id) => ['ready', 'progress'].includes(byId.get(id)?.status ?? ''))))
   return { idle: !polled && !pending && !busy }
 }
