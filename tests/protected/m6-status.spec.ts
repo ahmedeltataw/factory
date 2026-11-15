@@ -204,13 +204,13 @@ describe('M6-07 Protected Tests: Status of GitHub intake', () => {
     }
 
     const status = readStatus(dir, { nowMs: 1000, staleAfterMs: 500 }) as unknown as StatusWithGitHub
-    expect(status.schemaVersion).toBe(8)
+    expect(status.schemaVersion).toBe(9)
     expect(status.github).toBeNull()
 
     const res = run(dir, '--json')
     expect(res.status).toBe(0)
     const json = JSON.parse(res.stdout)
-    expect(json.schemaVersion).toBe(8)
+    expect(json.schemaVersion).toBe(9)
     expect(json.github).toBeNull()
   })
 
@@ -376,7 +376,7 @@ describe('M6-07 Protected Tests: Status of GitHub intake', () => {
     }
 
     const status = readStatus(dir, { nowMs: 1000, staleAfterMs: 500 }) as unknown as StatusWithGitHub
-    expect(status.schemaVersion).toBe(8)
+    expect(status.schemaVersion).toBe(9)
     expect(status.github).toBeDefined()
     expect(status.github).not.toBeNull()
 
@@ -441,7 +441,7 @@ describe('M6-07 Protected Tests: Status of GitHub intake', () => {
     const res = run(dir, '--json')
     expect(res.status).toBe(0)
     const json = JSON.parse(res.stdout)
-    expect(json.schemaVersion).toBe(8)
+    expect(json.schemaVersion).toBe(9)
     expect(json.github).toEqual(gh)
 
     // Verify no text column anywhere in JSON or Arabic outputs
