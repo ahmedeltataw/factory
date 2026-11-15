@@ -35,6 +35,15 @@ Hard rules:
 - Free or external models (OpenCode free, Muse) never receive client or confidential data.
 - Never read or edit `C:/Users/DownTown/.codex`.
 
+## Lead pace rules (owner, 2026-11-15; apply in every milestone)
+
+- Never block in a long polling or sleep loop. Dispatch CI (verify and mutation), then continue with the next card or step at once; read the result later with one quick check. A foreground wait is allowed only for a run that needs a few minutes and has nothing else to do.
+- Run independent cards in parallel (protected tests of the next card while the current card is on CI or in review). A card that shares a file with another (for example `cli/main.ts`) waits only for the build, not for its protected tests.
+- Put the known traps in every builder brief from the start so they do not cost a round: cheap tests on Windows CI (30 s timeout; one store per property with SAVEPOINT/ROLLBACK, never a store per run), no DELETE on `quota_reservations`, do not weaken an assertion to pass, fixtures must respect the live-attempt unique index.
+- A small fix (one line or one message) is checked by `git diff` and does not need a full re-review; a logic change goes back to the reviewer.
+- Keep Lead output small: one result line per gate, no log dumps, no re-reading files already read.
+- Keep the Telegram listener (`node briefs/tg.mjs wait`) running, follow the group, and answer Muse with @Muse; keep `briefs/lead-status.md` current.
+
 ## Card workflow
 
 1. The Lead adds the card to `docs/milestones/M<n>.md`: allowed paths, CHK lines, builder, reviewer, risk.
