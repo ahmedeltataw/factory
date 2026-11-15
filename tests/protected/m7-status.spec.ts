@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it } from 'vitest'
 import { openStore } from '../../supervisor/src/app/store.ts'
-import { budgetUsage } from '../../supervisor/src/app/quota.ts'
+import { budgetUsage, check } from '../../supervisor/src/app/quota.ts'
 import { formatStatus, readStatus, type Status } from '../../supervisor/src/app/status.ts'
 
 type Additions = { limits: null | { maxParallel: number; running: number; waitingSlots: number }; quota: null | { windows: Array<{ provider: string; windowMs: number; maxUnits: number; used: number; resetsAt: string | null }> }; budget: null | { caps: Array<{ level: string; key: string; cap: number; used: number; pct: number; state: string; source: string }> }; dispatch: string }
@@ -60,19 +60,35 @@ it('CHK-M7-07-a: exact additions, window boundary, ordered caps and read-only sn
 it('CHK-M7-07-a: quota and budget waits set dispatch with budget precedence', () => {
   const { dir, db } = fixture()
   try {
-    task(db, 'used-q', 'done', 'q'); task(db, 'used-b', 'done', 'b'); task(db, 'quota', 'ready', 'q'); task(db, 'budget', 'ready', 'b')
+    task(db, 'used-q', 'done', 'q'); task(db, 'used-b', 'done', 'b'); task(db, 'quota', 'ready', 'q'); task(db, 'budget', 'ready', 'b'); task(db, 'both', 'ready', 'q')
     reservation(db, 1, 'used-q', 'q', 'settled', 99000); reservation(db, 2, 'used-b', 'b', 'settled', 99000)
-    db.exec("INSERT INTO quota_windows VALUES ('p','q',10000,1,'now'); INSERT INTO budget_caps VALUES ('p','task','budget',1,'now')")
+    db.exec("INSERT INTO quota_windows VALUES ('p','q',10000,1,'now'); INSERT INTO budget_caps VALUES ('p','task','budget',1,'now'),('p','task','both',1,'now')")
     // The task cap must be consumed by the same task.
-    reservation(db, 3, 'budget', 'b', 'settled', 99000)
+    reservation(db, 3, 'budget', 'b', 'settled', 99000); reservation(db, 4, 'both', 'q', 'settled', 99000)
     let status = snapshot(dir)
     expect(status.tasks?.find(t => t.id === 'quota')?.waiting).toEqual({ reason: 'quota', on: [] })
     expect(status.tasks?.find(t => t.id === 'budget')?.waiting).toEqual({ reason: 'budget', on: [] })
+    expect(status.tasks?.find(t => t.id === 'both')?.waiting).toEqual({ reason: 'quota', on: [] })
     expect(status.dispatch).toBe('paused-budget')
-    db.exec("DELETE FROM budget_caps WHERE level='task'")
+    db.exec("DELETE FROM budget_caps WHERE level='task'; UPDATE tasks SET status='done' WHERE id='both'")
     status = snapshot(dir); expect(status.dispatch).toBe('waiting-quota')
     db.exec("DELETE FROM quota_windows WHERE provider='q'")
     expect(snapshot(dir).dispatch).toBe('open')
+  } finally { db.close() }
+})
+
+it('CHK-M7-07-a: ready task wait reasons match quota check', () => {
+  const { dir, db } = fixture()
+  try {
+    task(db, 'free', 'ready', 'free'); task(db, 'quota', 'ready', 'q'); task(db, 'budget', 'ready', 'b'); task(db, 'both', 'ready', 'q')
+    reservation(db, 1, 'quota', 'q', 'settled', 99000); reservation(db, 2, 'budget', 'b', 'settled', 99000); reservation(db, 3, 'both', 'q', 'settled', 99000)
+    db.exec("INSERT INTO quota_windows VALUES ('p','q',10000,1,'now'); INSERT INTO budget_caps VALUES ('p','task','budget',1,'now'),('p','task','both',1,'now')")
+    const status = snapshot(dir)
+    for (const id of ['free', 'quota', 'budget', 'both']) {
+      const result = check(db, id, nowMs)
+      const waiting = status.tasks?.find(t => t.id === id)?.waiting
+      expect(waiting?.reason ?? null, id).toBe(result.ok ? null : result.reason)
+    }
   } finally { db.close() }
 })
 
@@ -131,9 +147,9 @@ it('CHK-M7-07-c: Arabic output presents facts without remaining or token wording
 it('CHK-M7-07-c: Arabic dispatch lines distinguish open, budget and quota waits', () => {
   const { dir, db } = fixture()
   try {
-    task(db, 'used', 'done'); task(db, 'ready')
-    reservation(db, 1, 'used', 'default', 'settled', 99000)
-    db.exec("INSERT INTO budget_caps VALUES ('p','project','',1,'now'); INSERT INTO quota_windows VALUES ('p','default',10000,1,'now')")
+    task(db, 'used', 'done'); task(db, 'ready'); task(db, 'budget-ready', 'ready', 'b')
+    reservation(db, 1, 'used', 'default', 'settled', 99000); reservation(db, 2, 'budget-ready', 'b', 'settled', 99000)
+    db.exec("INSERT INTO budget_caps VALUES ('p','task','budget-ready',1,'now'); INSERT INTO quota_windows VALUES ('p','default',10000,1,'now')")
     const budget = snapshot(dir)
     expect(budget.dispatch).toBe('paused-budget')
     db.exec('DELETE FROM budget_caps')
