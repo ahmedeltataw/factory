@@ -208,5 +208,72 @@ describe('M7-04 unit tests for budget caps and thresholds', () => {
         db.close()
       }
     })
+
+    it('regression: reservation for task in another project is not counted in p1 budgetUsage or check across scopes', () => {
+      const db = createStore()
+      try {
+        createProject(db, 'p1')
+        createProject(db, 'p2')
+
+        // Task and attempt in p2
+        createTask(db, 't-p2', 'p2', 'development')
+        db.prepare(
+          "INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation, started_at) VALUES ('a-p2', 't-p2', 1, 'running', 1, 'now')"
+        ).run()
+
+        // Foreign reservation row with project_id p1 pointing at that p2 task (explicit columns; FKs allow it)
+        db.prepare(
+          "INSERT INTO quota_reservations (id, project_id, attempt_id, provider, units, state, reserved_at_ms, closed_at_ms) VALUES ('r-foreign', 'p1', 'a-p2', 'default', 1, 'reserved', 1000, null)"
+        ).run()
+
+        // p1 tasks: t-p1 has a normal reservation, t-p1-next has none
+        createTask(db, 't-p1', 'p1', 'development')
+        db.prepare(
+          "INSERT INTO attempts (id, task_id, attempt_no, status, lease_generation, started_at) VALUES ('a-p1', 't-p1', 1, 'running', 1, 'now')"
+        ).run()
+        // Normal p1 reservation
+        db.prepare(
+          "INSERT INTO quota_reservations (id, project_id, attempt_id, provider, units, state, reserved_at_ms, closed_at_ms) VALUES ('r-p1', 'p1', 'a-p1', 'default', 1, 'reserved', 1000, null)"
+        ).run()
+
+        createTask(db, 't-p1-next', 'p1', 'development')
+
+        // Caps for p1 across project, phase, and task scopes
+        setCap(db, 'p1', 'project', '', 2)
+        setCap(db, 'p1', 'phase', 'development', 2)
+        setCap(db, 'p1', 'task', 't-p1', 1)
+        setCap(db, 'p1', 'task', 't-p2', 1)
+
+        // 1. budgetUsage for p1:
+        // - project: cap 2, used 1 (r-p1 counts; r-foreign does not count)
+        // - phase development: cap 2, used 1 (r-p1 counts; r-foreign does not count)
+        // - task t-p1: cap 1, used 1 (normal p1 reservation counts)
+        // - task t-p2: cap 1, used 0 (r-foreign does not count for task scope)
+        expect(budgetUsage(db, 'p1')).toEqual([
+          { level: 'project', key: '', cap: 2, used: 1, pct: 50, state: 'ok' },
+          { level: 'phase', key: 'development', cap: 2, used: 1, pct: 50, state: 'ok' },
+          { level: 'task', key: 't-p1', cap: 1, used: 1, pct: 100, state: 'stop' },
+          { level: 'task', key: 't-p2', cap: 1, used: 0, pct: 0, state: 'ok' },
+        ])
+
+        // 2. check for p1:
+        // Task scope: normal p1 reservation on t-p1 is counted -> used (1) + 1 = 2 > cap (1) -> refused
+        expect(check(db, 't-p1', 1000)).toEqual({ ok: false, reason: 'budget', retryAtMs: null })
+
+        // Project and phase scopes: for t-p1-next, used is 1 (only r-p1), so used (1) + 1 = 2 <= cap (2) -> allowed
+        // (If r-foreign was counted, used would be 2, and 2 + 1 = 3 > 2 -> would have been refused)
+        expect(check(db, 't-p1-next', 1000)).toEqual({ ok: true })
+
+        // When project and phase caps are 1, check on t-p1-next is refused because normal r-p1 counts (used=1)
+        db.prepare("UPDATE budget_caps SET cap_units = 1 WHERE project_id = 'p1' AND level = 'project'").run()
+        expect(check(db, 't-p1-next', 1000)).toEqual({ ok: false, reason: 'budget', retryAtMs: null })
+
+        db.prepare("UPDATE budget_caps SET cap_units = 2 WHERE project_id = 'p1' AND level = 'project'").run()
+        db.prepare("UPDATE budget_caps SET cap_units = 1 WHERE project_id = 'p1' AND level = 'phase'").run()
+        expect(check(db, 't-p1-next', 1000)).toEqual({ ok: false, reason: 'budget', retryAtMs: null })
+      } finally {
+        db.close()
+      }
+    })
   })
 })

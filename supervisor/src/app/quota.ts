@@ -23,7 +23,7 @@ export function budgetState(used: number, cap: number): { pct: number; state: Bu
 
 function countBudgetUsage(db: DatabaseSync, projectId: string, level: BudgetLevel, key: string): number {
   const row = db.prepare(
-    "SELECT COALESCE(SUM(r.units), 0) AS used FROM quota_reservations r JOIN attempts a ON a.id = r.attempt_id JOIN tasks t ON t.id = a.task_id WHERE r.project_id = ? AND r.state IN ('reserved','settled') AND (? = 'project' OR (? = 'phase' AND t.phase = ?) OR (? = 'task' AND t.id = ?))"
+    "SELECT COALESCE(SUM(r.units), 0) AS used FROM quota_reservations r JOIN attempts a ON a.id = r.attempt_id JOIN tasks t ON t.id = a.task_id WHERE t.project_id = r.project_id AND r.project_id = ? AND r.state IN ('reserved','settled') AND (? = 'project' OR (? = 'phase' AND t.phase = ?) OR (? = 'task' AND t.id = ?))"
   ).get(projectId, level, level, key, level, key) as { used: number }
   return row.used
 }
