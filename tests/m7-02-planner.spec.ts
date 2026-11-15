@@ -267,6 +267,47 @@ describe('M7-02 planner slots and gates', () => {
         { id: 't-g', reason: 'quota', on: [], retryAtMs: 3000 },
       ])
     })
+
+    it('does not treat inherited Object.prototype properties as gates', () => {
+      const specialIds = ['constructor', 'toString', 'hasOwnProperty', '__proto__']
+      const tasks = specialIds.map((id) => makeTask(id))
+
+      const resEmpty = planDispatch({
+        nowMs: 100,
+        phases,
+        tasks,
+        gates: {},
+      })
+      expect(resEmpty.schedule).toEqual(specialIds)
+      expect(resEmpty.wait).toEqual([])
+      expect(resEmpty.block).toEqual([])
+
+      const resOther = planDispatch({
+        nowMs: 100,
+        phases,
+        tasks,
+        gates: {
+          other: { reason: 'quota' as const, retryAtMs: null },
+        },
+      })
+      expect(resOther.schedule).toEqual(specialIds)
+      expect(resOther.wait).toEqual([])
+      expect(resOther.block).toEqual([])
+
+      const resGated = planDispatch({
+        nowMs: 100,
+        phases,
+        tasks,
+        gates: {
+          constructor: { reason: 'quota' as const, retryAtMs: 1234 },
+        },
+      })
+      expect(resGated.schedule).toEqual(['toString', 'hasOwnProperty', '__proto__'])
+      expect(resGated.wait).toEqual([
+        { id: 'constructor', reason: 'quota', on: [], retryAtMs: 1234 },
+      ])
+      expect(resGated.block).toEqual([])
+    })
   })
 
   describe('purity and determinism', () => {

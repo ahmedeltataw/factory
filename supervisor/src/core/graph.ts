@@ -213,7 +213,7 @@ export function planDispatch(input: DispatchInput): DispatchPlan<WaitReason> {
     }
 
     // 6. Task in gates -> wait quota / budget. The task does not join held.
-    const gate = input.gates?.[task.id]
+    const gate = input.gates && Object.hasOwn(input.gates, task.id) ? input.gates[task.id] : undefined
     if (gate) {
       wait.push({
         id: task.id,
