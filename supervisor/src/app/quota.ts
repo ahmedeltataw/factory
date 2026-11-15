@@ -3,6 +3,49 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { SupervisorLeaseHandle } from './supervisor-lease.ts'
 
 export type QuotaCheck = { ok: true } | { ok: false; reason: 'quota' | 'budget'; retryAtMs: number | null }
+export type BudgetStatus = 'ok' | 'warn' | 'fallback-needed' | 'stop'
+export type BudgetLevel = 'project' | 'phase' | 'task'
+
+export type BudgetUsageRow = {
+  level: BudgetLevel
+  key: string
+  cap: number
+  used: number
+  pct: number
+  state: BudgetStatus
+}
+
+export function budgetState(used: number, cap: number): { pct: number; state: BudgetStatus } {
+  const pct = Math.floor((100 * used) / cap)
+  const state: BudgetStatus = pct >= 100 ? 'stop' : pct >= 90 ? 'fallback-needed' : pct >= 70 ? 'warn' : 'ok'
+  return { pct, state }
+}
+
+function countBudgetUsage(db: DatabaseSync, projectId: string, level: BudgetLevel, key: string): number {
+  const row = db.prepare(
+    "SELECT COALESCE(SUM(r.units), 0) AS used FROM quota_reservations r JOIN attempts a ON a.id = r.attempt_id JOIN tasks t ON t.id = a.task_id WHERE t.project_id = r.project_id AND r.project_id = ? AND r.state IN ('reserved','settled') AND (? = 'project' OR (? = 'phase' AND t.phase = ?) OR (? = 'task' AND t.id = ?))"
+  ).get(projectId, level, level, key, level, key) as { used: number }
+  return row.used
+}
+
+export function budgetUsage(db: DatabaseSync, projectId: string): BudgetUsageRow[] {
+  const caps = db.prepare(
+    "SELECT level, key, cap_units FROM budget_caps WHERE project_id = ? ORDER BY CASE level WHEN 'project' THEN 1 WHEN 'phase' THEN 2 WHEN 'task' THEN 3 END, key ASC"
+  ).all(projectId) as Array<{ level: BudgetLevel; key: string; cap_units: number }>
+
+  return caps.map((row) => {
+    const used = countBudgetUsage(db, projectId, row.level, row.key)
+    const { pct, state } = budgetState(used, row.cap_units)
+    return {
+      level: row.level,
+      key: row.key,
+      cap: row.cap_units,
+      used,
+      pct,
+      state,
+    }
+  })
+}
 
 export function check(db: DatabaseSync, taskId: string, nowMs: number): QuotaCheck {
   const task = db.prepare('SELECT project_id, provider, phase FROM tasks WHERE id = ?').get(taskId) as { project_id: string; provider: string; phase: string } | undefined
@@ -15,8 +58,8 @@ export function check(db: DatabaseSync, taskId: string, nowMs: number): QuotaChe
   for (const [level, key] of [['task', taskId], ['phase', task.phase], ['project', '']] as const) {
     const cap = db.prepare('SELECT cap_units FROM budget_caps WHERE project_id = ? AND level = ? AND key = ?').get(task.project_id, level, key) as { cap_units: number } | undefined
     if (!cap) continue
-    const usage = db.prepare(`SELECT COALESCE(SUM(r.units), 0) AS used FROM quota_reservations r JOIN attempts a ON a.id = r.attempt_id JOIN tasks t ON t.id = a.task_id WHERE r.project_id = ? AND r.state IN ('reserved','settled') AND (? = 'project' OR (? = 'phase' AND t.phase = ?) OR (? = 'task' AND t.id = ?))`).get(task.project_id, level, level, key, level, key) as { used: number }
-    if (usage.used + 1 > cap.cap_units) return { ok: false, reason: 'budget', retryAtMs: null }
+    const used = countBudgetUsage(db, task.project_id, level, key)
+    if (used + 1 > cap.cap_units) return { ok: false, reason: 'budget', retryAtMs: null }
   }
   return { ok: true }
 }
