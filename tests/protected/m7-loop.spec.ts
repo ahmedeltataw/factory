@@ -226,7 +226,7 @@ describe('M7-03 loop wiring contracts', () => {
       db.prepare("INSERT INTO quota_windows (project_id, provider, window_ms, max_units, updated_at) VALUES ('p1', 'default', 10000, 1, 'now')").run()
 
       // Seed an existing settled reservation at nowMs = 2000 (leaves window at 12000)
-      createTask(db, 't-seed', 'p1', { provider: 'default' })
+      createTask(db, 't-seed', 'p1', { status: 'done', provider: 'default' })
       createAttempt(db, 'a-seed', 't-seed', { status: 'succeeded' })
       insertReservation(db, 'r-seed', 'p1', 'a-seed', 'default', 'settled', 2000, 2500)
 
@@ -305,9 +305,8 @@ describe('M7-03 loop wiring contracts', () => {
       `).run(JSON.stringify({ attemptId: 'a1', taskId: 't1' }))
 
       // Restart supervisor in generation 2
-      const leaseRow1 = db.prepare("SELECT owner_id, generation, heartbeat_ms FROM supervisor_lease WHERE id = 1").get() as { owner_id: string; generation: number; heartbeat_ms: number }
-      const takeover1 = { ownerId: leaseRow1.owner_id, generation: leaseRow1.generation, heartbeatMs: leaseRow1.heartbeat_ms }
-      const handle2 = acquireSupervisor(db, stateDir, { nowMs: 2000, staleAfterMs: 300000, takeover: takeover1 })
+      handle1.release(2000)
+      const handle2 = acquireSupervisor(db, stateDir, { nowMs: 2000, staleAfterMs: 300000 })
       await reconcileWorkers(db, handle2, deps, 2000)
 
       // Verification:
@@ -395,9 +394,8 @@ describe('M7-03 loop wiring contracts', () => {
       insertReservation(db, 'r1', 'p1', 'a1', 'default', 'reserved', 1000)
 
       // Restart supervisor in generation 2 at nowMs = 2000
-      const leaseRow1 = db.prepare("SELECT owner_id, generation, heartbeat_ms FROM supervisor_lease WHERE id = 1").get() as { owner_id: string; generation: number; heartbeat_ms: number }
-      const takeover1 = { ownerId: leaseRow1.owner_id, generation: leaseRow1.generation, heartbeatMs: leaseRow1.heartbeat_ms }
-      const handle2 = acquireSupervisor(db, stateDir, { nowMs: 2000, staleAfterMs: 300000, takeover: takeover1 })
+      handle1.release(2000)
+      const handle2 = acquireSupervisor(db, stateDir, { nowMs: 2000, staleAfterMs: 300000 })
       await reconcileWorkers(db, handle2, deps, 2000)
 
       // 1. Quota exhausted:
@@ -449,29 +447,39 @@ describe('M7-03 loop wiring contracts', () => {
 
       // 1. Kill a running attempt gives settled and counts
       db.prepare("INSERT INTO quota_windows (project_id, provider, window_ms, max_units, updated_at) VALUES ('p1', 'p-kill-run', 10000, 1, 'now')").run()
-      createTask(db, 't-kill-run', 'p1', { provider: 'p-kill-run' })
-      createAttempt(db, 'a-kill-run', 't-kill-run', { status: 'running' })
+      createTask(db, 't-kill-run', 'p1', { status: 'progress', provider: 'p-kill-run' })
+      createAttempt(db, 'a-kill-run', 't-kill-run', { status: 'running', generation: handle.generation })
       db.prepare("INSERT INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES ('a-kill-run', 'nonce-kr', 101, 'running', '/w', 1000, 'now')").run()
       insertReservation(db, 'r-kill-run', 'p1', 'a-kill-run', 'p-kill-run', 'reserved', 1000)
+      db.prepare(`
+        INSERT INTO outbox (id, idempotency_key, kind, payload_json, status, tries, next_attempt_ms, created_at, updated_at)
+        VALUES ('o-kill-run', 'attempt.kill:a-kill-run', 'attempt.kill', ?, 'pending', 0, 1000, 'now', 'now')
+      `).run(JSON.stringify({ attemptId: 'a-kill-run' }))
 
-      closeReservation(db, 'a-kill-run', 1500)
+      await runTick(db, handle, deps, 1500)
+      expect(db.prepare("SELECT status FROM attempts WHERE id = 'a-kill-run'").get()).toEqual({ status: 'killed' })
       expect(db.prepare("SELECT state FROM quota_reservations WHERE id = 'r-kill-run'").get()).toEqual({ state: 'settled' })
       // Settled counts against quota
       expect(check(db, 't-kill-run', 2000)).toEqual({ ok: false, reason: 'quota', retryAtMs: 11000 })
 
       // 2. Kill a pending attempt gives released and does not count
       db.prepare("INSERT INTO quota_windows (project_id, provider, window_ms, max_units, updated_at) VALUES ('p1', 'p-kill-pen', 10000, 1, 'now')").run()
-      createTask(db, 't-kill-pen', 'p1', { provider: 'p-kill-pen' })
-      createAttempt(db, 'a-kill-pen', 't-kill-pen', { status: 'pending' })
+      createTask(db, 't-kill-pen', 'p1', { status: 'progress', provider: 'p-kill-pen' })
+      createAttempt(db, 'a-kill-pen', 't-kill-pen', { status: 'pending', generation: handle.generation })
       insertReservation(db, 'r-kill-pen', 'p1', 'a-kill-pen', 'p-kill-pen', 'reserved', 1000)
+      db.prepare(`
+        INSERT INTO outbox (id, idempotency_key, kind, payload_json, status, tries, next_attempt_ms, created_at, updated_at)
+        VALUES ('o-kill-pen', 'attempt.kill:a-kill-pen', 'attempt.kill', ?, 'pending', 0, 1000, 'now', 'now')
+      `).run(JSON.stringify({ attemptId: 'a-kill-pen' }))
 
-      closeReservation(db, 'a-kill-pen', 1500)
+      await runTick(db, handle, deps, 1600)
+      expect(db.prepare("SELECT status FROM attempts WHERE id = 'a-kill-pen'").get()).toEqual({ status: 'killed' })
       expect(db.prepare("SELECT state FROM quota_reservations WHERE id = 'r-kill-pen'").get()).toEqual({ state: 'released' })
       // Released does not count against quota
       expect(check(db, 't-kill-pen', 2000)).toEqual({ ok: true })
 
       // 3. An outbox-exhausted attempt gives released
-      createTask(db, 't-exhausted', 'p1', { provider: 'default' })
+      createTask(db, 't-exhausted', 'p1', { status: 'progress', provider: 'default' })
       createAttempt(db, 'a-exhausted', 't-exhausted', { status: 'pending' })
       insertReservation(db, 'r-exhausted', 'p1', 'a-exhausted', 'default', 'reserved', 1000)
       db.prepare(`
@@ -517,10 +525,15 @@ describe('M7-03 loop wiring contracts', () => {
 
       // 5. The superseded path of attempt.start gives released
       createTask(db, 't-superseded', 'p1', { status: 'dropped', provider: 'default' })
-      createAttempt(db, 'a-superseded', 't-superseded', { status: 'pending', generation: 1 })
+      createAttempt(db, 'a-superseded', 't-superseded', { status: 'pending', generation: handle.generation })
       insertReservation(db, 'r-superseded', 'p1', 'a-superseded', 'default', 'reserved', 1000)
+      db.prepare(`
+        INSERT INTO outbox (id, idempotency_key, kind, payload_json, status, tries, next_attempt_ms, created_at, updated_at)
+        VALUES ('o-superseded', 'attempt.start:a-superseded', 'attempt.start', ?, 'pending', 0, 1000, 'now', 'now')
+      `).run(JSON.stringify({ attemptId: 'a-superseded', taskId: 't-superseded' }))
 
-      closeReservation(db, 'a-superseded', 3500)
+      await runTick(db, handle, deps, 3200)
+      expect(db.prepare("SELECT status FROM attempts WHERE id = 'a-superseded'").get()).toEqual({ status: 'interrupted' })
       expect(db.prepare("SELECT state FROM quota_reservations WHERE id = 'r-superseded'").get()).toEqual({ state: 'released' })
     } finally {
       db.close()

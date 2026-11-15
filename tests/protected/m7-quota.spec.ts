@@ -140,20 +140,22 @@ describe('M7-03 quota ledger contracts', () => {
       // 1. Window boundary: a reservation made exactly window_ms ago no longer counts
       // Window is 5000ms, max_units is 1
       db.prepare("INSERT INTO quota_windows (project_id, provider, window_ms, max_units, updated_at) VALUES ('p1', 'default', 5000, 1, 'now')").run()
-      createTask(db, 't1', 'p1', { provider: 'default' })
-      createAttempt(db, 'a1', 't1')
-      insertReservation(db, 'r1', 'p1', 'a1', 'default', 'settled', 1000)
+      createTask(db, 't0', 'p1', { provider: 'default' })
+      createAttempt(db, 'a0', 't0')
+      insertReservation(db, 'r0', 'p1', 'a0', 'default', 'reserved', 1000)
 
       // At nowMs = 5999 (1000 > 5999 - 5000 = 999): reservation still counts
-      expect(check(db, 't1', 5999)).toEqual({ ok: false, reason: 'quota', retryAtMs: 6000 })
+      expect(check(db, 't0', 5999)).toEqual({ ok: false, reason: 'quota', retryAtMs: 6000 })
 
       // At nowMs = 6000 (1000 > 6000 - 5000 = 1000 is FALSE): reservation no longer counts
-      expect(check(db, 't1', 6000)).toEqual({ ok: true })
+      expect(check(db, 't0', 6000)).toEqual({ ok: true })
 
       // 2. Exact max_units accepted and max_units + 1 refused
       db.prepare("UPDATE quota_windows SET window_ms = 10000, max_units = 2 WHERE project_id = 'p1' AND provider = 'default'").run()
-      db.prepare("DELETE FROM quota_reservations WHERE id = 'r1'").run()
+      db.prepare("UPDATE quota_reservations SET state = 'released', closed_at_ms = 1000 WHERE id = 'r0'").run()
 
+      createTask(db, 't1', 'p1', { provider: 'default' })
+      createAttempt(db, 'a1', 't1')
       createTask(db, 't2', 'p1', { provider: 'default' })
       createAttempt(db, 'a2', 't2')
       createTask(db, 't3', 'p1', { provider: 'default' })
@@ -233,10 +235,14 @@ describe('M7-03 quota ledger contracts', () => {
 
       // 7. retryAtMs = when oldest counted reservation leaves window
       // 'default' provider window is 10000ms.
-      // Reset reservations to known times: r1 at 2000, r2 at 4000
-      db.prepare("DELETE FROM quota_reservations WHERE project_id = 'p1' AND provider = 'default'").run()
-      insertReservation(db, 'r-old', 'p1', 'a1', 'default', 'settled', 2000)
-      insertReservation(db, 'r-new', 'p1', 'a2', 'default', 'settled', 4000)
+      // Reset reservations to known times: r-old at 2000, r-new at 4000
+      db.prepare("UPDATE quota_reservations SET state = 'released', closed_at_ms = 1000 WHERE project_id = 'p1' AND provider = 'default' AND state = 'reserved'").run()
+      createTask(db, 't-old', 'p1', { provider: 'default' })
+      createAttempt(db, 'a-old', 't-old')
+      insertReservation(db, 'r-old', 'p1', 'a-old', 'default', 'settled', 2000)
+      createTask(db, 't-new', 'p1', { provider: 'default' })
+      createAttempt(db, 'a-new', 't-new')
+      insertReservation(db, 'r-new', 'p1', 'a-new', 'default', 'settled', 4000)
       // At nowMs = 5000, both count (max_units = 2). Oldest is 2000, leaves at 2000 + 10000 = 12000.
       expect(check(db, 't3', 5000)).toEqual({ ok: false, reason: 'quota', retryAtMs: 12000 })
 
@@ -419,8 +425,8 @@ describe('M7-03 quota ledger contracts', () => {
               }
               expect(refused).toBe(isGated)
               // Clean up test reservation so next in loop sees same initial state
-              db.prepare("DELETE FROM quota_reservations WHERE attempt_id = ?").run(aid)
-              db.prepare("DELETE FROM attempts WHERE id = ?").run(aid)
+              closeReservation(db, aid, nowMs)
+              db.prepare("UPDATE attempts SET status = 'killed', ended_at = 'now' WHERE id = ?").run(aid)
             }
           } finally {
             db.close()
