@@ -19,6 +19,7 @@ import {
   type DispatchTask,
   type PhaseInfo,
 } from '../core/graph.ts'
+import { check, budgetUsage, type BudgetLevel, type BudgetStatus } from './quota.ts'
 
 /** Storage schema version this status reader supports: the M4 storage schema (v6) / M5 (v7). */
 const SCHEMA_VERSION = 9
@@ -26,7 +27,7 @@ const SCHEMA_VERSION = 9
 export type LeaseState = 'active' | 'released'
 export type LeaseFreshness = 'fresh' | 'stale' | 'future' | 'not-applicable'
 export type PhaseStatus = 'locked' | 'open' | 'done'
-export type TaskWaitingReason = 'phase-locked' | 'deps' | 'scope' | 'backoff'
+export type TaskWaitingReason = 'phase-locked' | 'deps' | 'scope' | 'backoff' | 'slots' | 'quota' | 'budget'
 
 export interface Lease {
   readonly ownerId: string
@@ -137,6 +138,28 @@ export interface Status {
   readonly tasks?: readonly TaskStatusItem[]
   readonly outbox?: OutboxSummary
   readonly phases: readonly PhaseStatusItem[]
+  readonly limits: null | { readonly maxParallel: number; readonly running: number; readonly waitingSlots: number }
+  readonly quota: null | {
+    readonly windows: readonly {
+      readonly provider: string
+      readonly windowMs: number
+      readonly maxUnits: number
+      readonly used: number
+      readonly resetsAt: string | null
+    }[]
+  }
+  readonly budget: null | {
+    readonly caps: readonly {
+      readonly level: BudgetLevel
+      readonly key: string
+      readonly cap: number
+      readonly used: number
+      readonly pct: number
+      readonly state: BudgetStatus
+      readonly source: 'counted'
+    }[]
+  }
+  readonly dispatch: 'open' | 'waiting-quota' | 'paused-budget'
 }
 
 export interface ReadStatusOptions {
@@ -232,6 +255,78 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
       const masterRows = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ readonly name: unknown }>
       const tableNames = new Set(masterRows.map(r => String(r.name)))
       const hasV5Tables = tableNames.has('command_outcomes') || tableNames.has('tasks') || tableNames.has('outbox')
+
+      if (tableNames.has('project_limits')) {
+        const rows = db.prepare('SELECT max_parallel FROM project_limits').all() as Array<{
+          readonly max_parallel: unknown
+        }>
+        for (const row of rows) {
+          if (!isPositiveSafeInteger(row.max_parallel)) {
+            throw new Error('status: malformed project_limits row')
+          }
+        }
+      }
+
+      if (tableNames.has('quota_windows')) {
+        const rows = db.prepare('SELECT window_ms, max_units FROM quota_windows').all() as Array<{
+          readonly window_ms: unknown
+          readonly max_units: unknown
+        }>
+        for (const row of rows) {
+          if (!isPositiveSafeInteger(row.max_units)) {
+            throw new Error('status: malformed quota_windows max_units')
+          }
+          if (
+            typeof row.window_ms !== 'number' ||
+            !Number.isSafeInteger(row.window_ms) ||
+            row.window_ms < 1000
+          ) {
+            throw new Error('status: malformed quota_windows window_ms')
+          }
+        }
+      }
+
+      if (tableNames.has('budget_caps')) {
+        const rows = db.prepare('SELECT level, cap_units FROM budget_caps').all() as Array<{
+          readonly level: unknown
+          readonly cap_units: unknown
+        }>
+        for (const row of rows) {
+          if (row.level !== 'project' && row.level !== 'phase' && row.level !== 'task') {
+            throw new Error(`status: invalid budget level ${String(row.level)}`)
+          }
+          if (!isPositiveSafeInteger(row.cap_units)) {
+            throw new Error('status: malformed budget_caps cap_units')
+          }
+        }
+      }
+
+      if (tableNames.has('quota_reservations')) {
+        const rows = db.prepare('SELECT state FROM quota_reservations').all() as Array<{
+          readonly state: unknown
+        }>
+        for (const row of rows) {
+          if (row.state !== 'reserved' && row.state !== 'settled' && row.state !== 'released') {
+            throw new Error(`status: invalid quota reservation state ${String(row.state)}`)
+          }
+        }
+      }
+
+      let targetProjectId: string | null = null
+      if (tableNames.has('project_config')) {
+        const cfg = db.prepare('SELECT project_id FROM project_config LIMIT 1').get() as
+          | { readonly project_id?: unknown }
+          | undefined
+        if (cfg?.project_id && typeof cfg.project_id === 'string') {
+          targetProjectId = cfg.project_id
+        }
+      }
+      if (!targetProjectId && tableNames.has('projects')) {
+        const pr = db.prepare('SELECT id FROM projects LIMIT 1').get() as { readonly id?: unknown } | undefined
+        if (pr?.id && typeof pr.id === 'string') {
+          targetProjectId = pr.id
+        }
+      }
 
       const leaseRows = db
         .prepare('SELECT id, owner_id, generation, heartbeat_ms, status FROM supervisor_lease LIMIT 2')
@@ -519,21 +614,6 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
           }
         }
 
-        let targetProjectId: string | null = null
-        if (tableNames.has('project_config')) {
-          const cfg = db.prepare('SELECT project_id FROM project_config LIMIT 1').get() as
-            | { readonly project_id?: unknown }
-            | undefined
-          if (cfg?.project_id && typeof cfg.project_id === 'string') {
-            targetProjectId = cfg.project_id
-          }
-        }
-        if (!targetProjectId && tableNames.has('projects')) {
-          const pr = db.prepare('SELECT id FROM projects LIMIT 1').get() as { readonly id?: unknown } | undefined
-          if (pr?.id && typeof pr.id === 'string') {
-            targetProjectId = pr.id
-          }
-        }
         if (!targetProjectId && phaseProjects.length > 0) {
           targetProjectId = String(phaseProjects[0]!.project_id)
         }
@@ -754,17 +834,63 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
           ? loadedPhases.map((p) => ({ name: p.name, status: p.status }))
           : PHASES.map((name) => ({ name, status: 'open' }))
 
+        let maxParallel: number | null = null
+        if (targetProjectId && tableNames.has('project_limits')) {
+          const limRow = db
+            .prepare('SELECT max_parallel FROM project_limits WHERE project_id = ?')
+            .get(targetProjectId) as { readonly max_parallel?: unknown } | undefined
+          if (limRow && isPositiveSafeInteger(limRow.max_parallel)) {
+            maxParallel = Number(limRow.max_parallel)
+          }
+        }
+
+        const gates: Record<string, { reason: 'quota' | 'budget'; retryAtMs: number | null }> = {}
+        if (tableNames.has('quota_windows') && tableNames.has('budget_caps') && tableNames.has('quota_reservations')) {
+          for (const task of tasks) {
+            if (task.status === 'ready') {
+              if (targetProjectId) {
+                let budgetBlocked = false
+                for (const [level, key] of [['task', task.id], ['phase', task.phase], ['project', '']] as const) {
+                  const capRow = db
+                    .prepare('SELECT cap_units FROM budget_caps WHERE project_id = ? AND level = ? AND key = ?')
+                    .get(targetProjectId, level, key) as { cap_units: number } | undefined
+                  if (!capRow) continue
+                  const usageRow = db
+                    .prepare(
+                      "SELECT COALESCE(SUM(r.units), 0) AS used FROM quota_reservations r JOIN attempts a ON a.id = r.attempt_id JOIN tasks t ON t.id = a.task_id WHERE t.project_id = r.project_id AND r.project_id = ? AND r.state IN ('reserved','settled') AND (? = 'project' OR (? = 'phase' AND t.phase = ?) OR (? = 'task' AND t.id = ?))",
+                    )
+                    .get(targetProjectId, level, level, key, level, key) as { used: number } | undefined
+                  if ((usageRow?.used ?? 0) + 1 > capRow.cap_units) {
+                    budgetBlocked = true
+                    break
+                  }
+                }
+                if (budgetBlocked) {
+                  gates[task.id] = { reason: 'budget', retryAtMs: null }
+                  continue
+                }
+              }
+              const chk = check(db, task.id, nowMs)
+              if (!chk.ok) {
+                gates[task.id] = { reason: chk.reason, retryAtMs: chk.retryAtMs }
+              }
+            }
+          }
+        }
+
         const plan = planDispatch({
           nowMs,
           phases: dispatchPhases,
           tasks: dispatchTasks,
+          maxParallel,
+          gates,
         })
 
         for (const task of tasks) {
           if (task.status === 'ready') {
             const waitEntry = plan.wait.find((w) => w.id === task.id)
             ;(task as { waiting: TaskWaiting | null }).waiting = waitEntry
-              ? { reason: waitEntry.reason, on: waitEntry.on }
+              ? { reason: waitEntry.reason as TaskWaitingReason, on: waitEntry.on }
               : null
           } else {
             ;(task as { waiting: TaskWaiting | null }).waiting = null
@@ -838,6 +964,108 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
         }
       }
 
+      let limits: null | { readonly maxParallel: number; readonly running: number; readonly waitingSlots: number } = null
+      if (targetProjectId && tableNames.has('project_limits')) {
+        const limRow = db
+          .prepare('SELECT max_parallel FROM project_limits WHERE project_id = ?')
+          .get(targetProjectId) as { readonly max_parallel?: unknown } | undefined
+        if (limRow) {
+          const running = tasks.filter((t) => t.status === 'progress').length
+          const waitingSlots = tasks.filter((t) => t.status === 'ready' && t.waiting?.reason === 'slots').length
+          limits = {
+            maxParallel: Number(limRow.max_parallel),
+            running,
+            waitingSlots,
+          }
+        }
+      }
+
+      let quota: null | {
+        readonly windows: readonly {
+          readonly provider: string
+          readonly windowMs: number
+          readonly maxUnits: number
+          readonly used: number
+          readonly resetsAt: string | null
+        }[]
+      } = null
+      if (targetProjectId && tableNames.has('quota_windows')) {
+        const qRows = db
+          .prepare('SELECT provider, window_ms, max_units FROM quota_windows WHERE project_id = ? ORDER BY provider ASC')
+          .all(targetProjectId) as Array<{
+            readonly provider: unknown
+            readonly window_ms: unknown
+            readonly max_units: unknown
+          }>
+        if (qRows.length > 0) {
+          const hasReservations = tableNames.has('quota_reservations')
+          const windows = qRows.map((q) => {
+            const provider = String(q.provider)
+            const windowMs = Number(q.window_ms)
+            const maxUnits = Number(q.max_units)
+            let used = 0
+            let resetsAt: string | null = null
+            if (hasReservations) {
+              const resUsage = db
+                .prepare(
+                  "SELECT COALESCE(SUM(units), 0) AS used, MIN(reserved_at_ms) AS oldest FROM quota_reservations WHERE project_id = ? AND provider = ? AND state IN ('reserved', 'settled') AND reserved_at_ms > ?",
+                )
+                .get(targetProjectId, provider, nowMs - windowMs) as {
+                  readonly used?: unknown
+                  readonly oldest?: unknown
+                }
+              used = Number(resUsage?.used ?? 0)
+              if (used > 0 && resUsage?.oldest !== null && resUsage?.oldest !== undefined) {
+                resetsAt = new Date(Number(resUsage.oldest) + windowMs).toISOString()
+              }
+            }
+            return {
+              provider,
+              windowMs,
+              maxUnits,
+              used,
+              resetsAt,
+            }
+          })
+          quota = { windows }
+        }
+      }
+
+      let budget: null | {
+        readonly caps: readonly {
+          readonly level: BudgetLevel
+          readonly key: string
+          readonly cap: number
+          readonly used: number
+          readonly pct: number
+          readonly state: BudgetStatus
+          readonly source: 'counted'
+        }[]
+      } = null
+      if (targetProjectId && tableNames.has('budget_caps')) {
+        const rawCaps = budgetUsage(db, targetProjectId)
+        if (rawCaps.length > 0) {
+          budget = {
+            caps: rawCaps.map((c) => ({
+              level: c.level,
+              key: c.key,
+              cap: c.cap,
+              used: c.used,
+              pct: c.pct,
+              state: c.state,
+              source: 'counted' as const,
+            })),
+          }
+        }
+      }
+
+      let dispatch: 'open' | 'waiting-quota' | 'paused-budget' = 'open'
+      if (tasks.some((t) => t.status === 'ready' && t.waiting?.reason === 'budget')) {
+        dispatch = 'paused-budget'
+      } else if (tasks.some((t) => t.status === 'ready' && t.waiting?.reason === 'quota')) {
+        dispatch = 'waiting-quota'
+      }
+
       db.exec('COMMIT')
 
       const statusObj: Status = hasV5Tables
@@ -850,6 +1078,10 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
             tasks,
             outbox,
             phases: phasesList,
+            limits,
+            quota,
+            budget,
+            dispatch,
           }
         : {
             schemaVersion: SCHEMA_VERSION,
@@ -857,6 +1089,10 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
             recordedCommandCount,
             lease,
             phases: [],
+            limits,
+            quota,
+            budget,
+            dispatch,
           }
       return statusObj
     } catch (error) {
@@ -977,8 +1213,25 @@ function waitingReasonLabel(reason: string): string {
       return 'تعارض النطاق'
     case 'backoff':
       return 'فترة التراجع'
+    case 'slots':
+      return 'انتظار المقاعد'
+    case 'quota':
+      return 'انتظار الحصة'
+    case 'budget':
+      return 'انتظار الميزانية'
     default:
       return reason
+  }
+}
+
+function dispatchStatusLabel(dispatch: 'open' | 'waiting-quota' | 'paused-budget'): string {
+  switch (dispatch) {
+    case 'open':
+      return 'مفتوح'
+    case 'waiting-quota':
+      return 'بانتظار الحصة'
+    case 'paused-budget':
+      return 'متوقف مؤقتاً للميزانية'
   }
 }
 
@@ -1003,6 +1256,35 @@ export function formatStatus(status: Status): string {
     lines.push(
       `الملكية: المالك="${ownerId}", الجيل=${generation}, وقت النبض (Unix timestamp)=${heartbeatMs} ميلي ثانية, الحالة=${stateLabel}, حداثة النبض=${freshnessLabel(freshness)}, دليل الاستحواذ=${takeoverEvidence}`,
     )
+  }
+
+  lines.push(`حالة الإرسال: ${dispatchStatusLabel(status.dispatch)}`)
+
+  if (status.limits !== null && status.limits !== undefined) {
+    lines.push(
+      `الحدود المتوازية: الحد الأقصى=${status.limits.maxParallel}، قيد التشغيل=${status.limits.running}، في انتظار المقاعد=${status.limits.waitingSlots}`,
+    )
+  }
+
+  if (status.quota !== null && status.quota !== undefined && status.quota.windows.length > 0) {
+    for (const win of status.quota.windows) {
+      const reset = win.resetsAt ?? 'لا يوجد'
+      lines.push(
+        `الحصة: المزود=${win.provider}، النافذة=${win.windowMs} ميلي ثانية، الحد الأقصى=${win.maxUnits}، المستخدم=${win.used}، وقت إعادة الضبط=${reset}`,
+      )
+    }
+  }
+
+  if (status.budget !== null && status.budget !== undefined && status.budget.caps.length > 0) {
+    for (const cap of status.budget.caps) {
+      const levelStr = cap.level === 'project' ? 'المشروع' : cap.level === 'phase' ? 'المرحلة' : 'المهمة'
+      const stateStr =
+        cap.state === 'ok' ? 'سليم' : cap.state === 'warn' ? 'تحذير' : cap.state === 'fallback-needed' ? 'يلزم بديل' : 'توقف'
+      const keyPart = cap.key ? ` (${cap.key})` : ''
+      lines.push(
+        `الميزانية: المستوى=${levelStr}${keyPart}، الحد الأقصى=${cap.cap}، المستخدم=${cap.used}، النسبة=${cap.pct}%، الحالة=${stateStr}`,
+      )
+    }
   }
 
   const commands = (status as { readonly commands?: CommandsSummary }).commands
