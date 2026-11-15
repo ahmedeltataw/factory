@@ -295,7 +295,7 @@ async function runLimitsQuotaBudget(argv: readonly string[]): Promise<number> {
       return 0
     } finally { db.close() }
   } catch (error) {
-    process.stderr.write(`??\u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0623\u0645\u0631: ${error instanceof Error ? error.message : String(error)}\n`)
+    process.stderr.write(`\u062a\u0639\u0630\u0631 \u062a\u0646\u0641\u064a\u0630 \u0627\u0644\u0623\u0645\u0631: ${error instanceof Error ? error.message : String(error)}\n`)
     return 1
   }
 }
