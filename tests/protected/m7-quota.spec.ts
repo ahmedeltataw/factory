@@ -334,107 +334,117 @@ describe('M7-03 quota ledger contracts', () => {
       withWorker: fc.boolean(),
     })
 
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 1000, max: 15000 }), // windowMs
-        fc.integer({ min: 1, max: 4 }),        // maxUnits
-        fc.integer({ min: 20000, max: 50000 }), // nowMs
-        fc.array(reservationArb, { maxLength: 8 }),
-        fc.option(fc.integer({ min: 1, max: 6 }), { nil: null }), // optional budget cap
-        (windowMs, maxUnits, nowMs, rawReservations, budgetCap) => {
-          const dir = makeStateDir()
-          const dbPath = join(dir, 'state.sqlite')
-          const db = openStore(dbPath)
-          try {
-            setupProject(db, 'p1')
-            const handle = acquireSupervisor(db, dir, { nowMs, staleAfterMs: 300000 })
-
-            db.prepare("INSERT INTO quota_windows (project_id, provider, window_ms, max_units, updated_at) VALUES ('p1', 'default', ?, ?, 'now')").run(windowMs, maxUnits)
-            if (budgetCap !== null) {
-              db.prepare("INSERT INTO budget_caps (project_id, level, key, cap_units, updated_at) VALUES ('p1', 'project', '', ?, 'now')").run(budgetCap)
-            }
-
-            // Populate existing reservations
-            rawReservations.forEach((res, i) => {
-              const tid = `t-seed-${i}`
-              const aid = `a-seed-${i}`
-              createTask(db, tid, 'p1', { provider: 'default' })
-              createAttempt(db, aid, tid, { status: res.state === 'reserved' ? 'pending' : 'succeeded' })
-              if (res.withWorker) {
-                db.prepare("INSERT INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, ?, ?, 'running', '/w', ?, 'now')").run(aid, `nonce-${i}`, 1000 + i, nowMs + res.offsetMs)
-              }
-              insertReservation(db, `r-seed-${i}`, 'p1', aid, 'default', res.state, nowMs + res.offsetMs, res.state === 'reserved' ? null : nowMs + res.offsetMs + 100)
-            })
-
-            // Target task to test
-            const targetTaskId = 't-target'
-            const targetAttemptId = 'a-target'
-            createTask(db, targetTaskId, 'p1', { provider: 'default' })
-            createAttempt(db, targetAttemptId, targetTaskId, { status: 'pending' })
-
-            // 1. check agrees with reserve for the same DB state
-            const checkResult = check(db, targetTaskId, nowMs)
-
-            let reserveResult: { ok: true } | { ok: false; reason: 'quota' | 'budget'; retryAtMs: number | null } | void = undefined
-            let threw = false
+    const dir = makeStateDir()
+    const dbPath = join(dir, 'state.sqlite')
+    const db = openStore(dbPath)
+    let handle: SupervisorLeaseHandle | undefined
+    try {
+      handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 300000 })
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 1000, max: 15000 }), // windowMs
+          fc.integer({ min: 1, max: 4 }),        // maxUnits
+          fc.integer({ min: 20000, max: 50000 }), // nowMs
+          fc.array(reservationArb, { maxLength: 8 }),
+          fc.option(fc.integer({ min: 1, max: 6 }), { nil: null }), // optional budget cap
+          (windowMs, maxUnits, nowMs, rawReservations, budgetCap) => {
+            db.exec('SAVEPOINT prop')
             try {
-              reserveResult = doReserve(db, handle, targetTaskId, targetAttemptId, nowMs)
-            } catch {
-              threw = true
-            }
+              setupProject(db, 'p1')
 
-            if (checkResult.ok) {
-              expect(threw).toBe(false)
-              if (reserveResult) expect(reserveResult).toEqual({ ok: true })
-              const row = db.prepare("SELECT * FROM quota_reservations WHERE attempt_id = ?").get(targetAttemptId) as { state: string; units: number } | undefined
-              expect(row).toBeDefined()
-              expect(row?.state).toBe('reserved')
-              expect(row?.units).toBe(1)
-            } else {
-              if (!threw && reserveResult) {
-                expect(reserveResult.ok).toBe(false)
-                if (reserveResult.ok === false) {
-                  expect(reserveResult.reason).toBe(checkResult.reason)
-                  expect(reserveResult.retryAtMs).toBe(checkResult.retryAtMs)
+              db.prepare("INSERT INTO quota_windows (project_id, provider, window_ms, max_units, updated_at) VALUES ('p1', 'default', ?, ?, 'now')").run(windowMs, maxUnits)
+              if (budgetCap !== null) {
+                db.prepare("INSERT INTO budget_caps (project_id, level, key, cap_units, updated_at) VALUES ('p1', 'project', '', ?, 'now')").run(budgetCap)
+              }
+
+              // Populate existing reservations
+              rawReservations.forEach((res, i) => {
+                const tid = `t-seed-${i}`
+                const aid = `a-seed-${i}`
+                createTask(db, tid, 'p1', { provider: 'default' })
+                createAttempt(db, aid, tid, { status: res.state === 'reserved' ? 'pending' : 'succeeded' })
+                if (res.withWorker) {
+                  db.prepare("INSERT INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, ?, ?, 'running', '/w', ?, 'now')").run(aid, `nonce-${i}`, 1000 + i, nowMs + res.offsetMs)
                 }
-              }
-              const row = db.prepare("SELECT * FROM quota_reservations WHERE attempt_id = ?").get(targetAttemptId)
-              expect(row).toBeUndefined()
-            }
+                insertReservation(db, `r-seed-${i}`, 'p1', aid, 'default', res.state, nowMs + res.offsetMs, res.state === 'reserved' ? null : nowMs + res.offsetMs + 100)
+              })
 
-            // 2. Set of tasks loop puts in gates equals set of tasks reserve would refuse
-            const batchTasks = ['t-b1', 't-b2', 't-b3']
-            batchTasks.forEach((id) => createTask(db, id, 'p1', { provider: 'default' }))
+              // Target task to test
+              const targetTaskId = 't-target'
+              const targetAttemptId = 'a-target'
+              createTask(db, targetTaskId, 'p1', { provider: 'default' })
+              createAttempt(db, targetAttemptId, targetTaskId, { status: 'pending' })
 
-            const loopGates: Record<string, { reason: 'quota' | 'budget'; retryAtMs: number | null }> = {}
-            for (const id of batchTasks) {
-              const c = check(db, id, nowMs)
-              if (!c.ok) loopGates[id] = { reason: c.reason, retryAtMs: c.retryAtMs }
-            }
+              // 1. check agrees with reserve for the same DB state
+              const checkResult = check(db, targetTaskId, nowMs)
 
-            for (const id of batchTasks) {
-              const aid = `a-${id}`
-              createAttempt(db, aid, id, { status: 'pending' })
-              const isGated = Boolean(loopGates[id])
-              let refused = false
+              let reserveResult: { ok: true } | { ok: false; reason: 'quota' | 'budget'; retryAtMs: number | null } | void = undefined
+              let threw = false
               try {
-                const r = doReserve(db, handle, id, aid, nowMs)
-                if (r && r.ok === false) refused = true
+                reserveResult = doReserve(db, handle!, targetTaskId, targetAttemptId, nowMs)
               } catch {
-                refused = true
+                threw = true
               }
-              expect(refused).toBe(isGated)
-              // Clean up test reservation so next in loop sees same initial state
-              closeReservation(db, aid, nowMs)
-              db.prepare("UPDATE attempts SET status = 'killed', ended_at = 'now' WHERE id = ?").run(aid)
+
+              if (checkResult.ok) {
+                expect(threw).toBe(false)
+                if (reserveResult) expect(reserveResult).toEqual({ ok: true })
+                const row = db.prepare("SELECT * FROM quota_reservations WHERE attempt_id = ?").get(targetAttemptId) as { state: string; units: number } | undefined
+                expect(row).toBeDefined()
+                expect(row?.state).toBe('reserved')
+                expect(row?.units).toBe(1)
+              } else {
+                if (!threw && reserveResult) {
+                  expect(reserveResult.ok).toBe(false)
+                  if (reserveResult.ok === false) {
+                    expect(reserveResult.reason).toBe(checkResult.reason)
+                    expect(reserveResult.retryAtMs).toBe(checkResult.retryAtMs)
+                  }
+                }
+                const row = db.prepare("SELECT * FROM quota_reservations WHERE attempt_id = ?").get(targetAttemptId)
+                expect(row).toBeUndefined()
+              }
+
+              // 2. Set of tasks loop puts in gates equals set of tasks reserve would refuse
+              const batchTasks = ['t-b1', 't-b2', 't-b3']
+              batchTasks.forEach((id) => createTask(db, id, 'p1', { provider: 'default' }))
+
+              const loopGates: Record<string, { reason: 'quota' | 'budget'; retryAtMs: number | null }> = {}
+              for (const id of batchTasks) {
+                const c = check(db, id, nowMs)
+                if (!c.ok) loopGates[id] = { reason: c.reason, retryAtMs: c.retryAtMs }
+              }
+
+              for (const id of batchTasks) {
+                const aid = `a-${id}`
+                createAttempt(db, aid, id, { status: 'pending' })
+                const isGated = Boolean(loopGates[id])
+                let refused = false
+                try {
+                  const r = doReserve(db, handle!, id, aid, nowMs)
+                  if (r && r.ok === false) refused = true
+                } catch {
+                  refused = true
+                }
+                expect(refused).toBe(isGated)
+                // Clean up test reservation so next in loop sees same initial state
+                closeReservation(db, aid, nowMs)
+                db.prepare("UPDATE attempts SET status = 'killed', ended_at = 'now' WHERE id = ?").run(aid)
+              }
+            } finally {
+              db.exec('ROLLBACK TO prop')
+              db.exec('RELEASE prop')
             }
-          } finally {
-            db.close()
-          }
-        },
-      ),
-      { numRuns: 25 },
-    )
+          },
+        ),
+        { numRuns: 100 },
+      )
+    } finally {
+      try {
+        handle?.release(1000)
+      } catch {}
+      db.close()
+    }
   })
 
   it('CHK-M7-03-h: property: after any random sequence of start, finish, timeout, lost, kill, exhausted events no reserved row belongs to an attempt in a terminal status', () => {
@@ -451,90 +461,100 @@ describe('M7-03 quota ledger contracts', () => {
       code: fc.constantFrom(0, 1, 75),
     })
 
-    fc.assert(
-      fc.property(fc.array(eventArb, { minLength: 1, maxLength: 20 }), (events) => {
-        const dir = makeStateDir()
-        const dbPath = join(dir, 'state.sqlite')
-        const db = openStore(dbPath)
-        try {
-          setupProject(db, 'p1')
-          const handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 300000 })
+    const dir = makeStateDir()
+    const dbPath = join(dir, 'state.sqlite')
+    const db = openStore(dbPath)
+    let handle: SupervisorLeaseHandle | undefined
+    try {
+      handle = acquireSupervisor(db, dir, { nowMs: 1000, staleAfterMs: 300000 })
+      fc.assert(
+        fc.property(fc.array(eventArb, { minLength: 1, maxLength: 20 }), (events) => {
+          db.exec('SAVEPOINT prop')
+          try {
+            setupProject(db, 'p1')
 
-          createTask(db, 't-fuzz', 'p1', { provider: 'default' })
+            createTask(db, 't-fuzz', 'p1', { provider: 'default' })
 
-          let activeAttemptId: string | null = null
-          let attemptNo = 0
-          let currentTime = 1000
+            let activeAttemptId: string | null = null
+            let attemptNo = 0
+            let currentTime = 1000
 
-          for (const ev of events as Event[]) {
-            currentTime += 1000
+            for (const ev of events as Event[]) {
+              currentTime += 1000
 
-            if (ev.kind === 'start') {
-              if (!activeAttemptId) {
-                attemptNo++
-                activeAttemptId = `a-fuzz-${attemptNo}`
-                createAttempt(db, activeAttemptId, 't-fuzz', { attemptNo, status: 'pending' })
-                doReserve(db, handle, 't-fuzz', activeAttemptId, currentTime)
-              }
-            } else if (activeAttemptId) {
-              const attempt = db.prepare("SELECT status FROM attempts WHERE id = ?").get(activeAttemptId) as { status: string }
-              if (['pending', 'running'].includes(attempt.status)) {
-                switch (ev.kind) {
-                  case 'finish': {
-                    db.prepare("INSERT OR IGNORE INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, ?, ?, 'running', '/w', ?, 'now')").run(activeAttemptId, `nonce-${activeAttemptId}`, 2000, currentTime)
-                    db.prepare("UPDATE attempts SET status = ?, exit_code = ?, ended_at = 'now' WHERE id = ?").run(ev.code === 0 ? 'succeeded' : 'failed', ev.code, activeAttemptId)
-                    closeReservation(db, activeAttemptId, currentTime)
-                    activeAttemptId = null
-                    break
-                  }
-                  case 'timeout': {
-                    db.prepare("INSERT OR IGNORE INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, ?, ?, 'running', '/w', ?, 'now')").run(activeAttemptId, `nonce-${activeAttemptId}`, 2000, currentTime)
-                    db.prepare("UPDATE workers SET state = 'lost', ended_at = 'now' WHERE attempt_id = ?").run(activeAttemptId)
-                    db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'timeout', ended_at = 'now' WHERE id = ?").run(activeAttemptId)
-                    closeReservation(db, activeAttemptId, currentTime)
-                    activeAttemptId = null
-                    break
-                  }
-                  case 'lost': {
-                    db.prepare("INSERT OR IGNORE INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, ?, ?, 'running', '/w', ?, 'now')").run(activeAttemptId, `nonce-${activeAttemptId}`, 2000, currentTime)
-                    db.prepare("UPDATE workers SET state = 'lost', ended_at = 'now' WHERE attempt_id = ?").run(activeAttemptId)
-                    db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'lost', ended_at = 'now' WHERE id = ?").run(activeAttemptId)
-                    closeReservation(db, activeAttemptId, currentTime)
-                    activeAttemptId = null
-                    break
-                  }
-                  case 'kill': {
-                    db.prepare("UPDATE attempts SET status = 'killed', ended_at = 'now' WHERE id = ?").run(activeAttemptId)
-                    closeReservation(db, activeAttemptId, currentTime)
-                    activeAttemptId = null
-                    break
-                  }
-                  case 'exhausted': {
-                    db.prepare("UPDATE attempts SET status = 'failed', error_class = 'outbox:attempt.start', ended_at = 'now' WHERE id = ?").run(activeAttemptId)
-                    closeReservation(db, activeAttemptId, currentTime)
-                    activeAttemptId = null
-                    break
+              if (ev.kind === 'start') {
+                if (!activeAttemptId) {
+                  attemptNo++
+                  activeAttemptId = `a-fuzz-${attemptNo}`
+                  createAttempt(db, activeAttemptId, 't-fuzz', { attemptNo, status: 'pending' })
+                  doReserve(db, handle!, 't-fuzz', activeAttemptId, currentTime)
+                }
+              } else if (activeAttemptId) {
+                const attempt = db.prepare("SELECT status FROM attempts WHERE id = ?").get(activeAttemptId) as { status: string }
+                if (['pending', 'running'].includes(attempt.status)) {
+                  switch (ev.kind) {
+                    case 'finish': {
+                      db.prepare("INSERT OR IGNORE INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, ?, ?, 'running', '/w', ?, 'now')").run(activeAttemptId, `nonce-${activeAttemptId}`, 2000, currentTime)
+                      db.prepare("UPDATE attempts SET status = ?, exit_code = ?, ended_at = 'now' WHERE id = ?").run(ev.code === 0 ? 'succeeded' : 'failed', ev.code, activeAttemptId)
+                      closeReservation(db, activeAttemptId, currentTime)
+                      activeAttemptId = null
+                      break
+                    }
+                    case 'timeout': {
+                      db.prepare("INSERT OR IGNORE INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, ?, ?, 'running', '/w', ?, 'now')").run(activeAttemptId, `nonce-${activeAttemptId}`, 2000, currentTime)
+                      db.prepare("UPDATE workers SET state = 'lost', ended_at = 'now' WHERE attempt_id = ?").run(activeAttemptId)
+                      db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'timeout', ended_at = 'now' WHERE id = ?").run(activeAttemptId)
+                      closeReservation(db, activeAttemptId, currentTime)
+                      activeAttemptId = null
+                      break
+                    }
+                    case 'lost': {
+                      db.prepare("INSERT OR IGNORE INTO workers (attempt_id, nonce, pid, state, worktree_path, heartbeat_ms, started_at) VALUES (?, ?, ?, 'running', '/w', ?, 'now')").run(activeAttemptId, `nonce-${activeAttemptId}`, 2000, currentTime)
+                      db.prepare("UPDATE workers SET state = 'lost', ended_at = 'now' WHERE attempt_id = ?").run(activeAttemptId)
+                      db.prepare("UPDATE attempts SET status = 'interrupted', error_class = 'lost', ended_at = 'now' WHERE id = ?").run(activeAttemptId)
+                      closeReservation(db, activeAttemptId, currentTime)
+                      activeAttemptId = null
+                      break
+                    }
+                    case 'kill': {
+                      db.prepare("UPDATE attempts SET status = 'killed', ended_at = 'now' WHERE id = ?").run(activeAttemptId)
+                      closeReservation(db, activeAttemptId, currentTime)
+                      activeAttemptId = null
+                      break
+                    }
+                    case 'exhausted': {
+                      db.prepare("UPDATE attempts SET status = 'failed', error_class = 'outbox:attempt.start', ended_at = 'now' WHERE id = ?").run(activeAttemptId)
+                      closeReservation(db, activeAttemptId, currentTime)
+                      activeAttemptId = null
+                      break
+                    }
                   }
                 }
               }
-            }
 
-            // Invariant verification at every step of the lifecycle:
-            // No reserved row belongs to an attempt in a terminal status
-            const violations = db.prepare(`
-              SELECT r.id, r.attempt_id, a.status, r.state
-              FROM quota_reservations r
-              JOIN attempts a ON a.id = r.attempt_id
-              WHERE a.status IN ('succeeded', 'failed', 'interrupted', 'killed')
-                AND r.state = 'reserved'
-            `).all()
-            expect(violations).toEqual([])
+              // Invariant verification at every step of the lifecycle:
+              // No reserved row belongs to an attempt in a terminal status
+              const violations = db.prepare(`
+                SELECT r.id, r.attempt_id, a.status, r.state
+                FROM quota_reservations r
+                JOIN attempts a ON a.id = r.attempt_id
+                WHERE a.status IN ('succeeded', 'failed', 'interrupted', 'killed')
+                  AND r.state = 'reserved'
+              `).all()
+              expect(violations).toEqual([])
+            }
+          } finally {
+            db.exec('ROLLBACK TO prop')
+            db.exec('RELEASE prop')
           }
-        } finally {
-          db.close()
-        }
-      }),
-      { numRuns: 25 },
-    )
+        }),
+        { numRuns: 100 },
+      )
+    } finally {
+      try {
+        handle?.release(1000)
+      } catch {}
+      db.close()
+    }
   })
 })
