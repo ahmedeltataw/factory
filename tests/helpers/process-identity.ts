@@ -284,12 +284,13 @@ export function findProcessesWithNonces(
 Write-Output '${successMarker}';
 if ($records.Count -eq 0) { Write-Output '[]' } else { ConvertTo-Json -InputObject $records -Compress }`
 
-    const timeoutMs = Math.max(1, Math.min(remaining, deadline - Date.now()))
-    const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'; " + script], {
+    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'; " + script], {
       encoding: 'utf8',
-      timeout: timeoutMs,
+      timeout: Math.max(1, Math.min(remaining, deadline - Date.now())),
       windowsHide: true,
     })
+    let res = run()
+    if (res.error && ((res.error as NodeJS.ErrnoException).code === 'ETIMEDOUT' || res.error.message.includes('ETIMEDOUT')) && Date.now() < deadline) res = run()
     if (res.error || res.status !== 0) {
       throw new Error(`unresolved: process enumeration failed: ${res.error?.message || res.stderr || res.status}`)
     }
