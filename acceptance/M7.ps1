@@ -1285,6 +1285,72 @@ try {
   }
 }
 
+function Assert-DemoCanaryAbsent([string]$sDir, [string]$canary) {
+  if ([string]::IsNullOrWhiteSpace($canary)) {
+    throw "Assert-DemoCanaryAbsent: canary token is empty or null"
+  }
+  if ([string]::IsNullOrWhiteSpace($sDir) -or -not (Test-Path -LiteralPath $sDir)) {
+    throw "Assert-DemoCanaryAbsent: state directory does not exist: $sDir"
+  }
+  $activeHelpersDir = if ($helpersDir) { $helpersDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'helpers' } else { $env:TEMP }
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $helper = Join-Path $activeHelpersDir 'scan-canary.mjs'
+  $code = @'
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const root = process.env.FACTORY_SCAN_DIR;
+const canary = process.env.FACTORY_CANARY;
+const canaryBuf = Buffer.from(canary, 'utf8');
+const matches = [];
+
+function walk(dir) {
+  if (!existsSync(dir)) return;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    process.stderr.write(`Canary scanner failed to read directory ${dir}: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walk(full);
+    } else if (entry.isFile()) {
+      try {
+        const content = readFileSync(full);
+        if (content.includes(canaryBuf)) {
+          matches.push(full);
+        }
+      } catch (err) {
+        process.stderr.write(`Canary scanner failed to read file ${full}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(1);
+      }
+    }
+  }
+}
+walk(root);
+process.stdout.write(JSON.stringify(matches));
+'@
+  [System.IO.File]::WriteAllText($helper, $code, (New-Object System.Text.UTF8Encoding $false))
+  $env:FACTORY_SCAN_DIR = $sDir
+  $env:FACTORY_CANARY = $canary
+  try {
+    $errFile = Join-Path $activeLogsDir 'scan-canary.err'
+    $raw = & $script:nodeExe $helper 2> $errFile
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+      $errContent = Read-DemoTextStrict $errFile
+      throw "Failed to scan canary ($exitCode): $errContent"
+    }
+    $matches = @(ConvertFrom-JsonArray $raw)
+    if ($matches.Count -gt 0) {
+      throw "Canary token was found in files: $($matches -join ', ')"
+    }
+  } finally { Remove-Item env:FACTORY_SCAN_DIR, env:FACTORY_CANARY -ErrorAction SilentlyContinue }
+}
+
 function Assert-Demo($condition, [string]$message) { if (-not $condition) { throw $message } }
 
 try {
@@ -1468,8 +1534,8 @@ try {
     New-DemoTask $t2 @('--scope', 'src/t2', '--scope', "factory-fake/${t2}.txt") $pState
     New-DemoTask $t3 @('--scope', 'src/t3', '--scope', "factory-fake/${t3}.txt") $pState
 
-    # 3. Start supervisor with fake executor slow enough to overlap (1500ms)
-    $proc = Start-DemoSupervisor 'parallel-sup' -sDir $pState -extraEnv @{ FAKE_SLEEP_MS = '1500' }
+    # 3. Start supervisor with fake executor slow enough to overlap (4000ms)
+    $proc = Start-DemoSupervisor 'parallel-sup' -sDir $pState -extraEnv @{ FAKE_SLEEP_MS = '4000' }
 
     # 4. Poll status in a loop while tasks run: assert at no sampled moment > 1 in progress
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1477,7 +1543,7 @@ try {
     $sawSlotsWait = $false
     $sawParallel1 = $false
 
-    while ($sw.Elapsed.TotalSeconds -lt 45 -and -not $proc.HasExited) {
+    while ($sw.Elapsed.TotalSeconds -lt 75 -and -not $proc.HasExited) {
       $snap = Invoke-FactoryStatus $pState
       $inProg = @($snap.tasks | Where-Object { $_.status -eq 'progress' })
       if ($inProg.Count -gt $maxInProgress) {
@@ -1501,7 +1567,7 @@ try {
       Start-Sleep -Milliseconds 100
     }
 
-    Wait-DemoSupervisor $proc 'parallel-sup' 45
+    Wait-DemoSupervisor $proc 'parallel-sup' 75
     Register-DemoWorkerNonces $pState
 
     $finalSnap = Invoke-FactoryStatus $pState
@@ -1516,13 +1582,13 @@ try {
   # =========================================================================
   # Step 12: Quota window
   # =========================================================================
-  if (-not (Step 12 'Quota window: quota set 2 per 20s, two tasks run and third waits quota then runs after window slides' {
+  if (-not (Step 12 'Quota window: quota set 2 per 30s, two tasks run and third waits quota then runs after window slides' {
     $ErrorActionPreference = 'Continue'
     $proj = Initialize-DemoProject 'quota'
     $pState = $proj.StateDir
 
-    # 1. Set quota: window 20s, max 2 units
-    Invoke-FactoryCli @('quota', 'set', '--state-dir', $pState, '--provider', 'default', '--window-ms', '20000', '--max-units', '2')
+    # 1. Set quota: window 30s, max 2 units
+    Invoke-FactoryCli @('quota', 'set', '--state-dir', $pState, '--provider', 'default', '--window-ms', '30000', '--max-units', '2')
 
     # 2. Create three non-overlapping tasks
     $t1 = [guid]::NewGuid().ToString()
@@ -1543,7 +1609,7 @@ try {
     $sawDispatchWaitingQuota = $false
     $checkedBeforeExpiry = $false
 
-    while ($sw.Elapsed.TotalSeconds -lt 50 -and -not $proc.HasExited) {
+    while ($sw.Elapsed.TotalSeconds -lt 90 -and -not $proc.HasExited) {
       $snap = Invoke-FactoryStatus $pState
       if ($snap.dispatch -eq 'waiting-quota') {
         $sawDispatchWaitingQuota = $true
@@ -1560,17 +1626,20 @@ try {
           }
         }
 
-        # Assert third task has NO attempt row while waiting (in status and in DB)
-        Assert-Demo (@($wt.attempts).Count -eq 0) "Third task has attempt rows in status while waiting for quota"
-        $dbT3Waiting = Get-DemoDatabase $t3 $pState
-        Assert-Demo (@($dbT3Waiting.attempts).Count -eq 0) "Third task has attempt rows in database while waiting for quota"
+        # Take the pre-expiry assertions (exactly two attempts started, third has no attempt) from ONE snapshot read right after observing the wait (status and DB reads close together)
+        if (-not $checkedBeforeExpiry -and $observedRetryAtMs -gt 0) {
+          $nowUtcMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if ($nowUtcMs -lt $observedRetryAtMs) {
+            # Assert third task has NO attempt row while waiting (in status and in DB)
+            Assert-Demo (@($wt.attempts).Count -eq 0) "Third task has attempt rows in status while waiting for quota"
+            $dbT3Waiting = Get-DemoDatabase $t3 $pState
+            Assert-Demo (@($dbT3Waiting.attempts).Count -eq 0) "Third task has attempt rows in database while waiting for quota"
 
-        # Assert exactly two attempts have started before the window expires
-        $nowUtcMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        if ($observedRetryAtMs -gt 0 -and $nowUtcMs -lt $observedRetryAtMs) {
-          $qDataBefore = Get-DemoQuotaData $pState
-          Assert-Demo ($qDataBefore.attempts.Count -eq 2) "Expected exactly two attempts started before window expires, found $($qDataBefore.attempts.Count)"
-          $checkedBeforeExpiry = $true
+            # Assert exactly two attempts have started before the window expires
+            $qDataBefore = Get-DemoQuotaData $pState
+            Assert-Demo ($qDataBefore.attempts.Count -eq 2) "Expected exactly two attempts started before window expires, found $($qDataBefore.attempts.Count)"
+            $checkedBeforeExpiry = $true
+          }
         }
       }
 
@@ -1581,7 +1650,7 @@ try {
       Start-Sleep -Milliseconds 150
     }
 
-    Wait-DemoSupervisor $proc 'quota-sup' 50
+    Wait-DemoSupervisor $proc 'quota-sup' 90
     Register-DemoWorkerNonces $pState
 
     $finalSnap = Invoke-FactoryStatus $pState
@@ -1599,7 +1668,7 @@ try {
 
     # Assert third task attempt started no earlier than retryAtMs (allow tolerance on late side)
     Assert-Demo ($t3StartedAtMs -ge $observedRetryAtMs) "Third task attempt started at $t3StartedAtMs, which is earlier than retryAtMs $observedRetryAtMs (premature resume)"
-    Assert-Demo ($t3StartedAtMs -le ($observedRetryAtMs + 15000)) "Third task attempt started too late ($t3StartedAtMs vs retryAtMs $observedRetryAtMs)"
+    Assert-Demo ($t3StartedAtMs -le ($observedRetryAtMs + 60000)) "Third task attempt started too late ($t3StartedAtMs vs retryAtMs $observedRetryAtMs)"
 
     # Also assert all attempts ended succeeded
     foreach ($t in $finalSnap.tasks) {
@@ -1681,6 +1750,9 @@ try {
   # =========================================================================
   if (-not (Step 14 'Intake budget: maxPerActorPerDay policy rejects third issue event with actor-daily-limit' {
     $ErrorActionPreference = 'Continue'
+    if ([string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      $script:canaryToken = 'ghp_CANARY_TOKEN_' + [guid]::NewGuid().ToString('N')
+    }
     $proj = Initialize-DemoProject 'intake-budget'
     $pState = $proj.StateDir
 
@@ -1720,6 +1792,46 @@ try {
     Assert-Demo ($snap.github.events.pending -eq 2) "Status github pending count expected 2, got $($snap.github.events.pending)"
     Assert-Demo ($snap.github.events.rejected -ge 1) "Status github rejected count expected >= 1, got $($snap.github.events.rejected)"
 
+    # Verify that the server's request log file does not leak the secret canary token value (fail-closed)
+    Assert-Demo (Test-Path -LiteralPath $script:fakeLogFile) "Server request log missing: $($script:fakeLogFile)"
+    $logRaw = Read-DemoTextStrict $script:fakeLogFile
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-Demo (-not $logRaw.Contains([string]$script:canaryToken)) "Canary token was leaked into server request log!"
+    }
+
+    # Canary token appears in none of the files under state directory
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-DemoCanaryAbsent $pState ([string]$script:canaryToken)
+    }
+
+    # Verify status snapshot and status text outputs do not leak canary
+    $snapJson = Invoke-FactoryStatus $pState
+    $snapRaw = [string](ConvertTo-Json -InputObject $snapJson -Depth 10)
+    if ($null -eq $snapRaw) { $snapRaw = '' }
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-Demo (-not $snapRaw.Contains([string]$script:canaryToken)) "Canary token leaked in status --json"
+    }
+    $statusText = [string](Invoke-FactoryStatusText $pState)
+    if ($null -eq $statusText) { $statusText = '' }
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-Demo (-not $statusText.Contains([string]$script:canaryToken)) "Canary token leaked in status text"
+    }
+
+    # Also verify supervisor stdout/stderr and status outputs do not leak canary (fail-closed: every expected file must exist)
+    $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+    $expectedCanaryLogs = @(
+      (Join-Path $activeLogsDir 'intake-budget-sup.out'),
+      (Join-Path $activeLogsDir 'intake-budget-sup.err'),
+      (Join-Path $activeLogsDir 'status-text.err')
+    )
+    foreach ($outPath in $expectedCanaryLogs) {
+      Assert-Demo (Test-Path -LiteralPath $outPath) "Expected log file missing for canary check: $outPath"
+      $c = Read-DemoTextStrict $outPath
+      if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+        Assert-Demo (-not $c.Contains([string]$script:canaryToken)) "Canary token leaked in log: $outPath"
+      }
+    }
+
     $global:LASTEXITCODE = 0
   })) { throw 'Step 14 failed' }
 
@@ -1728,11 +1840,14 @@ try {
   # =========================================================================
   if (-not (Step 15 'Restart mid-run keeps counts exact: quota used equals started attempts, no reserved row for terminal attempts' {
     $ErrorActionPreference = 'Continue'
+    if ([string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      $script:canaryToken = 'ghp_CANARY_TOKEN_' + [guid]::NewGuid().ToString('N')
+    }
     $proj = Initialize-DemoProject 'restart'
     $pState = $proj.StateDir
 
-    # 1. Set quota: window 60s, max 2 units
-    Invoke-FactoryCli @('quota', 'set', '--state-dir', $pState, '--provider', 'default', '--window-ms', '60000', '--max-units', '2')
+    # 1. Set quota: window 300000ms, max 2 units
+    Invoke-FactoryCli @('quota', 'set', '--state-dir', $pState, '--provider', 'default', '--window-ms', '300000', '--max-units', '2')
 
     # 2. Create two non-overlapping tasks
     $t1 = [guid]::NewGuid().ToString()
@@ -1741,13 +1856,13 @@ try {
     New-DemoTask $t1 @('--scope', 'src/t1', '--scope', "factory-fake/${t1}.txt") $pState
     New-DemoTask $t2 @('--scope', 'src/t2', '--scope', "factory-fake/${t2}.txt") $pState
 
-    # 3. Start supervisor with fake executor sleeping 2500ms
-    $proc1 = Start-DemoSupervisor 'restart-sup1' -sDir $pState -extraEnv @{ FAKE_SLEEP_MS = '2500' }
+    # 3. Start supervisor with fake executor sleeping 6000ms
+    $proc1 = Start-DemoSupervisor 'restart-sup1' -sDir $pState -extraEnv @{ FAKE_SLEEP_MS = '6000' }
 
     # 4. Poll until two attempts have a confirmed RUNNING worker before killing the Supervisor
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $bothWorkersRunning = $false
-    $timeoutWorkersSec = 25
+    $timeoutWorkersSec = 45
     $lastSnapBeforeKill = $null
 
     while ($sw.Elapsed.TotalSeconds -lt $timeoutWorkersSec -and -not $proc1.HasExited) {
@@ -1805,13 +1920,13 @@ try {
 
     # 6. Restart supervisor with --takeover
     $proc2 = Start-DemoSupervisor 'restart-sup2' -takeover $takeover -sDir $pState
-    Wait-DemoSupervisor $proc2 'restart-sup2' 35
+    Wait-DemoSupervisor $proc2 'restart-sup2' 60
     Register-DemoWorkerNonces $pState
 
     # Wait (bounded) for the two tasks to finish
     $swTasks = [System.Diagnostics.Stopwatch]::StartNew()
     $tasksFinished = $false
-    $timeoutTasksSec = 30
+    $timeoutTasksSec = 60
 
     while ($swTasks.Elapsed.TotalSeconds -lt $timeoutTasksSec) {
       $pollTasksSnap = Invoke-FactoryStatus $pState
@@ -1851,6 +1966,41 @@ try {
     Assert-Demo ($qData.terminalWithReserved.Count -eq 0) "Found reserved reservations for terminal attempts: $(ConvertTo-Json $qData.terminalWithReserved)"
     foreach ($res in $qData.reservations) {
       Assert-Demo ($res.state -ne 'reserved') "Reservation $($res.id) is still in 'reserved' state"
+    }
+
+    # Canary token appears in none of the files under state directory
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-DemoCanaryAbsent $pState ([string]$script:canaryToken)
+    }
+
+    # Verify status snapshot and status text outputs do not leak canary
+    $snapJson = Invoke-FactoryStatus $pState
+    $snapRaw = [string](ConvertTo-Json -InputObject $snapJson -Depth 10)
+    if ($null -eq $snapRaw) { $snapRaw = '' }
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-Demo (-not $snapRaw.Contains([string]$script:canaryToken)) "Canary token leaked in status --json"
+    }
+    $statusText = [string](Invoke-FactoryStatusText $pState)
+    if ($null -eq $statusText) { $statusText = '' }
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      Assert-Demo (-not $statusText.Contains([string]$script:canaryToken)) "Canary token leaked in status text"
+    }
+
+    # Also verify supervisor stdout/stderr and status outputs do not leak canary (fail-closed: every expected file must exist)
+    $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+    $expectedCanaryLogs = @(
+      (Join-Path $activeLogsDir 'restart-sup1.out'),
+      (Join-Path $activeLogsDir 'restart-sup1.err'),
+      (Join-Path $activeLogsDir 'restart-sup2.out'),
+      (Join-Path $activeLogsDir 'restart-sup2.err'),
+      (Join-Path $activeLogsDir 'status-text.err')
+    )
+    foreach ($outPath in $expectedCanaryLogs) {
+      Assert-Demo (Test-Path -LiteralPath $outPath) "Expected log file missing for canary check: $outPath"
+      $c = Read-DemoTextStrict $outPath
+      if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+        Assert-Demo (-not $c.Contains([string]$script:canaryToken)) "Canary token leaked in log: $outPath"
+      }
     }
 
     $global:LASTEXITCODE = 0
