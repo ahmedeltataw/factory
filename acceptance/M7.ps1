@@ -679,6 +679,13 @@ function Invoke-FactoryStatus([string]$sDir) {
   $stdout = [string]$outTask.Result
   $stderr = [string]$errTask.Result
 
+  if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+    $canary = [string]$script:canaryToken
+    if ($stderr.Contains($canary)) {
+      throw "Canary token leaked in factory status stderr"
+    }
+  }
+
   $code = $proc.ExitCode
   if ($code -ne 0) {
     throw "factory status failed with exit code ${code}: $stderr"
@@ -746,6 +753,12 @@ function Invoke-FactoryStatusText([string]$sDir) {
   $raw = & $script:nodeExe $cliPath status --state-dir $sDir 2> $errFile
   $code = $LASTEXITCODE
   $errText = Read-DemoTextStrict $errFile
+  if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+    $canary = [string]$script:canaryToken
+    if ($errText.Contains($canary)) {
+      throw "Canary token leaked in factory status text stderr ($errFile)"
+    }
+  }
   if ($code -ne 0) {
     throw "factory status text failed with code ${code}: $errText"
   }
@@ -764,8 +777,14 @@ function Invoke-FactoryCli([string[]]$cliArgs) {
   $errFile = Join-Path $activeLogsDir ("cli-" + [guid]::NewGuid().ToString('N') + ".err")
   $raw = & $script:nodeExe $cliPath @cliArgs 2> $errFile
   $code = $LASTEXITCODE
+  $errText = Read-DemoText $errFile
+  if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+    $canary = [string]$script:canaryToken
+    if ($errText.Contains($canary)) {
+      throw "Canary token leaked in factory cli stderr ($errFile)"
+    }
+  }
   if ($code -ne 0) {
-    $errText = Read-DemoText $errFile
     throw "Factory CLI command 'factory $($cliArgs -join ' ')' failed with code ${code}: $errText"
   }
   return $raw
@@ -798,6 +817,12 @@ function Step($n, $label, [scriptblock]$cmd = $null, [switch]$Skip) {
     if ($_.ScriptStackTrace) {
       $stackLines = @([string]$_.ScriptStackTrace -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 5)
       $stack = $stackLines -join "`n"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      $canary = [string]$script:canaryToken
+      $errMsg = $errMsg.Replace($canary, '[REDACTED_CANARY]')
+      $lineText = $lineText.Replace($canary, '[REDACTED_CANARY]')
+      $stack = $stack.Replace($canary, '[REDACTED_CANARY]')
     }
     Write-Host $errMsg -ForegroundColor Red
     if ($lineNum -gt 0 -or -not [string]::IsNullOrWhiteSpace($lineText)) {
@@ -874,8 +899,14 @@ function New-DemoTask([string]$taskId, [string[]]$options = @(), [string]$sDir =
   $cmdArgs = @('task', 'create', '--state-dir', $activeState, '--title', "Acceptance $taskId", '--command-id', $taskId) + $options
   $raw = & $script:nodeExe $cliPath @cmdArgs 2> $errFile
   $code = $LASTEXITCODE
+  $errText = Read-DemoText $errFile
+  if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+    $canary = [string]$script:canaryToken
+    if ($errText.Contains($canary)) {
+      throw "Canary token leaked in task create stderr ($errFile)"
+    }
+  }
   if ($code -ne 0) {
-    $errText = Read-DemoText $errFile
     throw "Task create $taskId failed with code ${code}: $errText"
   }
 }
@@ -1205,13 +1236,15 @@ import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 const db = new DatabaseSync(join(process.env.FACTORY_STATE_DIR, 'state.sqlite'), { readOnly: true });
 try {
-  const attempts = db.prepare('SELECT id, task_id, attempt_no, status FROM attempts ORDER BY attempt_no').all();
+  const attempts = db.prepare('SELECT id, task_id, attempt_no, status, started_at, ended_at FROM attempts ORDER BY attempt_no').all();
+  const workers = db.prepare('SELECT attempt_id, pid, state FROM workers').all();
+  const startedAttempts = db.prepare('SELECT a.id, a.task_id, a.attempt_no, a.status FROM attempts a WHERE EXISTS (SELECT 1 FROM workers w WHERE w.attempt_id = a.id)').all();
   const reservations = db.prepare('SELECT id, attempt_id, provider, units, state, reserved_at_ms, closed_at_ms FROM quota_reservations').all();
   const terminalWithReserved = db.prepare("SELECT r.id, a.id AS attempt_id, a.status AS attempt_status, r.state FROM quota_reservations r JOIN attempts a ON a.id = r.attempt_id WHERE r.state = 'reserved' AND a.status IN ('succeeded', 'failed', 'interrupted', 'killed')").all();
   const limits = db.prepare('SELECT max_parallel FROM project_limits').all();
   const windows = db.prepare('SELECT provider, window_ms, max_units FROM quota_windows').all();
   const caps = db.prepare('SELECT level, key, cap_units FROM budget_caps').all();
-  process.stdout.write(JSON.stringify({ attempts, reservations, terminalWithReserved, limits, windows, caps }));
+  process.stdout.write(JSON.stringify({ attempts, workers, startedAttempts, reservations, terminalWithReserved, limits, windows, caps }));
 } finally { db.close(); }
 '@
   [System.IO.File]::WriteAllText($helper, $code, (New-Object System.Text.UTF8Encoding $false))
@@ -1221,14 +1254,22 @@ try {
     $errFile = Join-Path $activeLogsDir 'read-quota-data.err'
     $raw = & $script:nodeExe $helper 2> $errFile
     $codeExit = $LASTEXITCODE
+    $errText = Read-DemoText $errFile
+    if (-not [string]::IsNullOrWhiteSpace($script:canaryToken)) {
+      $canary = [string]$script:canaryToken
+      if ($errText.Contains($canary)) {
+        throw "Canary token leaked in read quota data stderr ($errFile)"
+      }
+    }
     if ($codeExit -ne 0) {
-      $errText = Read-DemoText $errFile
       throw "Failed to read quota data ($codeExit): $errText"
     }
     try {
       $parsed = (($raw -join "`n") | ConvertFrom-Json)
       return [pscustomobject]@{
         attempts             = @(ConvertFrom-JsonArray $parsed.attempts)
+        workers              = @(ConvertFrom-JsonArray $parsed.workers)
+        startedAttempts      = @(ConvertFrom-JsonArray $parsed.startedAttempts)
         reservations         = @(ConvertFrom-JsonArray $parsed.reservations)
         terminalWithReserved = @(ConvertFrom-JsonArray $parsed.terminalWithReserved)
         limits               = @(ConvertFrom-JsonArray $parsed.limits)
@@ -1497,8 +1538,9 @@ try {
     # 4. Poll status: observe first 2 run, third waits with reason 'quota', retryAtMs, dispatch = waiting-quota
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $sawWaitingQuota = $false
-    $sawRetryAt = $false
+    $observedRetryAtMs = 0
     $sawDispatchWaitingQuota = $false
+    $checkedBeforeExpiry = $false
 
     while ($sw.Elapsed.TotalSeconds -lt 50 -and -not $proc.HasExited) {
       $snap = Invoke-FactoryStatus $pState
@@ -1506,13 +1548,25 @@ try {
         $sawDispatchWaitingQuota = $true
       }
 
-      $waitingTasks = @($snap.tasks | Where-Object { $_.status -eq 'ready' -and $null -ne $_.waiting -and $_.waiting.reason -eq 'quota' })
+      $waitingTasks = @($snap.tasks | Where-Object { $_.id -eq $t3 -and $_.status -eq 'ready' -and $null -ne $_.waiting -and $_.waiting.reason -eq 'quota' })
       if ($waitingTasks.Count -gt 0) {
         $sawWaitingQuota = $true
-        foreach ($wt in $waitingTasks) {
-          if ($null -ne $wt.waiting.retryAtMs -and $wt.waiting.retryAtMs -gt 0) {
-            $sawRetryAt = $true
-          }
+        $wt = $waitingTasks[0]
+        if ($null -ne $wt.waiting.retryAtMs -and $wt.waiting.retryAtMs -gt 0) {
+          $observedRetryAtMs = [long]$wt.waiting.retryAtMs
+        }
+
+        # Assert third task has NO attempt row while waiting (in status and in DB)
+        Assert-Demo (@($wt.attempts).Count -eq 0) "Third task has attempt rows in status while waiting for quota"
+        $dbT3Waiting = Get-DemoDatabase $t3 $pState
+        Assert-Demo (@($dbT3Waiting.attempts).Count -eq 0) "Third task has attempt rows in database while waiting for quota"
+
+        # Assert exactly two attempts have started before the window expires
+        $nowUtcMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        if ($observedRetryAtMs -gt 0 -and $nowUtcMs -lt $observedRetryAtMs) {
+          $qDataBefore = Get-DemoQuotaData $pState
+          Assert-Demo ($qDataBefore.attempts.Count -eq 2) "Expected exactly two attempts started before window expires, found $($qDataBefore.attempts.Count)"
+          $checkedBeforeExpiry = $true
         }
       }
 
@@ -1528,9 +1582,20 @@ try {
 
     $finalSnap = Invoke-FactoryStatus $pState
     Assert-Demo $sawWaitingQuota "No task was observed waiting with reason 'quota'"
-    Assert-Demo $sawRetryAt "Waiting task did not show a valid retryAtMs"
+    Assert-Demo ($observedRetryAtMs -gt 0) "Waiting task did not show a valid retryAtMs"
+    Assert-Demo $checkedBeforeExpiry "Did not verify that exactly two attempts started before window expiry"
     Assert-Demo $sawDispatchWaitingQuota "Status dispatch was not observed as 'waiting-quota'"
     Assert-Demo (@($finalSnap.tasks | Where-Object { $_.status -eq 'done' }).Count -eq 3) "Not all three tasks completed done"
+
+    # Compare third task's attempt started time with observed retryAtMs
+    $dbT3Final = Get-DemoDatabase $t3 $pState
+    Assert-Demo (@($dbT3Final.attempts).Count -ge 1) "Third task has no attempts after completion"
+    $t3Attempt = $dbT3Final.attempts[0]
+    $t3StartedAtMs = [DateTimeOffset]::Parse($t3Attempt.started_at).ToUnixTimeMilliseconds()
+
+    # Assert third task attempt started no earlier than retryAtMs (allow tolerance on late side)
+    Assert-Demo ($t3StartedAtMs -ge $observedRetryAtMs) "Third task attempt started at $t3StartedAtMs, which is earlier than retryAtMs $observedRetryAtMs (premature resume)"
+    Assert-Demo ($t3StartedAtMs -le ($observedRetryAtMs + 15000)) "Third task attempt started too late ($t3StartedAtMs vs retryAtMs $observedRetryAtMs)"
 
     # Also assert all attempts ended succeeded
     foreach ($t in $finalSnap.tasks) {
@@ -1675,19 +1740,29 @@ try {
     # 3. Start supervisor with fake executor sleeping 2500ms
     $proc1 = Start-DemoSupervisor 'restart-sup1' -sDir $pState -extraEnv @{ FAKE_SLEEP_MS = '2500' }
 
-    # 4. Wait until both tasks are in flight (progress)
+    # 4. Poll until two attempts have a confirmed RUNNING worker before killing the Supervisor
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $bothInFlight = $false
-    while ($sw.Elapsed.TotalSeconds -lt 20 -and -not $proc1.HasExited) {
+    $bothWorkersRunning = $false
+    $timeoutWorkersSec = 25
+    $lastSnapBeforeKill = $null
+
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutWorkersSec -and -not $proc1.HasExited) {
       $snap = Invoke-FactoryStatus $pState
-      $inProg = @($snap.tasks | Where-Object { $_.status -eq 'progress' })
-      if ($inProg.Count -ge 2) {
-        $bothInFlight = $true
+      $lastSnapBeforeKill = $snap
+      $runningAttempts = @($snap.tasks | ForEach-Object {
+        if ($null -ne $_.attempts) {
+          @($_.attempts) | Where-Object {
+            $null -ne $_ -and $_.status -eq 'running' -and $null -ne $_.worker -and $_.worker.state -eq 'running'
+          }
+        }
+      })
+      if ($runningAttempts.Count -ge 2) {
+        $bothWorkersRunning = $true
         break
       }
       Start-Sleep -Milliseconds 50
     }
-    Assert-Demo $bothInFlight "Both tasks were not observed in progress simultaneously before kill"
+    Assert-Demo $bothWorkersRunning "Timed out after ${timeoutWorkersSec}s waiting for two attempts with confirmed RUNNING worker before killing Supervisor (observed: $(if ($lastSnapBeforeKill) { @($lastSnapBeforeKill.tasks | ForEach-Object { $_.attempts } | Where-Object { $_.status -eq 'running' }).Count } else { 0 }))"
     Register-DemoWorkerNonces $pState
 
     # 5. Kill supervisor mid-run
@@ -1699,28 +1774,79 @@ try {
     $takeover = $snapCrash.lease.takeover
     Assert-Demo (-not [string]::IsNullOrWhiteSpace($takeover)) 'Missing takeover token after crash'
 
-    # Wait for lease staleness and for worker completion (2500ms sleep)
-    $delay = [Math]::Max([long]0, [long]$snapCrash.lease.heartbeatMs + 2500 - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-    $waitTotal = [Math]::Max([long]3000, $delay)
-    Start-Sleep -Milliseconds $waitTotal
+    # Bounded polling on the actual condition: lease takeover possible (lease is stale) AND workers finished
+    $swRestart = [System.Diagnostics.Stopwatch]::StartNew()
+    $takeoverReady = $false
+    $timeoutRestartSec = 30
+    $lastPollSnap = $null
+
+    while ($swRestart.Elapsed.TotalSeconds -lt $timeoutRestartSec) {
+      $lastPollSnap = Invoke-FactoryStatus $pState
+      Register-DemoWorkerNonces $pState
+
+      # Check if lease takeover is possible (lease freshness is stale)
+      $leaseTakeoverPossible = ($null -ne $lastPollSnap.lease -and $lastPollSnap.lease.freshness -eq 'stale')
+
+      # Check if workers finished (no process matching tracked worker nonces / process records is alive)
+      $workersAlive = $false
+      foreach ($rec in $script:trackedProcessRecords) {
+        if (Test-TrackedPidIdentityValid $rec) {
+          $workersAlive = $true
+          break
+        }
+      }
+      if (-not $workersAlive) {
+        foreach ($wn in $script:trackedWorkerNonces) {
+          if ([string]::IsNullOrWhiteSpace($wn)) { continue }
+          $matching = @(Get-CimInstance Win32_Process -Property ProcessId, CommandLine -ErrorAction SilentlyContinue | Where-Object {
+            $_.CommandLine -and $_.CommandLine.Contains($wn)
+          })
+          if ($matching.Count -gt 0) {
+            $workersAlive = $true
+            break
+          }
+        }
+      }
+
+      if ($leaseTakeoverPossible -and -not $workersAlive) {
+        $takeoverReady = $true
+        break
+      }
+      Start-Sleep -Milliseconds 100
+    }
+
+    if (-not $takeoverReady) {
+      $snapJsonStr = if ($lastPollSnap) { ConvertTo-Json -InputObject $lastPollSnap -Depth 10 } else { '<no snapshot>' }
+      throw "Timeout after ${timeoutRestartSec}s waiting for lease takeover possibility (stale lease) and worker process completion.`nStatus JSON:`n$snapJsonStr"
+    }
 
     # 6. Restart supervisor with --takeover
     $proc2 = Start-DemoSupervisor 'restart-sup2' -takeover $takeover -sDir $pState
     Wait-DemoSupervisor $proc2 'restart-sup2' 35
     Register-DemoWorkerNonces $pState
 
-    # 7. Assertions: after completion, quota.windows[0].used equals attempts actually started
+    # 7. Assertions: after completion, quota.windows[0].used equals started attempts (a worker row exists)
     $finalSnap = Invoke-FactoryStatus $pState
     $qData = Get-DemoQuotaData $pState
 
-    $attemptsStarted = $qData.attempts.Count
-    Assert-Demo ($attemptsStarted -gt 0) "No attempts were recorded in database"
+    # Compute expected usage from started attempts (a worker row exists, via status/db inspection)
+    $dbStartedAttempts = @($qData.startedAttempts)
+    $statusStartedAttempts = @($finalSnap.tasks | ForEach-Object {
+      if ($null -ne $_.attempts) {
+        @($_.attempts) | Where-Object { $null -ne $_.worker }
+      }
+    })
+
+    Assert-Demo ($dbStartedAttempts.Count -gt 0) "No started attempts (with worker row in DB) were recorded"
+    Assert-Demo ($statusStartedAttempts.Count -eq $dbStartedAttempts.Count) "Started attempts mismatch between status ($($statusStartedAttempts.Count)) and database ($($dbStartedAttempts.Count))"
+
+    $expectedUsage = $dbStartedAttempts.Count
 
     Assert-Demo ($null -ne $finalSnap.quota -and $finalSnap.quota.windows.Count -ge 1) "Quota status missing in final snapshot"
     $usedInStatus = $finalSnap.quota.windows[0].used
 
-    # Assert exact counts: no double count, no lost count
-    Assert-Demo ($usedInStatus -eq $attemptsStarted) "quota.windows[0].used ($usedInStatus) does not equal attempts started ($attemptsStarted)"
+    # Assert exact counts: used in status equals started attempts with worker row
+    Assert-Demo ($usedInStatus -eq $expectedUsage) "quota.windows[0].used ($usedInStatus) does not equal started attempts with worker row ($expectedUsage)"
 
     # Assert no 'reserved' reservation left for a terminal attempt
     Assert-Demo ($qData.terminalWithReserved.Count -eq 0) "Found reserved reservations for terminal attempts: $(ConvertTo-Json $qData.terminalWithReserved)"
