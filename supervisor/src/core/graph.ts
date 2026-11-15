@@ -70,23 +70,41 @@ export interface DispatchInput {
   nowMs: number
   phases: PhaseInfo[]
   tasks: DispatchTask[]
+  maxParallel?: number | null
+  gates?: Record<string, { reason: 'quota' | 'budget'; retryAtMs: number | null }>
 }
 
-export type WaitReason = 'phase-locked' | 'deps' | 'scope' | 'backoff'
+export type WaitReason =
+  | 'phase-locked'
+  | 'deps'
+  | 'scope'
+  | 'backoff'
+  | 'slots'
+  | 'quota'
+  | 'budget'
 
-export interface Wait {
+export interface Wait<R extends string = WaitReason> {
   id: string
-  reason: WaitReason
+  reason: R
   on: string[]
+  retryAtMs?: number | null
 }
 
-export interface DispatchPlan {
+export interface DispatchPlan<R extends string = WaitReason> {
   schedule: string[]
   block: string[]
-  wait: Wait[]
+  wait: Wait<R>[]
 }
 
-export function planDispatch(input: DispatchInput): DispatchPlan {
+export function planDispatch(input: {
+  nowMs: number
+  phases: PhaseInfo[]
+  tasks: DispatchTask[]
+  maxParallel?: undefined | null
+  gates?: undefined
+}): DispatchPlan<'phase-locked' | 'deps' | 'scope' | 'backoff'>
+export function planDispatch(input: DispatchInput): DispatchPlan<WaitReason>
+export function planDispatch(input: DispatchInput): DispatchPlan<WaitReason> {
   const schedule: string[] = []
   const block: string[] = []
   const wait: Wait[] = []
@@ -108,10 +126,12 @@ export function planDispatch(input: DispatchInput): DispatchPlan {
     }
   }
 
+  const progressTaskIds: string[] = []
   const held: { id: string; scope: string[] }[] = []
   for (const t of input.tasks) {
     if (t.status === 'progress') {
       held.push({ id: t.id, scope: t.scope })
+      progressTaskIds.push(t.id)
     }
   }
 
@@ -192,7 +212,29 @@ export function planDispatch(input: DispatchInput): DispatchPlan {
       continue
     }
 
-    // 6. Otherwise -> schedule, and it joins held.
+    // 6. Task in gates -> wait quota / budget. The task does not join held.
+    const gate = input.gates && Object.hasOwn(input.gates, task.id) ? input.gates[task.id] : undefined
+    if (gate) {
+      wait.push({
+        id: task.id,
+        reason: gate.reason,
+        on: [],
+        retryAtMs: gate.retryAtMs ?? null,
+      })
+      continue
+    }
+
+    // 7. Slots cap reached -> wait slots on progress tasks. The task does not join held.
+    if (typeof input.maxParallel === 'number' && progressTaskIds.length + schedule.length >= input.maxParallel) {
+      wait.push({
+        id: task.id,
+        reason: 'slots',
+        on: [...progressTaskIds],
+      })
+      continue
+    }
+
+    // 8. Otherwise -> schedule, and it joins held.
     schedule.push(task.id)
     held.push({ id: task.id, scope: task.scope })
   }
