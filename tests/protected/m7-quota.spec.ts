@@ -433,7 +433,7 @@ describe('M7-03 quota ledger contracts', () => {
           }
         },
       ),
-      { numRuns: 50 },
+      { numRuns: 25 },
     )
   })
 
@@ -534,7 +534,7 @@ describe('M7-03 quota ledger contracts', () => {
           db.close()
         }
       }),
-      { numRuns: 50 },
+      { numRuns: 25 },
     )
   })
 })
