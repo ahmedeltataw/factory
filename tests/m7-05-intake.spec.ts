@@ -348,4 +348,140 @@ describe('M7-05: Ingest daily actor budget enforcement', () => {
       db.close()
     }
   })
+
+  it('an unparsable received_at row does not count toward the daily limit and never throws', () => {
+    const { db } = setupDb()
+    try {
+      const stamp = '2026-11-14T12:00:00Z'
+      // Seed rows with various unparsable received_at strings for actor 101
+      db.prepare(`INSERT INTO github_events (event_id, project_id, repo, kind, actor_id, actor_login, issue, status, reason, title, scope_json, basis_json, text, text_trust, text_sha256, event_at, received_at)
+        VALUES ('90', 'proj-test', 'owner/repo', 'issue.opened', 101, 'alice', 1, 'approved', NULL, 'Title', '["src/core"]', '{}', 'Body', 'untrusted', 'hash', ?, 'not-a-date')`).run(stamp)
+      db.prepare(`INSERT INTO github_events (event_id, project_id, repo, kind, actor_id, actor_login, issue, status, reason, title, scope_json, basis_json, text, text_trust, text_sha256, event_at, received_at)
+        VALUES ('91', 'proj-test', 'owner/repo', 'issue.opened', 101, 'alice', 2, 'pending', NULL, 'Title', '["src/core"]', '{}', 'Body', 'untrusted', 'hash', ?, 'invalid-timestamp-xyz')`).run(stamp)
+
+      // Policy limit is 1. If unparsable rows counted, actor 101 would have count 2 >= 1 and event 1 would be rejected.
+      // Because unparsable rows do not count, event 1 must be admitted as pending without error.
+      const p = makePolicy(1)
+      expect(() => pollEvents(db, p, [makeEvent(1, 101)], START)).not.toThrow()
+
+      const rows = selectEvents(db)
+      const event1 = rows.find((r) => r.event_id === '1')
+      expect(event1).toMatchObject({
+        event_id: '1',
+        status: 'pending',
+        reason: null,
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('correctly handles offset timestamps: inside window counts, outside does not, and exact boundary does not count', () => {
+    const stamp = '2026-11-14T12:00:00Z'
+    const p = makePolicy(1)
+
+    // START = 2026-11-14T12:00:00Z. Window boundary is START - 86400000 = 2026-11-13T12:00:00Z.
+    // In UTC+02:00, 12:00:00 UTC corresponds to 14:00:00+02:00.
+
+    // 1. Exact boundary with +02:00 offset: Date.parse === nowMs - 86400000 (must NOT count)
+    {
+      const { db } = setupDb()
+      try {
+        db.prepare(`INSERT INTO github_events (event_id, project_id, repo, kind, actor_id, actor_login, issue, status, reason, title, scope_json, basis_json, text, text_trust, text_sha256, event_at, received_at)
+          VALUES ('80', 'proj-test', 'owner/repo', 'issue.opened', 101, 'alice', 1, 'approved', NULL, 'Title', '["src/core"]', '{}', 'Body', 'untrusted', 'hash', ?, '2026-11-13T14:00:00+02:00')`).run(stamp)
+        pollEvents(db, p, [makeEvent(1, 101)], START)
+        const event1 = selectEvents(db).find((r) => r.event_id === '1')
+        expect(event1).toMatchObject({ status: 'pending', reason: null })
+      } finally {
+        db.close()
+      }
+    }
+
+    // 2. Just outside the window with +02:00 offset: 1 second before boundary (must NOT count)
+    {
+      const { db } = setupDb()
+      try {
+        db.prepare(`INSERT INTO github_events (event_id, project_id, repo, kind, actor_id, actor_login, issue, status, reason, title, scope_json, basis_json, text, text_trust, text_sha256, event_at, received_at)
+          VALUES ('81', 'proj-test', 'owner/repo', 'issue.opened', 101, 'alice', 1, 'approved', NULL, 'Title', '["src/core"]', '{}', 'Body', 'untrusted', 'hash', ?, '2026-11-13T13:59:59+02:00')`).run(stamp)
+        pollEvents(db, p, [makeEvent(1, 101)], START)
+        const event1 = selectEvents(db).find((r) => r.event_id === '1')
+        expect(event1).toMatchObject({ status: 'pending', reason: null })
+      } finally {
+        db.close()
+      }
+    }
+
+    // 3. Just inside the window with +02:00 offset: 1 second after boundary (MUST count)
+    {
+      const { db } = setupDb()
+      try {
+        db.prepare(`INSERT INTO github_events (event_id, project_id, repo, kind, actor_id, actor_login, issue, status, reason, title, scope_json, basis_json, text, text_trust, text_sha256, event_at, received_at)
+          VALUES ('82', 'proj-test', 'owner/repo', 'issue.opened', 101, 'alice', 1, 'approved', NULL, 'Title', '["src/core"]', '{}', 'Body', 'untrusted', 'hash', ?, '2026-11-13T14:00:01+02:00')`).run(stamp)
+        pollEvents(db, p, [makeEvent(1, 101)], START)
+        const event1 = selectEvents(db).find((r) => r.event_id === '1')
+        expect(event1).toMatchObject({ status: 'rejected', reason: 'actor-daily-limit' })
+      } finally {
+        db.close()
+      }
+    }
+
+    // 4. Negative offset -05:00: inside the window (07:00:01-05:00 = 12:00:01 UTC) MUST count
+    {
+      const { db } = setupDb()
+      try {
+        db.prepare(`INSERT INTO github_events (event_id, project_id, repo, kind, actor_id, actor_login, issue, status, reason, title, scope_json, basis_json, text, text_trust, text_sha256, event_at, received_at)
+          VALUES ('83', 'proj-test', 'owner/repo', 'issue.opened', 101, 'alice', 1, 'approved', NULL, 'Title', '["src/core"]', '{}', 'Body', 'untrusted', 'hash', ?, '2026-11-13T07:00:01-05:00')`).run(stamp)
+        pollEvents(db, p, [makeEvent(1, 101)], START)
+        const event1 = selectEvents(db).find((r) => r.event_id === '1')
+        expect(event1).toMatchObject({ status: 'rejected', reason: 'actor-daily-limit' })
+      } finally {
+        db.close()
+      }
+    }
+
+    // 5. Negative offset -05:00: exact boundary (07:00:00-05:00 = 12:00:00 UTC) must NOT count
+    {
+      const { db } = setupDb()
+      try {
+        db.prepare(`INSERT INTO github_events (event_id, project_id, repo, kind, actor_id, actor_login, issue, status, reason, title, scope_json, basis_json, text, text_trust, text_sha256, event_at, received_at)
+          VALUES ('84', 'proj-test', 'owner/repo', 'issue.opened', 101, 'alice', 1, 'approved', NULL, 'Title', '["src/core"]', '{}', 'Body', 'untrusted', 'hash', ?, '2026-11-13T07:00:00-05:00')`).run(stamp)
+        pollEvents(db, p, [makeEvent(1, 101)], START)
+        const event1 = selectEvents(db).find((r) => r.event_id === '1')
+        expect(event1).toMatchObject({ status: 'pending', reason: null })
+      } finally {
+        db.close()
+      }
+    }
+  })
+
+  it('updates in-memory count across multiple events in one poll without re-scanning DB', () => {
+    const { db } = setupDb()
+    try {
+      const p = makePolicy(2)
+      // 4 events for actor 101 in a single poll:
+      // Event 1: admitted (pending, count becomes 1)
+      // Event 2: admitted (pending, count becomes 2)
+      // Event 3: limit reached (rejected actor-daily-limit, count stays 2)
+      // Event 4: limit reached (rejected actor-daily-limit, count stays 2)
+      // Event 5 for actor 102: admitted (pending, actor 102 count becomes 1)
+      pollEvents(db, p, [
+        makeEvent(1, 101),
+        makeEvent(2, 101),
+        makeEvent(3, 101),
+        makeEvent(4, 101),
+        makeEvent(5, 102),
+      ], START)
+
+      const rows = selectEvents(db)
+      expect(rows.map((r) => [r.event_id, r.actor_id, r.status, r.reason])).toEqual([
+        ['1', 101, 'pending', null],
+        ['2', 101, 'pending', null],
+        ['3', 101, 'rejected', 'actor-daily-limit'],
+        ['4', 101, 'rejected', 'actor-daily-limit'],
+        ['5', 102, 'pending', null],
+      ])
+    } finally {
+      db.close()
+    }
+  })
 })
