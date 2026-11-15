@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openStore } from '../supervisor/src/app/store.ts'
+import { check } from '../supervisor/src/app/quota.ts'
 import { readStatus, formatStatus, type Status } from '../supervisor/src/app/status.ts'
 
 const dirs: string[] = []
@@ -138,6 +139,36 @@ describe('M7-07 Status unit tests', () => {
         { level: 'phase', key: 'intake', cap: 2, used: 1, pct: 50, state: 'ok', source: 'counted' },
         { level: 'task', key: 't1', cap: 2, used: 1, pct: 50, state: 'ok', source: 'counted' },
       ])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('reports quota wait reason when both quota window and budget cap are exhausted, matching check', () => {
+    const { dir, db } = fixture()
+    try {
+      task(db, 'used-q', 'done', 'q')
+      task(db, 'quota-only', 'ready', 'q')
+      task(db, 'budget-only', 'ready', 'b')
+      task(db, 'both', 'ready', 'q')
+      reservation(db, 1, 'used-q', 'q', 'settled', 99000)
+      reservation(db, 2, 'budget-only', 'b', 'settled', 99000)
+      reservation(db, 3, 'both', 'q', 'settled', 99000)
+
+      db.exec("INSERT INTO quota_windows VALUES ('p','q',10000,1,'now')")
+      db.exec("INSERT INTO budget_caps VALUES ('p','task','budget-only',1,'now'),('p','task','both',1,'now')")
+
+      const status = readStatus(dir, options)
+      expect(status.tasks?.find((t) => t.id === 'quota-only')?.waiting).toEqual({ reason: 'quota', on: [] })
+      expect(status.tasks?.find((t) => t.id === 'budget-only')?.waiting).toEqual({ reason: 'budget', on: [] })
+      expect(status.tasks?.find((t) => t.id === 'both')?.waiting).toEqual({ reason: 'quota', on: [] })
+      expect(status.dispatch).toBe('paused-budget')
+
+      for (const id of ['quota-only', 'budget-only', 'both']) {
+        const result = check(db, id, nowMs)
+        const waiting = status.tasks?.find((t) => t.id === id)?.waiting
+        expect(waiting?.reason).toBe(result.ok ? null : result.reason)
+      }
     } finally {
       db.close()
     }

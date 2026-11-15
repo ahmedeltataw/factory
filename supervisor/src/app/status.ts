@@ -848,28 +848,6 @@ export function readStatus(stateDir: string, options: ReadStatusOptions): Status
         if (tableNames.has('quota_windows') && tableNames.has('budget_caps') && tableNames.has('quota_reservations')) {
           for (const task of tasks) {
             if (task.status === 'ready') {
-              if (targetProjectId) {
-                let budgetBlocked = false
-                for (const [level, key] of [['task', task.id], ['phase', task.phase], ['project', '']] as const) {
-                  const capRow = db
-                    .prepare('SELECT cap_units FROM budget_caps WHERE project_id = ? AND level = ? AND key = ?')
-                    .get(targetProjectId, level, key) as { cap_units: number } | undefined
-                  if (!capRow) continue
-                  const usageRow = db
-                    .prepare(
-                      "SELECT COALESCE(SUM(r.units), 0) AS used FROM quota_reservations r JOIN attempts a ON a.id = r.attempt_id JOIN tasks t ON t.id = a.task_id WHERE t.project_id = r.project_id AND r.project_id = ? AND r.state IN ('reserved','settled') AND (? = 'project' OR (? = 'phase' AND t.phase = ?) OR (? = 'task' AND t.id = ?))",
-                    )
-                    .get(targetProjectId, level, level, key, level, key) as { used: number } | undefined
-                  if ((usageRow?.used ?? 0) + 1 > capRow.cap_units) {
-                    budgetBlocked = true
-                    break
-                  }
-                }
-                if (budgetBlocked) {
-                  gates[task.id] = { reason: 'budget', retryAtMs: null }
-                  continue
-                }
-              }
               const chk = check(db, task.id, nowMs)
               if (!chk.ok) {
                 gates[task.id] = { reason: chk.reason, retryAtMs: chk.retryAtMs }
