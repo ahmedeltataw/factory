@@ -35,6 +35,7 @@ export function ingestPoll(db: DatabaseSync, projectId: string, policy: Policy, 
       items.sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0)
       const exists = db.prepare('SELECT 1 FROM github_events WHERE project_id = ? AND event_id = ?')
       const pending = db.prepare("SELECT count(*) AS count FROM github_events WHERE project_id = ? AND repo = ? AND status = 'pending'")
+      const actorDaily = db.prepare("SELECT count(*) AS count FROM github_events WHERE project_id = ? AND actor_id = ? AND status IN ('approved', 'pending') AND received_at > ?")
       const insert = db.prepare(`INSERT INTO github_events (event_id, project_id, repo, kind, actor_id, actor_login, issue, status, reason, title, scope_json, basis_json, text, text_trust, text_sha256, event_at, received_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'untrusted', ?, ?, ?)`)
       for (const item of items) {
@@ -48,12 +49,28 @@ export function ingestPoll(db: DatabaseSync, projectId: string, policy: Policy, 
         }
         const event = normalized.event
         const decision = gate(policy, event)
+        if (!decision.admit) {
+          insert.run(event.eventId, projectId, event.repo, event.kind, event.actor.id, event.actor.login, event.issue,
+            'ignored', decision.reason, null, null, null,
+            event.text, createHash('sha256').update(event.text).digest('hex'), new Date(event.createdAtMs).toISOString(), now)
+          continue
+        }
+        if (policy.maxPerActorPerDay !== undefined) {
+          const since = new Date(nowMs - 86400000).toISOString()
+          const count = (actorDaily.get(projectId, event.actor.id, since) as { count: number }).count
+          if (count >= policy.maxPerActorPerDay) {
+            insert.run(event.eventId, projectId, event.repo, event.kind, event.actor.id, event.actor.login, event.issue,
+              'rejected', 'actor-daily-limit', null, null, null,
+              event.text, createHash('sha256').update(event.text).digest('hex'), new Date(event.createdAtMs).toISOString(), now)
+            continue
+          }
+        }
         const count = (pending.get(projectId, event.repo) as { count: number }).count
-        const admitted = decision.admit && count < policy.maxPendingPerRepo
-        const reason = !decision.admit ? decision.reason : admitted ? null : 'pending-limit'
+        const admitted = count < policy.maxPendingPerRepo
+        const reason = admitted ? null : 'pending-limit'
         insert.run(event.eventId, projectId, event.repo, event.kind, event.actor.id, event.actor.login, event.issue,
-          admitted ? 'pending' : 'ignored', reason, admitted && decision.admit ? decision.title : null,
-          admitted && decision.admit ? JSON.stringify(decision.scope) : null, admitted && decision.admit ? JSON.stringify(decision.basis) : null,
+          admitted ? 'pending' : 'ignored', reason, admitted ? decision.title : null,
+          admitted ? JSON.stringify(decision.scope) : null, admitted ? JSON.stringify(decision.basis) : null,
           event.text, createHash('sha256').update(event.text).digest('hex'), new Date(event.createdAtMs).toISOString(), now)
       }
     }

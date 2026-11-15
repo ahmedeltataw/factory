@@ -9,6 +9,7 @@ export interface Policy {
   readonly actors: readonly { readonly id: number; readonly login: string }[]
   readonly command: string
   readonly maxPendingPerRepo: number
+  readonly maxPerActorPerDay?: number
 }
 
 export type GateResult =
@@ -26,6 +27,7 @@ const fields = {
   actors: z.array(z.strictObject({ id: z.number().int().positive(), login: z.string() })).min(1),
   command: z.string().startsWith('/'),
   maxPendingPerRepo: z.number().int().min(1).max(100),
+  maxPerActorPerDay: z.number().int().min(1).max(1000).optional(),
 }
 
 function sorted(value: unknown): unknown {
@@ -54,7 +56,10 @@ export function parsePolicy(input: unknown): { ok: true; policy: Policy; hash: s
   }
   const unknown = Object.keys(object).find((key) => !Object.hasOwn(fields, key))
   if (unknown !== undefined) return { ok: false, reason: unknown }
-  const policy = z.object(fields).parse(object)
+  const parsed = z.object(fields).parse(object)
+  const policy: Policy = parsed.maxPerActorPerDay === undefined
+    ? (() => { const { maxPerActorPerDay: _, ...rest } = parsed; return rest as Policy })()
+    : parsed
   for (const repo of policy.repos) {
     Object.freeze(repo.labels)
     Object.freeze(repo.scope)
