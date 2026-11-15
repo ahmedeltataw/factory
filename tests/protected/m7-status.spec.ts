@@ -25,8 +25,8 @@ function task(db: DatabaseSync, id: string, status = 'ready', provider = 'defaul
   db.prepare("INSERT INTO commands (id,project_id,kind,payload_json,created_at) VALUES (?,'p','task.create','{}','now')").run(`c-${id}`)
   db.prepare("INSERT INTO tasks (id,project_id,created_by_command,title,status,created_at,updated_at,scope_json,phase,provider) VALUES (?,'p',?,? ,?,'now','now',?,?,?)").run(id, `c-${id}`, id, status, JSON.stringify([id]), phase, provider)
 }
-function reservation(db: DatabaseSync, n: number, taskId: string, provider: string, state: string, time: number) {
-  db.prepare("INSERT INTO attempts (id,task_id,attempt_no,status,lease_generation) VALUES (?,?,?,'pending',1)").run(`a${n}`, taskId, n + 1)
+function reservation(db: DatabaseSync, n: number, taskId: string, provider: string, state: string, time: number, attemptStatus = 'pending') {
+  db.prepare("INSERT INTO attempts (id,task_id,attempt_no,status,lease_generation) VALUES (?,?,?,?,1)").run(`a${n}`, taskId, n + 1, attemptStatus)
   db.prepare("INSERT INTO quota_reservations (id,project_id,attempt_id,provider,units,state,reserved_at_ms) VALUES (?,'p',?,?,1,?,?)").run(`r${n}`, `a${n}`, provider, state, time)
 }
 function snapshot(dir: string): Status & Additions { return readStatus(dir, options) as Status & Additions }
@@ -79,10 +79,12 @@ it('CHK-M7-07-a: quota and budget waits set dispatch with budget precedence', ()
 it('CHK-M7-07-b: real usage crosses every threshold and a lowered cap exceeds 100 percent', () => {
   const { dir, db } = fixture()
   try {
-    task(db, 'used', 'done'); db.exec("INSERT INTO budget_caps VALUES ('p','project','',100,'now'); INSERT INTO quota_windows VALUES ('p','default',10000,200,'now')")
+    db.exec("INSERT INTO budget_caps VALUES ('p','project','',100,'now'); INSERT INTO quota_windows VALUES ('p','default',10000,200,'now')")
     const boundaries = new Map([[69,'ok'],[70,'warn'],[89,'warn'],[90,'fallback-needed'],[99,'fallback-needed'],[100,'stop']])
     for (let n = 1; n <= 100; n++) {
-      reservation(db, n, 'used', 'default', n % 2 ? 'reserved' : 'settled', 99000 + n)
+      const taskId = `used-${n}`
+      task(db, taskId, 'done')
+      reservation(db, n, taskId, 'default', n % 2 ? 'reserved' : 'settled', 99000 + n, 'succeeded')
       const state = boundaries.get(n)
       if (state) {
         const status = snapshot(dir)
@@ -123,5 +125,34 @@ it('CHK-M7-07-c: Arabic output presents facts without remaining or token wording
     expect(text).toMatch(/\u0645\u0641\u062a\u0648\u062d/)
     for (const word of ['\u0645\u062a\u0628\u0642', '\u0627\u0644\u0645\u062a\u0628\u0642\u064a', '\u0631\u0645\u0648\u0632', '\u062a\u0648\u0643\u0646']) expect(text).not.toContain(word)
     for (const key of ['limits', 'quota', 'budget']) { expect(json).toContain(`"${key}"`); expect(text).not.toContain(key) }
+  } finally { db.close() }
+})
+
+it('CHK-M7-07-c: Arabic dispatch lines distinguish open, budget and quota waits', () => {
+  const { dir, db } = fixture()
+  try {
+    task(db, 'used', 'done'); task(db, 'ready')
+    reservation(db, 1, 'used', 'default', 'settled', 99000)
+    db.exec("INSERT INTO budget_caps VALUES ('p','project','',1,'now'); INSERT INTO quota_windows VALUES ('p','default',10000,1,'now')")
+    const budget = snapshot(dir)
+    expect(budget.dispatch).toBe('paused-budget')
+    db.exec('DELETE FROM budget_caps')
+    const quota = snapshot(dir)
+    expect(quota.dispatch).toBe('waiting-quota')
+    db.exec('DELETE FROM quota_windows')
+    const open = snapshot(dir)
+    expect(open.dispatch).toBe('open')
+
+    const variants = ['open', 'paused-budget', 'waiting-quota'].map(dispatch =>
+      formatStatus({ ...open, dispatch } as Status & Additions).split('\n'))
+    const changed = variants[0]!.map((line, i) => variants.some(lines => lines[i] !== line) ? i : -1).filter(i => i >= 0)
+    expect(changed).toHaveLength(1)
+    const index = changed[0]!
+    const lines = [open, budget, quota].map(status => formatStatus(status).split('\n')[index] ?? '')
+    expect(new Set(lines).size).toBe(3)
+    for (const line of lines) {
+      expect(line).toMatch(/[\u0600-\u06ff]/)
+      for (const word of ['\u0645\u062a\u0628\u0642', '\u0627\u0644\u0645\u062a\u0628\u0642\u064a', '\u0631\u0645\u0648\u0632', '\u062a\u0648\u0643\u0646']) expect(line).not.toContain(word)
+    }
   } finally { db.close() }
 })
