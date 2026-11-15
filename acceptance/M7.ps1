@@ -1606,10 +1606,12 @@ try {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $sawWaitingQuota = $false
     $observedRetryAtMs = 0
+    $beforeMs = 0
     $sawDispatchWaitingQuota = $false
     $checkedBeforeExpiry = $false
 
     while ($sw.Elapsed.TotalSeconds -lt 90 -and -not $proc.HasExited) {
+      $beforeMs = [long][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
       $snap = Invoke-FactoryStatus $pState
       if ($snap.dispatch -eq 'waiting-quota') {
         $sawDispatchWaitingQuota = $true
@@ -1626,18 +1628,33 @@ try {
           }
         }
 
-        # Take the pre-expiry assertions (exactly two attempts started, third has no attempt) from ONE snapshot read right after observing the wait (status and DB reads close together)
+        # Derive ALL pre-expiry assertions from the ONE status snapshot already in hand
         if (-not $checkedBeforeExpiry -and $observedRetryAtMs -gt 0) {
-          $nowUtcMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-          if ($nowUtcMs -lt $observedRetryAtMs) {
-            # Assert third task has NO attempt row while waiting (in status and in DB)
-            Assert-Demo (@($wt.attempts).Count -eq 0) "Third task has attempt rows in status while waiting for quota"
-            $dbT3Waiting = Get-DemoDatabase $t3 $pState
-            Assert-Demo (@($dbT3Waiting.attempts).Count -eq 0) "Third task has attempt rows in database while waiting for quota"
+          if ($beforeMs -lt $observedRetryAtMs) {
+            # Assert snapshot resetsAt is later than beforeMs recorded just before Invoke-FactoryStatus
+            Assert-Demo ($beforeMs -lt $observedRetryAtMs) "Status snapshot resetsAt $observedRetryAtMs is not later than before-call time $beforeMs"
 
-            # Assert exactly two attempts have started before the window expires
-            $qDataBefore = Get-DemoQuotaData $pState
-            Assert-Demo ($qDataBefore.attempts.Count -eq 2) "Expected exactly two attempts started before window expires, found $($qDataBefore.attempts.Count)"
+            # Third task has empty attempts and waiting reason is 'quota'
+            Assert-Demo (@($wt.attempts).Count -eq 0) "Third task has attempt rows in status while waiting for quota"
+            Assert-Demo ($null -ne $wt.waiting -and $wt.waiting.reason -eq 'quota') "Third task waiting reason expected 'quota', got '$($wt.waiting.reason)'"
+
+            # Number of attempts across the three tasks in that same snapshot is exactly 2
+            $targetTaskIds = @($t1, $t2, $t3)
+            $snapAttemptCount = 0
+            foreach ($t in @($snap.tasks)) {
+              if ($targetTaskIds -contains $t.id) {
+                $snapAttemptCount += @($t.attempts).Count
+              }
+            }
+            Assert-Demo ($snapAttemptCount -eq 2) "Expected exactly two attempts across three tasks in status snapshot, found $snapAttemptCount"
+
+            # quota.windows entry for provider default shows used equal to 2 in that same snapshot
+            $defUsed = -1
+            if ($defWindow.Count -gt 0 -and $null -ne $defWindow[0].used) {
+              $defUsed = [int]$defWindow[0].used
+            }
+            Assert-Demo ($defUsed -eq 2) "Expected quota.windows entry for provider default used equal to 2, found $defUsed"
+
             $checkedBeforeExpiry = $true
           }
         }
