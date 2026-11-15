@@ -90,7 +90,7 @@ describe('M4-01 Schema v6 contract', () => {
     const path = databasePath()
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+      expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
       expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
       expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
       expect(db.prepare('PRAGMA busy_timeout').get()).toMatchObject({ timeout: 5000 })
@@ -179,7 +179,7 @@ describe('M4-01 Schema v6 contract', () => {
       // Reopening is idempotent
       const observer = new DatabaseSync(path)
       try {
-        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+        expect(observer.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
       } finally {
         observer.close()
       }
@@ -240,7 +240,7 @@ describe('M4-01 Schema v6 contract', () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const db = openStore(path)
       try {
-        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 8 })
+        expect(db.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
         expect(db.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
         expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
 
@@ -274,6 +274,7 @@ describe('M4-01 Schema v6 contract', () => {
           expect(after).toEqual({
             ...before,
             phase: 'intake',
+            provider: 'default',
             scope_json: '["."]',
             max_attempts: 3,
             timeout_ms: null,
@@ -379,13 +380,13 @@ describe('M4-01 Schema v6 contract', () => {
     }
   })
 
-  it('CHK-M4-01-b: refuses a v8 database unmodified', () => {
+  it('CHK-M4-01-b: refuses a v10 database unmodified', () => {
     const path = databasePath()
     const future = new DatabaseSync(path)
     future.exec(`
       CREATE TABLE future_data (value TEXT NOT NULL);
       INSERT INTO future_data VALUES ('preserved');
-      PRAGMA user_version = 9;
+      PRAGMA user_version = 10;
     `)
     future.close()
 
@@ -400,7 +401,7 @@ describe('M4-01 Schema v6 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow('store: unsupported schema version 9')
+      }).toThrow('store: unsupported schema version 10')
     } finally {
       unexpectedDb?.close()
     }
@@ -428,7 +429,7 @@ describe('M4-01 Schema v6 contract', () => {
       simulatedVersionChangeOccurred = true
       const second = new DatabaseSync(path)
       try {
-        origExec.call(second, 'PRAGMA user_version = 9')
+        origExec.call(second, 'PRAGMA user_version = 10')
       } finally {
         second.close()
       }
@@ -445,7 +446,7 @@ describe('M4-01 Schema v6 contract', () => {
     try {
       expect(() => {
         unexpectedDb = openStore(path)
-      }).toThrow(/unsupported schema version 9/i)
+      }).toThrow(/unsupported schema version 10/i)
     } finally {
       unexpectedDb?.close()
       DatabaseSync.prototype.exec = origExec
@@ -455,7 +456,7 @@ describe('M4-01 Schema v6 contract', () => {
 
     const check = new DatabaseSync(path)
     try {
-      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
+      expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 10 })
     } finally {
       check.close()
     }
@@ -596,7 +597,7 @@ describe('M4-01 Schema v6 contract', () => {
 
         const expectedStatus = {
           phases: [],
-          schemaVersion: 8,
+          schemaVersion: 9,
           recordedCommandCount: 6,
           commands: { recorded: 6, applied: 1, rejected: 2, pending: 3 },
           lease: {
@@ -652,7 +653,7 @@ describe('M4-01 Schema v6 contract', () => {
 
         // formatStatus gives Arabic view with schema version 6 and same M3 facts
         const arabic = formatStatus(status as unknown as Status)
-        expect(arabic).toContain('إصدار المخطط: 8')
+        expect(arabic).toContain('إصدار المخطط: 9')
         expect(arabic).toContain('عدد الأوامر المسجلة: 6')
         expect(arabic).toContain('Example task')
         expect(arabic).toContain('task-one')

@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 const ASCII_WHITESPACE = 'char(32, 9, 10, 13, 12, 11)'
 const MIGRATIONS: Readonly<Record<number, string | readonly string[]>> = {
   1: 'CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL)',
@@ -68,6 +68,16 @@ const MIGRATIONS: Readonly<Record<number, string | readonly string[]>> = {
     `CREATE TRIGGER github_events_no_delete BEFORE DELETE ON github_events BEGIN SELECT RAISE(ABORT, 'github_events are permanent'); END`,
     `CREATE TRIGGER github_events_immutable BEFORE UPDATE ON github_events BEGIN SELECT RAISE(ABORT, 'github_events is immutable') WHERE OLD.status <> 'pending' OR NEW.status NOT IN ('approved', 'rejected') OR (NEW.status = 'approved' AND NEW.task_id IS NULL) OR NEW.event_id IS NOT OLD.event_id OR NEW.project_id IS NOT OLD.project_id OR NEW.repo IS NOT OLD.repo OR NEW.kind IS NOT OLD.kind OR NEW.actor_id IS NOT OLD.actor_id OR NEW.actor_login IS NOT OLD.actor_login OR NEW.issue IS NOT OLD.issue OR NEW.title IS NOT OLD.title OR NEW.scope_json IS NOT OLD.scope_json OR NEW.basis_json IS NOT OLD.basis_json OR NEW.text IS NOT OLD.text OR NEW.text_trust IS NOT OLD.text_trust OR NEW.text_sha256 IS NOT OLD.text_sha256 OR NEW.event_at IS NOT OLD.event_at OR NEW.received_at IS NOT OLD.received_at; END`,
     `CREATE TRIGGER github_events_pending_check BEFORE INSERT ON github_events WHEN NEW.status = 'pending' AND (NEW.title IS NULL OR length(trim(NEW.title)) = 0 OR NEW.scope_json IS NULL OR length(trim(NEW.scope_json)) = 0) BEGIN SELECT RAISE(ABORT, 'pending github_events must have title and scope_json'); END`,
+  ],
+  9: [
+    `CREATE TABLE project_limits (project_id TEXT PRIMARY KEY REFERENCES projects(id), max_parallel INTEGER NOT NULL CHECK (max_parallel >= 1), updated_at TEXT NOT NULL)`,
+    `CREATE TABLE quota_windows (project_id TEXT NOT NULL REFERENCES projects(id), provider TEXT NOT NULL, window_ms INTEGER NOT NULL CHECK (window_ms >= 1000), max_units INTEGER NOT NULL CHECK (max_units >= 1), updated_at TEXT NOT NULL, PRIMARY KEY (project_id, provider))`,
+    `CREATE TABLE quota_reservations (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(id), provider TEXT NOT NULL, units INTEGER NOT NULL CHECK (units = 1), state TEXT NOT NULL CHECK (state IN ('reserved','settled','released')), reserved_at_ms INTEGER NOT NULL, closed_at_ms INTEGER)`,
+    `CREATE TRIGGER quota_reservations_state BEFORE UPDATE OF state ON quota_reservations BEGIN SELECT RAISE(ABORT, 'invalid quota reservation state transition') WHERE OLD.state <> 'reserved' OR NEW.state NOT IN ('settled', 'released'); END`,
+    `CREATE TRIGGER quota_reservations_no_delete BEFORE DELETE ON quota_reservations BEGIN SELECT RAISE(ABORT, 'quota_reservations are permanent'); END`,
+    `CREATE TABLE budget_caps (project_id TEXT NOT NULL REFERENCES projects(id), level TEXT NOT NULL CHECK (level IN ('project','phase','task')), key TEXT NOT NULL, cap_units INTEGER NOT NULL CHECK (cap_units >= 1), updated_at TEXT NOT NULL, PRIMARY KEY (project_id, level, key))`,
+    `ALTER TABLE tasks ADD COLUMN provider TEXT NOT NULL DEFAULT 'default'`,
+    `CREATE INDEX quota_reservations_window ON quota_reservations(project_id, provider, reserved_at_ms)`,
   ],
 }
 

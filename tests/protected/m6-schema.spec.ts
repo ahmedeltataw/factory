@@ -118,13 +118,14 @@ function snapshot(db: DatabaseSync) { return Object.fromEntries(oldTables.map(na
 
 it('CHK-M6-02-a: fresh and v7 databases upgrade without data loss and preserve constraints', () => {
   const fresh = openStore(databasePath())
-  try { expect(fresh.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 }) } finally { fresh.close() }
+  try { expect(fresh.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 }) } finally { fresh.close() }
   const path = databasePath(); fixture(path)
   const before = new DatabaseSync(path); const rows = snapshot(before); before.close()
+  ;(rows['tasks'] as Array<Record<string, unknown>>).forEach(r => { r['provider'] = 'default' })
   for (let pass = 0; pass < 2; pass++) {
     const db = openStore(path)
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 })
+      expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 })
       expect(snapshot(db)).toEqual(rows)
       expect(db.prepare('SELECT * FROM github_events').all()).toEqual([])
       expect(db.prepare('SELECT * FROM github_cursor').all()).toEqual([])
@@ -162,14 +163,14 @@ it('CHK-M6-02-b: migration failure rolls back and future version is refused unch
     expect(check.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('github_events','github_cursor')").all()).toEqual([])
   } finally { check.close() }
   const futurePath = databasePath(); const future = new DatabaseSync(futurePath)
-  future.exec("CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('preserved'); PRAGMA user_version = 9"); future.close()
+  future.exec("CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('preserved'); PRAGMA user_version = 10"); future.close()
   const hash = () => createHash('sha256').update(readFileSync(futurePath)).digest('hex')
   const before = hash()
   let futureOpened: DatabaseSync | undefined
   try { expect(() => { futureOpened = openStore(futurePath) }).toThrow() } finally { futureOpened?.close() }
   expect(hash()).toBe(before)
   const probe = new DatabaseSync(futurePath)
-  try { expect(probe.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 }); expect(probe.prepare('SELECT * FROM future_data').all()).toEqual([{ value: 'preserved' }]) } finally { probe.close() }
+  try { expect(probe.prepare('PRAGMA user_version').get()).toEqual({ user_version: 10 }); expect(probe.prepare('SELECT * FROM future_data').all()).toEqual([{ value: 'preserved' }]) } finally { probe.close() }
 })
 
 it('CHK-M6-02-c: event and cursor constraints and transitions', () => {
@@ -267,7 +268,7 @@ it('CHK-M6-02-c: event and cursor constraints and transitions', () => {
             { name: 'devops', ord: 4, status: 'locked', openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } },
             { name: 'handover', ord: 5, status: 'locked', openedAt: null, closedAt: null, tasks: { ready: 0, progress: 0, blocked: 0, failed: 0, done: 0, dropped: 0 } },
           ],
-          schemaVersion: 8,
+          schemaVersion: 9,
           recordedCommandCount: 6,
           commands: { recorded: 6, applied: 1, rejected: 2, pending: 3 },
           lease: {
@@ -321,7 +322,7 @@ it('CHK-M6-02-c: event and cursor constraints and transitions', () => {
         expect(status).toEqual(expectedStatus)
 
         const arabic = formatStatus(status as unknown as Status)
-        expect(arabic).toContain('إصدار المخطط: 8')
+        expect(arabic).toContain('إصدار المخطط: 9')
         expect(arabic).toContain('عدد الأوامر المسجلة: 6')
         expect(arabic).toContain('Example task')
         expect(arabic).toContain('task-one')

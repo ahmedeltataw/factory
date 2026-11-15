@@ -21,7 +21,7 @@ import {
 } from '../core/graph.ts'
 
 /** Storage schema version this status reader supports: the M4 storage schema (v6) / M5 (v7). */
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 
 export type LeaseState = 'active' | 'released'
 export type LeaseFreshness = 'fresh' | 'stale' | 'future' | 'not-applicable'
@@ -129,7 +129,7 @@ interface GitHubStatus {
 }
 
 export interface Status {
-  readonly schemaVersion: 8
+  readonly schemaVersion: 9
   readonly github?: GitHubStatus | null
   readonly recordedCommandCount: number
   readonly lease: null | Lease
