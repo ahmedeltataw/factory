@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "card": "M7-05",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "b1f8cc5",
+  "checks": [
+    {
+      "id": "CHK-M7-05-a",
+      "command": "verify CI run 43686958394 (4 cells) + mutation ingest.ts run 43686967150 (>=80) + sol approve round 2",
+      "result": "pass",
+      "output": "all jobs success"
+    },
+    {
+      "id": "CHK-M7-05-b",
+      "command": "verify CI run 43686958394 (4 cells) + mutation ingest.ts run 43686967150 (>=80) + sol approve round 2",
+      "result": "pass",
+      "output": "all jobs success"
+    },
+    {
+      "id": "CHK-M7-05-c",
+      "command": "verify CI run 43686958394 (4 cells) + mutation ingest.ts run 43686967150 (>=80) + sol approve round 2",
+      "result": "pass",
+      "output": "all jobs success"
+    }
+  ],
+  "ended_at": "2026-11-15T07:05:41.277Z"
+}
