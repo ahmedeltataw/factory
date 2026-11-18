@@ -15,7 +15,8 @@
     "supervisor/src/sources/github/event.ts",
     "supervisor/src/sources/github/gate.ts",
     "supervisor/src/sources/github/ingest.ts",
-    "supervisor/src/sources/github/client.ts"
+    "supervisor/src/sources/github/client.ts",
+    "supervisor/src/app/quota.ts"
   ],
   "testRunner": "vitest",
   "plugins": [
