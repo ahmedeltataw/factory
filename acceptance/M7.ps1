@@ -30,7 +30,10 @@ $script:stateDir = $null
 $script:baseSha = $null
 
 $acceptanceNonce = [guid]::NewGuid().ToString('N')
-$sharedBase = Join-Path $env:TEMP 'factory-m7-acceptance'
+$tempRoot = if ($env:TEMP.Length -gt 50 -and $env:LOCALAPPDATA -and (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Temp'))) { (Join-Path $env:LOCALAPPDATA 'Temp') } else { $env:TEMP }
+$script:tempRoot = $tempRoot
+$sharedBase = Join-Path $tempRoot 'factory-m7-acceptance'
+$script:sharedBase = $sharedBase
 $acceptanceBase = Join-Path $sharedBase $acceptanceNonce
 $dest = Join-Path $acceptanceBase 'factory'
 $tempRepo = Join-Path $acceptanceBase 'demo-repo'
@@ -140,7 +143,7 @@ function Read-DemoTextStrict([string]$path) {
 function Remove-AcceptanceTempDir([string]$dir) {
   if ([string]::IsNullOrWhiteSpace($dir)) { return }
   if (-not (Test-Path -LiteralPath $dir)) { return }
-  $expectedShared = Join-Path $env:TEMP 'factory-m7-acceptance'
+  $expectedShared = if ($script:sharedBase) { $script:sharedBase } else { $sharedBase }
   $fullExpected = [System.IO.Path]::GetFullPath($expectedShared).TrimEnd([char[]]@('\', '/'))
   $fullDir = [System.IO.Path]::GetFullPath($dir).TrimEnd([char[]]@('\', '/'))
   if ($fullDir -eq $fullExpected -or (-not $fullDir.StartsWith($fullExpected + '\', [System.StringComparison]::OrdinalIgnoreCase) -and -not $fullDir.StartsWith($fullExpected + '/', [System.StringComparison]::OrdinalIgnoreCase))) {
@@ -749,7 +752,7 @@ function Invoke-FactoryStatusText([string]$sDir) {
   } else {
     'lib/factory.mjs'
   }
-  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $tempRoot }
   $errFile = Join-Path $activeLogsDir 'status-text.err'
   $raw = & $script:nodeExe $cliPath status --state-dir $sDir 2> $errFile
   $code = $LASTEXITCODE
@@ -774,7 +777,7 @@ function Invoke-FactoryCli([string[]]$cliArgs) {
   } else {
     'lib/factory.mjs'
   }
-  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $tempRoot }
   $errFile = Join-Path $activeLogsDir ("cli-" + [guid]::NewGuid().ToString('N') + ".err")
   $raw = & $script:nodeExe $cliPath @cliArgs 2> $errFile
   $code = $LASTEXITCODE
@@ -895,7 +898,7 @@ function New-DemoTask([string]$taskId, [string[]]$options = @(), [string]$sDir =
   } else {
     'lib/factory.mjs'
   }
-  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $tempRoot }
   $errFile = Join-Path $activeLogsDir "create-$taskId.err"
   $cmdArgs = @('task', 'create', '--state-dir', $activeState, '--title', "Acceptance $taskId", '--command-id', $taskId) + $options
   $raw = & $script:nodeExe $cliPath @cmdArgs 2> $errFile
@@ -1229,8 +1232,8 @@ try {
 
 function Get-DemoQuotaData([string]$sDir = $null) {
   $activeState = if ($sDir) { $sDir } elseif ($script:stateDir) { $script:stateDir } else { $stateDir }
-  $activeHelpersDir = if ($helpersDir) { $helpersDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'helpers' } else { $env:TEMP }
-  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $activeHelpersDir = if ($helpersDir) { $helpersDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'helpers' } else { $tempRoot }
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $tempRoot }
   $helper = Join-Path $activeHelpersDir 'read-quota-data.mjs'
   $code = @'
 import { DatabaseSync } from 'node:sqlite';
@@ -1292,8 +1295,8 @@ function Assert-DemoCanaryAbsent([string]$sDir, [string]$canary) {
   if ([string]::IsNullOrWhiteSpace($sDir) -or -not (Test-Path -LiteralPath $sDir)) {
     throw "Assert-DemoCanaryAbsent: state directory does not exist: $sDir"
   }
-  $activeHelpersDir = if ($helpersDir) { $helpersDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'helpers' } else { $env:TEMP }
-  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+  $activeHelpersDir = if ($helpersDir) { $helpersDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'helpers' } else { $tempRoot }
+  $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $tempRoot }
   $helper = Join-Path $activeHelpersDir 'scan-canary.mjs'
   $code = @'
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -1835,7 +1838,7 @@ try {
     }
 
     # Also verify supervisor stdout/stderr and status outputs do not leak canary (fail-closed: every expected file must exist)
-    $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+    $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $tempRoot }
     $expectedCanaryLogs = @(
       (Join-Path $activeLogsDir 'intake-budget-sup.out'),
       (Join-Path $activeLogsDir 'intake-budget-sup.err'),
@@ -1863,8 +1866,8 @@ try {
     $proj = Initialize-DemoProject 'restart'
     $pState = $proj.StateDir
 
-    # 1. Set quota: window 300000ms, max 2 units
-    Invoke-FactoryCli @('quota', 'set', '--state-dir', $pState, '--provider', 'default', '--window-ms', '300000', '--max-units', '2')
+    # 1. Set quota: window 300000ms, max 4 units
+    Invoke-FactoryCli @('quota', 'set', '--state-dir', $pState, '--provider', 'default', '--window-ms', '300000', '--max-units', '4')
 
     # 2. Create two non-overlapping tasks
     $t1 = [guid]::NewGuid().ToString()
@@ -1873,8 +1876,8 @@ try {
     New-DemoTask $t1 @('--scope', 'src/t1', '--scope', "factory-fake/${t1}.txt") $pState
     New-DemoTask $t2 @('--scope', 'src/t2', '--scope', "factory-fake/${t2}.txt") $pState
 
-    # 3. Start supervisor with fake executor sleeping 6000ms
-    $proc1 = Start-DemoSupervisor 'restart-sup1' -sDir $pState -extraEnv @{ FAKE_SLEEP_MS = '6000' }
+    # 3. Start supervisor with fake executor sleeping 30000ms
+    $proc1 = Start-DemoSupervisor 'restart-sup1' -sDir $pState -extraEnv @{ FAKE_SLEEP_MS = '30000' }
 
     # 4. Poll until two attempts have a confirmed RUNNING worker before killing the Supervisor
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1936,7 +1939,7 @@ try {
     }
 
     # 6. Restart supervisor with --takeover
-    $proc2 = Start-DemoSupervisor 'restart-sup2' -takeover $takeover -sDir $pState
+    $proc2 = Start-DemoSupervisor 'restart-sup2' -takeover $takeover -sDir $pState -extraEnv @{ FAKE_SLEEP_MS = '300' }
     Wait-DemoSupervisor $proc2 'restart-sup2' 60
     Register-DemoWorkerNonces $pState
 
@@ -2004,7 +2007,7 @@ try {
     }
 
     # Also verify supervisor stdout/stderr and status outputs do not leak canary (fail-closed: every expected file must exist)
-    $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $env:TEMP }
+    $activeLogsDir = if ($logsDir) { $logsDir } elseif ($acceptanceBase) { Join-Path $acceptanceBase 'logs' } else { $tempRoot }
     $expectedCanaryLogs = @(
       (Join-Path $activeLogsDir 'restart-sup1.out'),
       (Join-Path $activeLogsDir 'restart-sup1.err'),
