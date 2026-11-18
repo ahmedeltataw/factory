@@ -14,22 +14,24 @@ This file is for any agent (Claude, Codex, Gemini/Antigravity, OpenCode, ...) th
 
 | Role | Who | Does | Never |
 |---|---|---|---|
-| Lead | Claude | writes card specs and briefs, runs gates outside sandboxes, records evidence, merges, pushes | writes product or test code |
-| Builder | gpt-6.1-terra (Codex), gemini-3.8-flash (Antigravity), OpenCode free models as fallback | implements one card inside its allowed paths | commits, edits outside allowed paths |
-| Reviewer | gpt-6.1-sol (Codex), gemini-3.8-flash-high (Antigravity; replaced gemini-4-argon, which agy no longer offers, 2026-11-11). Flash never reviews its own card | read-only review, verdict `approve` or `changes` | edits files |
+| Lead | Orchestrator (Carbon) — `gemini-pro-orchestrator` (effort `high`) *(updated 2026-11-18)* | writes card specs and briefs, runs gates outside sandboxes, records evidence, merges, pushes | writes product or test code |
+| Builder | **High/Critical:** `gemini-4-carbon` (high, Antigravity), `gpt-6.1-terra` (Codex), `gemini-4-hydrogen` / `gemini-4-argon` (Antigravity). **Medium/Low:** `gemini-3.8-flash` (high, Antigravity), OpenCode free models as fallback | implements one card inside its allowed paths | commits, edits outside allowed paths |
+| Reviewer | **High/Critical & General:** `gpt-6.1-sol` (Codex), `gemini-4-carbon` (high) / `gemini-4-argon` / `gemini-4-hydrogen` / `gemini-3.8-flash` (Antigravity). **Hard rule: Reviewer is never from the Builder's model family** (Codex-built → Gemini reviewer; Gemini-built → Codex reviewer) | read-only review, verdict `approve` or `changes` | edits files |
 | Owner | Ahmed | decisions, runs `acceptance/M<n>.ps1` at milestone close | |
 | Muse | Meta's agent, via repo `factory-muse-inbox` | mirrors the board to Notion, CI triage notes, drafts, web research | writes to this repo |
 
-Communication (owner rule, 2026-11-11):
-- Telegram group "Ai chat" is the chat channel. The Lead posts there with its bot (@Aeclaude_bot); Muse posts as the user "رفاعي". Use it for quick coordination: a card merged, check run X, a bug in Y.
+Communication (owner rules, 2026-11-11 & 2026-11-17):
+- Telegram group "Ai chat" is the chat channel. The Lead posts there with its bot (@Aeclaude_bot); Muse posts as the user "رفاعي". Keep the Telegram listener (`bash briefs/factory-listen.sh`) running at all times; never stop it for any reason, and restart it right after every wakeup.
+- Every message to Muse MUST start with `@Muse [factory] ...` (Muse follows several projects in the same group). Before acting on or replying to any message from Muse, check that it names `[factory]`; if it names another project or no project, ignore it silently and restart the listener.
+- Notion task sync: every new card → `@Muse [factory] ضيف task: <id> · <title> · <builder> · <reviewer> · <status>`. Every status change → `@Muse [factory] غيّر <id> → <status> (<note>)`, keeping `board.json` in `factory-muse-inbox` in sync at the same step.
+- Decisions and proposals go to Muse in the group (options, recommendation first, what it blocks).
 - GitHub (`factory-muse-inbox`) holds long items so builders can find them: QA reports, contract reviews, `qa-bug` and `ci-issue` issues.
-- The Lead reads only group messages that contain `@Lead`. When the Lead needs Muse to answer, it starts the message with `@Muse`, and Muse replies with `@Lead`.
-- Discussions with Muse (new decisions, new ways of working): Muse writes the whole proposal in one `factory-muse-inbox` issue (problem, proposal, alternatives, cost) and posts one line in the group: `@Lead proposal in #N`. The Lead answers once on the issue (accept, reject, or accept with changes, with reasons). Owner decisions go to the group as one clear question.
-- The Lead's listener sends each `@Lead` message to Haiku first, which answers status questions from `briefs/lead-status.md`; orders, decisions and bugs wake the Lead.
+- Discussions with Muse (new decisions, new ways of working): Muse writes the whole proposal in one `factory-muse-inbox` issue (problem, proposal, alternatives, cost) and posts one line in the group: `@Lead proposal in #N`. The Lead answers once on the issue (accept, reject, or accept with changes, with reasons).
+- The Lead's listener sends each `@Lead` message (for `[factory]`) to Haiku first, which answers status questions from `briefs/lead-status.md`; orders, decisions and bugs wake the Lead.
 - Decisions and orders come from the owner only.
 
 Hard rules:
-- The reviewer comes from a different vendor than the builder. Protected tests (`tests/protected/**`) are written by the vendor other than the one that implements the card.
+- **Cross-family review & protected tests:** The reviewer MUST come from a different model family than the builder (Codex family vs Gemini family). Protected tests (`tests/protected/**`) are also written by a model family other than the one that implements the card.
 - Nothing is merged without an `approve` from the reviewer and gates re-run by the Lead.
 - Low-risk cards get one reviewer. High-risk cards get the reviewer named in the card, plus a second one when the Lead sees new risk.
 - Free or external models (OpenCode free, Muse) never receive client or confidential data.
