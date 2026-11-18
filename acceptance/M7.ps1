@@ -1963,8 +1963,21 @@ try {
     $finalSnap = Invoke-FactoryStatus $pState
     $qData = Get-DemoQuotaData $pState
 
-    # Compute expected usage from started attempts (a worker row exists, via status/db inspection)
+    # Verify both tasks completed successfully after takeover
+    $doneTasks = @($finalSnap.tasks | Where-Object { ($_.id -eq $t1 -or $_.id -eq $t2) -and $_.status -eq 'done' })
+    Assert-Demo ($doneTasks.Count -eq 2) "Expected both tasks $t1 and $t2 to reach status 'done', found $($doneTasks.Count)"
+
+    # Verify full takeover + replacement lifecycle in database started attempts
     $dbStartedAttempts = @($qData.startedAttempts)
+    Assert-Demo ($dbStartedAttempts.Count -eq 4) "Expected exactly 4 started attempts in DB (2 original + 2 replacement), found $($dbStartedAttempts.Count)"
+
+    $originalAttempts = @($dbStartedAttempts | Where-Object { $_.attempt_no -eq 1 -and $_.status -eq 'interrupted' })
+    Assert-Demo ($originalAttempts.Count -eq 2) "Expected exactly 2 original attempts (attempt_no 1, interrupted), found $($originalAttempts.Count)"
+
+    $replacementAttempts = @($dbStartedAttempts | Where-Object { $_.attempt_no -eq 2 -and $_.status -eq 'succeeded' })
+    Assert-Demo ($replacementAttempts.Count -eq 2) "Expected exactly 2 replacement attempts (attempt_no 2, succeeded), found $($replacementAttempts.Count)"
+
+    # Compute expected usage from started attempts (a worker row exists, via status/db inspection)
     $statusStartedAttempts = @($finalSnap.tasks | ForEach-Object {
       if ($null -ne $_.attempts) {
         @($_.attempts) | Where-Object { $null -ne $_.worker }
@@ -1974,13 +1987,19 @@ try {
     Assert-Demo ($dbStartedAttempts.Count -gt 0) "No started attempts (with worker row in DB) were recorded"
     Assert-Demo ($statusStartedAttempts.Count -eq $dbStartedAttempts.Count) "Started attempts mismatch between status ($($statusStartedAttempts.Count)) and database ($($dbStartedAttempts.Count))"
 
-    $expectedUsage = $dbStartedAttempts.Count
+    $expectedUsage = 4
+    Assert-Demo ($dbStartedAttempts.Count -eq $expectedUsage) "Expected usage mismatch with started attempts ($($dbStartedAttempts.Count) vs $expectedUsage)"
 
     Assert-Demo ($null -ne $finalSnap.quota -and $finalSnap.quota.windows.Count -ge 1) "Quota status missing in final snapshot"
     $usedInStatus = $finalSnap.quota.windows[0].used
 
     # Assert exact counts: used in status equals started attempts with worker row
     Assert-Demo ($usedInStatus -eq $expectedUsage) "quota.windows[0].used ($usedInStatus) does not equal started attempts with worker row ($expectedUsage)"
+
+    # Assert exact counts and states for reservations
+    Assert-Demo ($qData.reservations.Count -eq 4) "Expected exactly 4 reservations in DB, found $($qData.reservations.Count)"
+    $settledReservations = @($qData.reservations | Where-Object { $_.state -eq 'settled' })
+    Assert-Demo ($settledReservations.Count -eq 4) "Expected exactly 4 settled reservations in DB, found $($settledReservations.Count)"
 
     # Assert no 'reserved' reservation left for a terminal attempt
     Assert-Demo ($qData.terminalWithReserved.Count -eq 0) "Found reserved reservations for terminal attempts: $(ConvertTo-Json $qData.terminalWithReserved)"
