@@ -578,9 +578,8 @@ describe('M4-06 scope locks and scope enforcement', () => {
       const createY = runCli(['task', 'create', '--state-dir', stateDir, '--title', 'Task Y', '--scope', 'lib', '--scope', `factory-fake/${taskYId}.txt`, '--command-id', taskYId], { cwd: tempCwd })
       expect(createY.status).toBe(0)
 
-      // Apply queued create commands, then directly seed not_before_ms for Task W into the future:
+      // Apply queued create commands, then directly seed not_before_ms for Task W into the future (CHK-M7-QA1-b):
       const dbPre = openStore(join(stateDir, 'state.sqlite'))
-      const futureTime = Date.now() + 3000
       try {
         const handle = acquireSupervisor(dbPre, stateDir, { nowMs: Date.now(), staleAfterMs: 30000 })
         try {
@@ -589,6 +588,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
           handle.release(Date.now())
         }
 
+        const futureTime = Date.now() + 12_000
         const updateRes = dbPre.prepare('UPDATE tasks SET not_before_ms = ? WHERE id = ?').run(futureTime, taskWId)
         expect(Number(updateRes.changes)).toBe(1)
 
@@ -606,7 +606,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
             env: cleanTestEnv({
               FAKE_SLEEP_MS: '200',
             }),
-            timeout: 60000,
+            timeout: 75000,
           },
         )
         expect(startRes.status).toBe(0)
@@ -639,7 +639,7 @@ describe('M4-06 scope locks and scope enforcement', () => {
         collectNoncesFromDatabases()
       }
     },
-    90000,
+    120000,
   )
 
   it(

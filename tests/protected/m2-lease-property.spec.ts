@@ -10,11 +10,20 @@ import { LeaseLostError } from '../../supervisor/src/app/supervisor-lease.ts'
 import * as leaseModule from '../../supervisor/src/app/supervisor-lease.ts'
 
 it('CHK-M2-03-d/f: takeover changes only at the stale boundary with exact evidence', () => {
-  fc.assert(fc.property(fc.integer({ min: 0, max: 1000000 }), fc.integer({ min: 1, max: 100000 }), (heartbeatMs, staleAfterMs) => {
-    const dir = mkdtempSync(join(tmpdir(), 'factory-lease-property-'))
-    const db = openStore(join(dir, 'state.sqlite'))
-    try {
-      db.prepare("INSERT INTO supervisor_lease VALUES (1, 'owner', 1, ?, 'active')").run(heartbeatMs)
+  const dir = mkdtempSync(join(tmpdir(), 'factory-lease-property-'))
+  const db = openStore(join(dir, 'state.sqlite'))
+  const insertSeedLease = db.prepare("INSERT INTO supervisor_lease VALUES (1, 'owner', 1, ?, 'active')")
+  try {
+    fc.assert(fc.property(fc.integer({ min: 0, max: 1000000 }), fc.integer({ min: 1, max: 100000 }), (heartbeatMs, staleAfterMs) => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        db.exec('DELETE FROM supervisor_lease')
+        insertSeedLease.run(heartbeatMs)
+        db.exec('COMMIT')
+      } catch (err) {
+        try { db.exec('ROLLBACK') } catch { /* ignore */ }
+        throw err
+      }
       const evidence = { ownerId: 'owner', generation: 1, heartbeatMs }
       const nowMs = heartbeatMs + staleAfterMs
       expect(() => acquireSupervisor(db, dir, { nowMs: nowMs - 1, staleAfterMs, takeover: evidence })).toThrow()
@@ -22,8 +31,8 @@ it('CHK-M2-03-d/f: takeover changes only at the stale boundary with exact eviden
       expect(db.prepare('SELECT owner_id, generation, heartbeat_ms, status FROM supervisor_lease').get()).toMatchObject({ owner_id: 'owner', generation: 1, heartbeat_ms: heartbeatMs, status: 'active' })
       const next = acquireSupervisor(db, dir, { nowMs, staleAfterMs, takeover: evidence })
       try { expect(next.generation).toBe(2) } finally { next.release(nowMs) }
-    } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
-  }), { numRuns: 30 })
+    }), { numRuns: 30 })
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
 }, 20000)
 
 it('CHK-M2-03-e: failed release relinquishes the OS lock and preserves the active row', () => {
