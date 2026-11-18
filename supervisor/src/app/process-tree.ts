@@ -160,7 +160,7 @@ export async function killTree(pid: number, nonce: string, options?: { killComma
     if (options?.killCommand || process.platform === 'win32') {
       const cmd = options?.killCommand ?? { file: 'taskkill', args: ['/T', '/F', '/PID', String(pid)] }
       const result = spawnSync(cmd.file, cmd.args, { encoding: 'utf8', timeout: 10000, windowsHide: true })
-      if (result.error || result.status !== 0) return { result: 'kill-failed', detail: result.error?.message || result.stderr?.trim() || `Kill command exited ${result.status}` }
+      if (result.error || (options?.killCommand && result.status !== 0)) return { result: 'kill-failed', detail: result.error?.message || result.stderr?.trim() || `Kill command exited ${result.status}` }
     } else {
       try { process.kill(-pid, 'SIGKILL') } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
