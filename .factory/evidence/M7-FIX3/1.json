@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M7-FIX3",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "8c3d97b",
+  "checks": [
+    {
+      "id": "CHK-M7-FIX3-a",
+      "command": "verify CI run 44267119366 (4 cells) + Stryker mutation run 44265833457 (process-tree.ts 87.66%) + gemini-4-carbon approve + local real-process 20x spawn/kill",
+      "result": "pass",
+      "output": "all 4 verify matrix jobs succeeded; process-tree.ts mutation score 87.66% (>= 80); disappeared-process and kill-failed unit + real-process gates green"
+    }
+  ],
+  "ended_at": "2026-11-18T08:57:34.170Z"
+}
