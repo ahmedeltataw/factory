@@ -227,22 +227,53 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
   it('CHK-M5-05-e: random sequences of create, kill, retry and advance commands preserve phase and dependency invariants', () => {
     let totalGeneratedApplied = 0
 
-    fc.assert(
-      fc.property(fc.array(actionArbitrary, { minLength: 6, maxLength: 20 }), (actions) => {
-        const stateDir = mkdtempSync(join(tmpdir(), 'factory-prop-m5-'))
-        directories.push(stateDir)
-        const dbPath = join(stateDir, 'state.sqlite')
+    const stateDir = mkdtempSync(join(tmpdir(), 'factory-prop-m5-'))
+    directories.push(stateDir)
+    const dbPath = join(stateDir, 'state.sqlite')
 
-        let db: DatabaseSync | undefined
-        let handle: SupervisorLeaseHandle | undefined
+    const db = openStore(dbPath)
+    let handleRef: SupervisorLeaseHandle | undefined
 
+    try {
+      ensureSchemaV7(db)
+      const handle = acquireSupervisor(db, stateDir, { nowMs: 1000, staleAfterMs: 300000 })
+      handleRef = handle
+      db.prepare("INSERT INTO projects (id, name, created_at) VALUES ('p1', 'Property Project', '2026-11-10T00:00:00.000Z')").run()
+      db.prepare("INSERT INTO project_config (project_id, repo_path, base_ref, created_at) VALUES ('p1', '/repo', 'main', '2026-11-10T00:00:00.000Z')").run()
+      seedProjectPhases(db, 'p1')
+
+      const deleteTriggers = db
+        .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name IN ('task_deps', 'command_outcomes', 'commands') AND sql LIKE '%BEFORE DELETE%'")
+        .all() as Array<{ name: string; sql: string }>
+
+      const resetSampleState = (): void => {
+        db.exec('BEGIN IMMEDIATE')
         try {
-          db = openStore(dbPath)
-          ensureSchemaV7(db)
-          handle = acquireSupervisor(db, stateDir, { nowMs: 1000, staleAfterMs: 300000 })
-          db.prepare("INSERT INTO projects (id, name, created_at) VALUES ('p1', 'Property Project', '2026-11-10T00:00:00.000Z')").run()
-          db.prepare("INSERT INTO project_config (project_id, repo_path, base_ref, created_at) VALUES ('p1', '/repo', 'main', '2026-11-10T00:00:00.000Z')").run()
-          seedProjectPhases(db, 'p1')
+          for (const trig of deleteTriggers) {
+            db.exec(`DROP TRIGGER "${trig.name}"`)
+          }
+          db.exec(`
+            DELETE FROM outbox;
+            DELETE FROM task_deps;
+            DELETE FROM tasks;
+            DELETE FROM command_outcomes;
+            DELETE FROM commands;
+            UPDATE phases SET status = 'locked', opened_at = NULL, closed_at = NULL WHERE project_id = 'p1';
+            UPDATE phases SET status = 'open', opened_at = '2026-11-10T00:00:00.000Z', closed_at = NULL WHERE project_id = 'p1' AND name = 'intake';
+          `)
+          for (const trig of deleteTriggers) {
+            db.exec(trig.sql)
+          }
+          db.exec('COMMIT')
+        } catch (err) {
+          try { db.exec('ROLLBACK') } catch { /* ignore */ }
+          throw err
+        }
+      }
+
+      fc.assert(
+        fc.property(fc.array(actionArbitrary, { minLength: 6, maxLength: 20 }), (actions) => {
+          resetSampleState()
 
           // Track phase transitions across apply runs:
           // a done phase never becomes open/locked, an open phase only becomes done, a locked phase only becomes open; at most one open.
@@ -542,25 +573,23 @@ describe('M5-05 CHK-M5-05-e: property invariants for commands and apply', () => 
             WHERE command_id NOT IN ('seed-task-1', 'seed-cmd-adv-1', 'seed-task-2') AND outcome = 'applied'
           `).get() as { c: number }).c
           totalGeneratedApplied += genApplied
-        } finally {
-          if (handle) {
-            try {
-              handle.release(Date.now())
-            } catch {
-              // ignore
-            }
-          }
-          if (db) {
-            try {
-              db.close()
-            } catch {
-              // ignore
-            }
-          }
+        }),
+        { numRuns: 20 },
+      )
+    } finally {
+      if (handleRef) {
+        try {
+          handleRef.release(Date.now())
+        } catch {
+          // ignore
         }
-      }),
-      { numRuns: 20 },
-    )
+      }
+      try {
+        db.close()
+      } catch {
+        // ignore
+      }
+    }
     expect(totalGeneratedApplied, 'at least some generated commands must be applied across property runs').toBeGreaterThan(0)
   }, 60000)
 })

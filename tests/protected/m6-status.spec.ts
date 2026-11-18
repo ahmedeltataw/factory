@@ -702,6 +702,13 @@ describe('M6-07 Protected Tests: Status of GitHub intake', () => {
         etag: 'etag-xyz',
         error: 'policy: missing',
       })
+      insertCursor(db, {
+        repo: 'owner/frontend',
+        updatedAt: '2026-11-14T16:10:00.000Z',
+        nextPollMs: 1768300000000,
+        etag: null,
+        error: 'rate-limit: exhausted',
+      })
       // Insert events with distinct counts for all 4 statuses:
       // pending: 18, ignored: 31, approved: 47, rejected: 73
       //
@@ -724,8 +731,19 @@ describe('M6-07 Protected Tests: Status of GitHub intake', () => {
         receivedAt: '2026-11-13T14:35:00.000Z',
         text: canaryText,
       })
+      insertEvent(db, {
+        eventId: '9002',
+        repo: 'owner/frontend',
+        issue: 64,
+        actorLogin: 'ui-maintainer',
+        status: 'pending',
+        title: 'Fix \u202eRTL   navbar',
+        scopeJson: '["web/ui"]',
+        receivedAt: '2026-11-13T14:35:00.000Z',
+        text: canaryText,
+      })
       const pendingNatoSuffixes = [
-        'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf',
+        'charlie', 'delta', 'echo', 'foxtrot', 'golf',
         'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike',
         'november', 'oscar', 'papa', 'quebec', 'romeo',
       ]
@@ -790,15 +808,19 @@ describe('M6-07 Protected Tests: Status of GitHub intake', () => {
       // Must contain Arabic characters
       expect(output).toMatch(/[\u0600-\u06ff]/)
 
-      // Must show repo name
+      // Must show both cursor repo names (CHK-M7-QA1-a)
       expect(output).toContain('owner/backend')
+      expect(output).toContain('owner/frontend')
 
-      // Must show poll times
+      // Must show poll times for both repos
       expect(output).toContain('2026-11-13T14:30:00.000Z')
       expect(output).toContain(new Date(1768220000000).toISOString())
+      expect(output).toContain('2026-11-14T16:10:00.000Z')
+      expect(output).toContain(new Date(1768300000000).toISOString())
 
-      // Must show paused-policy error from M6-05
+      // Must show distinct error states for both repos
       expect(output).toContain('policy: missing')
+      expect(output).toContain('rate-limit: exhausted')
 
       // Must show all four event counts with distinguishable values (without fixing wording or field order).
       // Counts are non-vacuous: 31, 18, 47, and 73 are unique and absent from all other rendered facts.
@@ -807,11 +829,17 @@ describe('M6-07 Protected Tests: Status of GitHub intake', () => {
       expect(output).toMatch(/\b47\b/)
       expect(output).toMatch(/\b73\b/)
 
-      // Must show pending event facts: eventId, issue number, actor, title
+      // Must show pending event facts for at least two pending events: eventId, issue number, actor, sanitized title
       expect(output).toContain('9001')
       expect(output).toContain('42')
       expect(output).toContain('lead-dev')
       expect(output).toContain('Add OAuth authentication')
+
+      expect(output).toContain('9002')
+      expect(output).toContain('64')
+      expect(output).toContain('ui-maintainer')
+      expect(output).toContain('Fix RTL navbar')
+      expect(output).not.toContain('\u202e')
 
       // Must NOT leak stored event body text
       expect(output).not.toContain(canaryText)
