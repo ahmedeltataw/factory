@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "card": "M7-08",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "2cd246e",
+  "checks": [
+    {
+      "id": "CHK-M7-08-a",
+      "command": "verify CI run 44270663497 (4 cells) + gpt-6.1-sol approve (r9) + powershell -File acceptance/M7.ps1 -SkipBaseline -Source m7-int -Ref m7-integration (steps 1-3, 6, 10-15 PASS; no mutation required: PowerShell acceptance script)",
+      "result": "pass",
+      "output": "all 4 verify matrix jobs succeeded; steps 1-3, 6, and 10-15 PASS with zero survivors and clean temp cleanup"
+    },
+    {
+      "id": "CHK-M7-08-b",
+      "command": "verify CI run 44270663497 (4 cells) + gpt-6.1-sol approve (r9) + powershell -File acceptance/M7.ps1 -SkipBaseline -Source m7-int -Ref m7-integration (steps 1-3, 6, 10-15 PASS; no mutation required: PowerShell acceptance script)",
+      "result": "pass",
+      "output": "all 4 verify matrix jobs succeeded; steps 1-3, 6, and 10-15 PASS with zero survivors and clean temp cleanup"
+    },
+    {
+      "id": "CHK-M7-08-c",
+      "command": "verify CI run 44270663497 (4 cells) + gpt-6.1-sol approve (r9) + powershell -File acceptance/M7.ps1 -SkipBaseline -Source m7-int -Ref m7-integration (steps 1-3, 6, 10-15 PASS; no mutation required: PowerShell acceptance script)",
+      "result": "pass",
+      "output": "all 4 verify matrix jobs succeeded; steps 1-3, 6, and 10-15 PASS with zero survivors and clean temp cleanup"
+    },
+    {
+      "id": "CHK-M7-08-d",
+      "command": "verify CI run 44270663497 (4 cells) + gpt-6.1-sol approve (r9) + powershell -File acceptance/M7.ps1 -SkipBaseline -Source m7-int -Ref m7-integration (steps 1-3, 6, 10-15 PASS; no mutation required: PowerShell acceptance script)",
+      "result": "pass",
+      "output": "all 4 verify matrix jobs succeeded; steps 1-3, 6, and 10-15 PASS with zero survivors and clean temp cleanup"
+    },
+    {
+      "id": "CHK-M7-08-e",
+      "command": "verify CI run 44270663497 (4 cells) + gpt-6.1-sol approve (r9) + powershell -File acceptance/M7.ps1 -SkipBaseline -Source m7-int -Ref m7-integration (steps 1-3, 6, 10-15 PASS; no mutation required: PowerShell acceptance script)",
+      "result": "pass",
+      "output": "all 4 verify matrix jobs succeeded; steps 1-3, 6, and 10-15 PASS with zero survivors and clean temp cleanup"
+    },
+    {
+      "id": "CHK-M7-08-f",
+      "command": "verify CI run 44270663497 (4 cells) + gpt-6.1-sol approve (r9) + powershell -File acceptance/M7.ps1 -SkipBaseline -Source m7-int -Ref m7-integration (steps 1-3, 6, 10-15 PASS; no mutation required: PowerShell acceptance script)",
+      "result": "pass",
+      "output": "all 4 verify matrix jobs succeeded; steps 1-3, 6, and 10-15 PASS with zero survivors and clean temp cleanup"
+    }
+  ],
+  "ended_at": "2026-11-18T09:07:13.416Z"
+}
