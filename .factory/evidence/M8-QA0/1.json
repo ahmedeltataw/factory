@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "card": "M8-QA0",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "90313f1",
+  "checks": [
+    {
+      "id": "CHK-M8-QA0-a",
+      "command": "verify CI run 44544812631 (4/4 cells incl. windows-latest node 24 & 26) + local vitest 630ms + gpt-6.1-sol xhigh cross-family approve",
+      "result": "pass",
+      "output": "all 4 CI jobs success; 25 fast-check samples pass in 630ms local with verified DELETE journal mode reset"
+    }
+  ],
+  "ended_at": "2026-11-19T14:44:49.858Z"
+}
