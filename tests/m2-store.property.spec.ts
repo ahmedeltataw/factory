@@ -23,15 +23,33 @@ const SCHEMA_OBJECTS = "SELECT type, name FROM sqlite_master WHERE type IN ('tab
 function resetToV1(path: string, projects: readonly Project[]): void {
   const db = new DatabaseSync(path)
   try {
+    // This file is discarded when the test ends, so durability buys nothing here. `synchronous = OFF`
+    // removes the per-statement fsync that made the reset cost ~2s per run on NTFS. The pragma is
+    // connection-scoped only: `openStore` opens a fresh connection with the default durability.
+    db.exec('PRAGMA synchronous = OFF')
     db.exec('PRAGMA foreign_keys = OFF')
-    db.exec('PRAGMA journal_mode = DELETE')
     const objects = db.prepare(SCHEMA_OBJECTS).all() as Array<{ type: string; name: string }>
-    for (const object of objects) if (object.type === 'trigger') db.exec(`DROP TRIGGER IF EXISTS "${object.name}"`)
-    for (const object of objects) if (object.type === 'table') db.exec(`DROP TABLE IF EXISTS "${object.name}"`)
-    db.exec(V1_SCHEMA)
-    const insert = db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)')
-    for (const project of projects) insert.run(project.id, project.name, '2026-01-01T00:00:00Z')
-    db.exec('PRAGMA user_version = 1')
+    // One transaction for the whole reset: in `DELETE` journal mode every auto-commit statement
+    // creates, fsyncs and unlinks its own `-journal` file, which is what pushed windows-latest CI
+    // past the 30s test timeout.
+    db.exec('BEGIN')
+    try {
+      for (const object of objects) if (object.type === 'trigger') db.exec(`DROP TRIGGER IF EXISTS "${object.name}"`)
+      for (const object of objects) if (object.type === 'table') db.exec(`DROP TABLE IF EXISTS "${object.name}"`)
+      db.exec(V1_SCHEMA)
+      const insert = db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)')
+      for (const project of projects) insert.run(project.id, project.name, '2026-01-01T00:00:00Z')
+      db.exec('PRAGMA user_version = 1')
+      db.exec('COMMIT')
+    } catch (error) {
+      try { db.exec('ROLLBACK') } catch { /* the failure may already have ended the transaction */ }
+      throw error
+    }
+    // WAL is recorded in the file header and survives reconnects, so it must be switched back for
+    // every sample. SQLite refuses a journal-mode change inside a transaction, hence it runs after
+    // the commit; the reported mode is checked so a silent no-op cannot hide.
+    const journal = db.prepare('PRAGMA journal_mode = DELETE').get() as { journal_mode?: string } | undefined
+    if (journal?.journal_mode !== 'delete') throw new Error(`resetToV1: expected journal mode "delete", got "${journal?.journal_mode}"`)
   } finally {
     db.close()
   }
