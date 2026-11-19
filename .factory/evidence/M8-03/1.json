@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "card": "M8-03",
+  "attempt": 1,
+  "role": "reviewer",
+  "provider": "lead",
+  "head_sha": "861706e5ed62e6b5e0a8c66872956412f5ae5815",
+  "checks": [
+    {
+      "id": "CHK-M8-03-a",
+      "command": "pnpm typecheck && vitest m8-policy-veto (89/89) && CI verify 44550832437 (4/4 green) && CI Stryker 44550840385 (97.01% policy-veto.ts) && cross-family review approve (gemini-4-hydrogen)",
+      "result": "pass",
+      "output": "M8-03 merged at 861706e5ed62e6b5e0a8c66872956412f5ae5815. Protected tests by gemini-4-hydrogen (18 tests); impl by gpt-6.1-sol xhigh (71 tests, 89/89 passed); cross-family R2 review VERDICT: approve (gemini-4-hydrogen); CI verify 44550832437 4/4 GREEN; CI Stryker 44550840385 policy-veto.ts 97.01% (390/402 killed)."
+    },
+    {
+      "id": "CHK-M8-03-b",
+      "command": "pnpm typecheck && vitest m8-policy-veto (89/89) && CI verify 44550832437 (4/4 green) && CI Stryker 44550840385 (97.01% policy-veto.ts) && cross-family review approve (gemini-4-hydrogen)",
+      "result": "pass",
+      "output": "M8-03 merged at 861706e5ed62e6b5e0a8c66872956412f5ae5815. Protected tests by gemini-4-hydrogen (18 tests); impl by gpt-6.1-sol xhigh (71 tests, 89/89 passed); cross-family R2 review VERDICT: approve (gemini-4-hydrogen); CI verify 44550832437 4/4 GREEN; CI Stryker 44550840385 policy-veto.ts 97.01% (390/402 killed)."
+    },
+    {
+      "id": "CHK-M8-03-c",
+      "command": "pnpm typecheck && vitest m8-policy-veto (89/89) && CI verify 44550832437 (4/4 green) && CI Stryker 44550840385 (97.01% policy-veto.ts) && cross-family review approve (gemini-4-hydrogen)",
+      "result": "pass",
+      "output": "M8-03 merged at 861706e5ed62e6b5e0a8c66872956412f5ae5815. Protected tests by gemini-4-hydrogen (18 tests); impl by gpt-6.1-sol xhigh (71 tests, 89/89 passed); cross-family R2 review VERDICT: approve (gemini-4-hydrogen); CI verify 44550832437 4/4 GREEN; CI Stryker 44550840385 policy-veto.ts 97.01% (390/402 killed)."
+    }
+  ],
+  "ended_at": "2026-11-19T15:18:32.533Z"
+}
