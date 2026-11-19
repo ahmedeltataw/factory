@@ -50,12 +50,18 @@ export interface PolicyVetoResult {
 }
 
 function normalizePath(path: string): string {
-  return path.replaceAll('\\', '/').replace(/^(?:\.\/)+/, '').toLowerCase()
+  // Strip leading ./ before collapsing slashes so an exposed root marker survives.
+  const separated = path.replaceAll('\\', '/').replace(/^(?:\.\/)+/, '').replace(/\/+/g, '/')
+  const normalized = separated.split('/').filter((segment) => segment !== '.').join('/')
+  return (normalized || (separated.startsWith('/') ? '/' : '')).toLowerCase()
 }
 
 function matchesPath(path: string, rule: string): boolean {
   const normalizedRule = normalizePath(rule)
-  return path === normalizedRule || (normalizedRule.endsWith('/') && path.startsWith(normalizedRule))
+  if (normalizedRule.endsWith('/')) {
+    return path.startsWith(normalizedRule) || path === normalizedRule.slice(0, -1)
+  }
+  return path === normalizedRule
 }
 
 export function isForbiddenPath(path: string, forbiddenPaths: readonly string[] = []): boolean {

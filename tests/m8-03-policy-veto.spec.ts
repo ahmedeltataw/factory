@@ -61,14 +61,29 @@ describe('M8-03 policy boundary coverage', () => {
   describe('path matching', () => {
     it.each([
       '././Z:relative.ts', '.\\.\\a:relative.ts', '././\\root.txt',
-      '..', 'src/..', '.\\.\\..\\outside.ts', 'src/a\0b.ts',
+      '..', 'src/..', '.\\.\\..\\outside.ts', 'src/a\0b.ts', 'src//./../run.ts',
+      '//etc/passwd', '/./etc/passwd', '\\\\server\\share', '/abs/path', '/.',
     ])('rejects unsafe normalized path %j', (path) => {
       expect(isForbiddenPath(path)).toBe(true)
+      expect(evaluatePolicyVetoes('unblock', output('unblock', { target_paths: [path] })))
+        .toEqual(denied('forbidden-path'))
+    })
+
+    it.each([
+      'tests/./protected/m8-policy-veto.spec.ts', 'tests//protected/m8-policy-veto.spec.ts',
+      'tests\\.\\qa\\smoke.spec.ts', 'schemas/./brain/plan.json', '.factory//state.json',
+      'tests////protected/foo.ts', '././tests/./protected/.',
+      'tests/protected', 'tests/qa', 'schemas', '.factory', 'licenses', 'tests/protected/.',
+      'tests/protected/', 'source_manifest.json/.',
+    ])('rejects protected path %j', (path) => {
+      expect(isForbiddenPath(path)).toBe(true)
+      expect(evaluatePolicyVetoes('unblock', output('unblock', { target_paths: [path] })))
+        .toEqual(denied('forbidden-path'))
     })
 
     it.each([
       'src/.../run.ts', 'src/..config/run.ts', 'src/c:notes.ts', '0:notes.ts',
-      'src/./run.ts', '', './',
+      'src/./run.ts', '', './', '.', 'tests/protected-utils/helper.ts', 'schemas-docs/readme.md',
     ])('does not reject non-traversal relative path %j', (path) => {
       expect(isForbiddenPath(path)).toBe(false)
     })
@@ -87,9 +102,10 @@ describe('M8-03 policy boundary coverage', () => {
     })
 
     it('normalizes custom directory rules and preserves exact-file boundaries', () => {
-      const rules = ['././CUSTOM\\LOCKED\\', '.\\.\\Config\\Secret.json']
+      const rules = ['././CUSTOM\\.\\LOCKED//', '.\\.\\Config\\Secret.json']
       expect(isForbiddenPath('custom/locked/a.ts', rules)).toBe(true)
       expect(isForbiddenPath('custom/locked/', rules)).toBe(true)
+      expect(isForbiddenPath('custom/locked', rules)).toBe(true)
       expect(isForbiddenPath('CUSTOM/locked-copy/a.ts', rules)).toBe(false)
       expect(isForbiddenPath('./CONFIG/SECRET.JSON', rules)).toBe(true)
       expect(isForbiddenPath('config/secret.json.bak', rules)).toBe(false)
@@ -99,6 +115,19 @@ describe('M8-03 policy boundary coverage', () => {
   })
 
   describe('plan destinations and task graphs', () => {
+    it.each(['src/./run.ts', 'src//run.ts', './src/././run.ts'])
+      ('allows equivalent spellings of an exact destination: %j', (path) => {
+        const plan = output('plan', { task_graph: [{ ...task('A'), scope: [path] }] })
+        expect(evaluatePolicyVetoes('plan', plan, { allowedDestinations: ['src/run.ts'] })).toEqual(allowed)
+      })
+
+    it('allows the root of a directory destination', () => {
+      const plan = output('plan', { task_graph: [{ ...task('A'), scope: ['src'] }] })
+      expect(evaluatePolicyVetoes('plan', plan, { allowedDestinations: ['src/'] })).toEqual(allowed)
+      expect(evaluatePolicyVetoes('plan', plan, { allowedDestinations: ['src-other/'] }))
+        .toEqual(denied('invented-destination'))
+    })
+
     it('allows normalized directory destinations and rejects adjacent or file descendants', () => {
       const plan = output('plan')
       expect(evaluatePolicyVetoes('plan', plan, { allowedDestinations: ['././SRC\\'] })).toEqual(allowed)
