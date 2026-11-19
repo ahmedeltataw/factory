@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "summary",
+    "changed_paths",
+    "checks",
+    "evidence",
+    "risks",
+    "question",
+    "next_action",
+    "card_version"
+  ],
+  "properties": {
+    "status": { "type": "string" },
+    "summary": { "type": "string" },
+    "changed_paths": { "type": "array", "items": { "type": "string" } },
+    "checks": { "type": "array", "items": { "type": "string" } },
+    "evidence": { "type": "array", "items": { "type": "string" } },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "question": { "type": ["string", "null"] },
+    "next_action": { "type": "string" },
+    "card_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+    }
+  }
+}

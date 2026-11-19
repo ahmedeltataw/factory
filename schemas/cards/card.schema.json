@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "card_id",
+    "role",
+    "layer",
+    "card_version",
+    "capabilities",
+    "forbidden_paths"
+  ],
+  "properties": {
+    "card_id": { "type": "string" },
+    "role": { "type": "string" },
+    "layer": { "type": "string", "enum": ["core", "stack", "project"] },
+    "card_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+    },
+    "capabilities": { "type": "array", "items": { "type": "string" } },
+    "forbidden_paths": { "type": "array", "items": { "type": "string" } }
+  },
+  "if": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "card_id": {},
+      "role": {},
+      "layer": { "const": "core" },
+      "card_version": {},
+      "capabilities": {},
+      "forbidden_paths": {}
+    }
+  },
+  "then": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "card_id": {},
+      "role": {},
+      "layer": {},
+      "card_version": {},
+      "capabilities": { "type": "array", "minItems": 1 },
+      "forbidden_paths": {}
+    }
+  }
+}

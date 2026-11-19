@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "call_id",
+    "status",
+    "provenance",
+    "confidence",
+    "policy_check",
+    "bugs",
+    "clusters",
+    "priority_order",
+    "reopened_tasks",
+    "waivers"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "call_id": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["ok", "insufficient_evidence", "escalate"] },
+    "provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "ref", "claim"],
+        "properties": {
+          "source": { "type": "string", "minLength": 1 },
+          "ref": { "type": "string", "minLength": 1 },
+          "claim": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "policy_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "vetoes"],
+      "properties": {
+        "allowed": { "type": "boolean" },
+        "vetoes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "bugs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "evidence_refs", "summary"],
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["S0", "S1", "S2", "S3", "S4"] },
+          "original_severity": { "type": "string", "enum": ["S0", "S1", "S2", "S3", "S4"] },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bug_ids"],
+        "properties": {
+          "name": { "type": "string" },
+          "bug_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "priority_order": { "type": "array", "items": { "type": "string" } },
+    "reopened_tasks": { "type": "array", "items": { "type": "string" } },
+    "waivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bug_id", "severity", "reason"],
+        "properties": {
+          "bug_id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["S0", "S1", "S2", "S3", "S4"] },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "qa_test_edits": { "type": "array", "items": { "type": "string" } }
+  }
+}
