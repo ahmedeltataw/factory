@@ -15,8 +15,8 @@ This file is for any agent (Claude, Codex, Gemini/Antigravity, OpenCode, ...) th
 | Role | Who | Does | Never |
 |---|---|---|---|
 | Lead | Gemini 4 Neon (`gemini-4-neon`, Antigravity `antigravity_agy_eltatawy30`, effort `high`) *(updated 2026-11-19)* | writes card specs and briefs, runs gates outside sandboxes, records evidence, merges, pushes | writes product or test code |
-| Builder | **High/Critical:** `gemini-4-argon` / `gemini-4-hydrogen` (Antigravity `antigravity_agy_eltatawy30`), plus `gpt-6.1-sol` (Codex, sole active Codex model). **Medium/Low:** `gemini-3.8-flash-high` (Antigravity). **Support / small low-risk:** OpenCode `deepseek-v4.1-flash-free` / `big-pickle` (`glm` excluded) — **Lead must strictly verify every OpenCode output** | implements one card inside its allowed paths | commits, edits outside allowed paths |
-| Reviewer | Gemini/OpenCode-built → `gpt-6.1-sol` (Codex — sole active Codex model). Codex (`gpt-6.1-sol`)-built → `gemini-4-argon` / `gemini-4-hydrogen` / `gemini-3.8-flash-high` (Antigravity, read-only) or Claude Sonnet (`claude-sonnet-5-5`, read-only). **Hard rule: Reviewer is never from the Builder's model family** | read-only review, verdict `approve` or `changes` | edits files |
+| Builder | **High/Critical:** `gemini-4-argon` / `gemini-4-hydrogen` (Antigravity `antigravity_agy_eltatawy30`), plus `gpt-6.1-sol` (Codex, sole active Codex model, `reasoningEffort: "xhigh"` / Extra High). **Medium/Low:** `gemini-3.8-flash-high` (Antigravity). **Support / small low-risk:** OpenCode `deepseek-v4.1-flash-free` / `big-pickle` (`glm` excluded) — **Lead must strictly verify every OpenCode output** | implements one card inside its allowed paths | commits, edits outside allowed paths |
+| Reviewer | Gemini/OpenCode-built → `gpt-6.1-sol` (Codex — sole active Codex model, `reasoningEffort: "xhigh"` / Extra High). Codex (`gpt-6.1-sol`)-built → `gemini-4-argon` / `gemini-4-hydrogen` / `gemini-3.8-flash-high` (Antigravity, read-only) or Claude Sonnet (`claude-sonnet-5-5`, read-only). **Hard rule: Reviewer is never from the Builder's model family** | read-only review, verdict `approve` or `changes` | edits files |
 | Owner | Ahmed | decisions, runs `acceptance/M<n>.ps1` at milestone close | |
 | Muse | Meta's agent, via repo `factory-muse-inbox` | mirrors the board to Notion, CI triage notes, drafts, web research | writes to this repo |
 
@@ -95,9 +95,9 @@ node scripts/check-evidence.mjs .factory/evidence/*/*.json
 
 ## Running builders and reviewers
 
-Codex (builder: `-s workspace-write -m gpt-6.1-terra`; reviewer: `-s read-only -m gpt-6.1-sol`):
+Codex (sole active model `gpt-6.1-sol` at Extra High effort: `delegate_task` `target.options: { reasoningEffort: "xhigh" }`; CLI builder: `-s workspace-write -m gpt-6.1-sol -c model_reasoning_effort="xhigh"`; CLI reviewer: `-s read-only -m gpt-6.1-sol -c model_reasoning_effort="xhigh"`):
 ```
-codex exec -s workspace-write -m gpt-6.1-terra --skip-git-repo-check \
+codex exec -s workspace-write -m gpt-6.1-sol -c model_reasoning_effort="xhigh" --skip-git-repo-check \
   -c mcp_servers.playwright.enabled=false -c mcp_servers.headroom.enabled=false \
   -c mcp_servers.serena.enabled=false -c mcp_servers.node_repl.enabled=false \
   -c mcp_servers.figma-mcp-go.enabled=false -c mcp_servers.figma-console.enabled=false \
