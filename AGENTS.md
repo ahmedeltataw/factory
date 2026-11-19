@@ -14,11 +14,13 @@ This file is for any agent (Claude, Codex, Gemini/Antigravity, OpenCode, ...) th
 
 | Role | Who | Does | Never |
 |---|---|---|---|
-| Lead | Orchestrator (Carbon) — `gemini-pro-orchestrator` (effort `high`) *(updated 2026-11-18)* | writes card specs and briefs, runs gates outside sandboxes, records evidence, merges, pushes | writes product or test code |
-| Builder | **High/Critical:** `gemini-4-carbon` (high, Antigravity), `gpt-6.1-terra` (Codex), `gemini-4-hydrogen` / `gemini-4-argon` (Antigravity). **Medium/Low:** `gemini-3.8-flash` (high, Antigravity), OpenCode free models as fallback | implements one card inside its allowed paths | commits, edits outside allowed paths |
-| Reviewer | **High/Critical & General:** `gpt-6.1-sol` (Codex), `gemini-4-carbon` (high) / `gemini-4-argon` / `gemini-4-hydrogen` / `gemini-3.8-flash` (Antigravity). **Hard rule: Reviewer is never from the Builder's model family** (Codex-built → Gemini reviewer; Gemini-built → Codex reviewer) | read-only review, verdict `approve` or `changes` | edits files |
+| Lead | Gemini 4 Neon (`gemini-4-neon`, Antigravity `antigravity_agy_eltatawy30`, effort `high`) *(updated 2026-11-19)* | writes card specs and briefs, runs gates outside sandboxes, records evidence, merges, pushes | writes product or test code |
+| Builder | **High/Critical:** `gemini-4-argon` / `gemini-4-hydrogen` (Antigravity `antigravity_agy_eltatawy30`), plus `gpt-6.1-sol` (Codex, sole active Codex model). **Medium/Low:** `gemini-3.8-flash-high` (Antigravity). **Support / small low-risk:** OpenCode `deepseek-v4.1-flash-free` / `big-pickle` (`glm` excluded) — **Lead must strictly verify every OpenCode output** | implements one card inside its allowed paths | commits, edits outside allowed paths |
+| Reviewer | Gemini/OpenCode-built → `gpt-6.1-sol` (Codex — sole active Codex model). Codex (`gpt-6.1-sol`)-built → `gemini-4-argon` / `gemini-4-hydrogen` / `gemini-3.8-flash-high` (Antigravity, read-only) or Claude Sonnet (`claude-sonnet-5-5`, read-only). **Hard rule: Reviewer is never from the Builder's model family** | read-only review, verdict `approve` or `changes` | edits files |
 | Owner | Ahmed | decisions, runs `acceptance/M<n>.ps1` at milestone close | |
 | Muse | Meta's agent, via repo `factory-muse-inbox` | mirrors the board to Notion, CI triage notes, drafts, web research | writes to this repo |
+
+Paused / retired / excluded models (owner, 2026-11-18/19): `gpt-6.1-terra` and **all other Codex models except `gpt-6.1-sol`** (including `gpt-6-luna`); `gemini-4-carbon`, `gemini-pro-orchestrator`; OpenCode `glm` (`glm-5.3-flash-free`). Do not dispatch to them.
 
 Communication (owner rules, 2026-11-11 & 2026-11-17):
 - Telegram group "Ai chat" is the chat channel. The Lead posts there with its bot (@Aeclaude_bot); Muse posts as the user "رفاعي". Keep the Telegram listener (`bash briefs/factory-listen.sh`) running at all times; never stop it for any reason, and restart it right after every wakeup.
