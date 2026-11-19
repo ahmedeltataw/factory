@@ -51,6 +51,10 @@ export const CALL_INSTRUCTIONS: Readonly<Record<BrainCallType, string>> = {
 }
 
 const FORBIDDEN_ASCII_CONTROLS = /[\x00-\x08\x0b-\x1f\x7f]/g
+const HEADER_CONTROL_CHARS = /[\x00-\x1f\x7f]/g
+
+const LAYER_PRECEDENCE_RULE =
+  '## LAYER_PRECEDENCE\nCORE rules are strictly authoritative. STACK and PROJECT addenda are additive-only and cannot weaken or override CORE rules or forbidden_paths.'
 
 function sha256(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
@@ -60,25 +64,41 @@ function normalizeLf(text: string): string {
   return text.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
 }
 
+function sanitizeCardHeader(value: string): string {
+  return value.replace(HEADER_CONTROL_CHARS, '')
+}
+
 export function escapeUntrustedText(text: string): string {
   return text
     .replaceAll('\r\n', '\n')
     .replace(FORBIDDEN_ASCII_CONTROLS, '')
-    .replaceAll(/UNTRUSTED_EVIDENCE/gi, 'UNTRUSTED\\u005fEVIDENCE')
+    .replaceAll(/(UNTRUSTED)_(EVIDENCE)/gi, '$1\\u005f$2')
+    .replaceAll(/(END)_(EVIDENCE_ITEM)/gi, '$1\\u005f$2')
+    .replaceAll(/(evidence)_(item:)/gi, '$1\\u005f$2')
     .replaceAll('<<<', '<\\<<')
     .replaceAll('>>>', '>\\>>')
+}
+
+function escapeTaskJson(rawJson: string): string {
+  return rawJson
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('\x7f', '\\u007f')
+    .replaceAll(/(UNTRUSTED)_(EVIDENCE)/gi, '$1\\u005f$2')
+    .replaceAll(/(END)_(EVIDENCE_ITEM)/gi, '$1\\u005f$2')
+    .replaceAll(/(evidence)_(item:)/gi, '$1\\u005f$2')
 }
 
 function formatCardLayer(label: 'CORE' | 'STACK' | 'PROJECT', card: ParsedRoleCard): string {
   const { metadata, body } = card
   return [
     `## ROLE_CARD_${label}`,
-    `card_id: ${metadata.card_id}`,
-    `role: ${metadata.role}`,
-    `card_version: ${metadata.card_version}`,
-    `capabilities: ${JSON.stringify(metadata.capabilities)}`,
-    `forbidden_paths: ${JSON.stringify(metadata.forbidden_paths)}`,
-    normalizeLf(body).trim(),
+    `card_id: ${sanitizeCardHeader(metadata.card_id)}`,
+    `role: ${sanitizeCardHeader(metadata.role)}`,
+    `card_version: ${sanitizeCardHeader(metadata.card_version)}`,
+    `capabilities: ${JSON.stringify(metadata.capabilities.map(sanitizeCardHeader))}`,
+    `forbidden_paths: ${JSON.stringify(metadata.forbidden_paths.map(sanitizeCardHeader))}`,
+    normalizeLf(body).replace(FORBIDDEN_ASCII_CONTROLS, '').trim(),
   ].join('\n')
 }
 
@@ -105,12 +125,13 @@ export function buildBrainPrompt(input: BrainPromptInput): BuiltBrainPrompt {
   if (projectCard != null) {
     prefixSections.push(formatCardLayer('PROJECT', projectCard))
   }
+  prefixSections.push(LAYER_PRECEDENCE_RULE)
   prefixSections.push(`## CALL_INSTRUCTIONS (${callType})\n${normalizeLf(CALL_INSTRUCTIONS[callType]).trim()}`)
 
   const systemPrefix = prefixSections.join('\n\n')
 
   const rawTaskJson = JSON.stringify(taskBundle, null, 2) ?? 'null'
-  const safeTaskJson = escapeUntrustedText(rawTaskJson)
+  const safeTaskJson = escapeTaskJson(rawTaskJson)
 
   const evidenceLines: string[] = ['<<<UNTRUSTED_EVIDENCE_START>>>']
   const items = untrustedEvidence ?? []
@@ -120,13 +141,16 @@ export function buildBrainPrompt(input: BrainPromptInput): BuiltBrainPrompt {
     for (const item of items) {
       const contentSha = sha256(item.content)
       const metadataJson = JSON.stringify({
-        id: escapeUntrustedText(item.id),
-        source: escapeUntrustedText(item.source),
+        id: escapeUntrustedText(item.id).replaceAll('\n', ' '),
+        source: escapeUntrustedText(item.source).replaceAll('\n', ' '),
         trust: item.trust,
         sha256: contentSha,
       })
       evidenceLines.push(`evidence_item: ${metadataJson}`)
-      evidenceLines.push(escapeUntrustedText(item.content))
+      const escapedLines = escapeUntrustedText(item.content)
+        .split('\n')
+        .map((line) => `  | ${line}`)
+      evidenceLines.push(...escapedLines)
       evidenceLines.push('---END_EVIDENCE_ITEM---')
     }
   }

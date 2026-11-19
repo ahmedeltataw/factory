@@ -32,13 +32,52 @@ export type CardValidationResult =
   | { readonly ok: true; readonly card: ParsedRoleCard }
   | { readonly ok: false; readonly errors: readonly string[] }
 
+const PROTECTED_TARGET_SOURCE =
+  '(?:tests\\/protected\\/?|docs\\/milestones\\/?|AGENTS\\.md|CLAUDE\\.md|schemas\\/?|\\.factory\\/?|forbidden[\\s_-]+paths?|protected[\\s_-]+(?:paths?|tests?|files?|milestones?))'
+
+const RULE_TARGET_SOURCE =
+  '(?:core|factory|policy|veto|gate|verification)[\\s_-]+(?:rules?|restrictions?|policies|veto(?:es)?|gates?|checks?)'
+
+const RELAX_VERB_SOURCE =
+  '(?:override|bypass|disable|ignore|weaken|relax|waive|exempt|lift|suspend|remove|circumvent|skip)(?:s|ed|ing)?'
+
+const RELAX_PASSIVE_SOURCE =
+  '(?:overridden|bypassed|disabled|ignored|weakened|relaxed|waived|exempted|lifted|suspended|removed|circumvented|skipped)'
+
 const ADDENDUM_OVERRIDE_PATTERNS: readonly RegExp[] = [
   /factory[\s_-]*rules\s*:/i,
   /policy[\s_-]*override\b/i,
   /override[\s_-]*forbidden[\s_-]*paths\b/i,
-  /\b(?:override|bypass|disable|ignore|weaken)[\s_-]+(?:factory[\s_-]+rules|forbidden[\s_-]+paths|policy[\s_-]+veto(?:es)?)\b/i,
-  /\b(?:allow|permit)[\s_-]+forbidden[\s_-]+paths\b/i,
+  new RegExp(
+    `(?<!\\b(?:without|never|not|cannot|can't|don't)\\s+)\\b${RELAX_VERB_SOURCE}[\\s_-]+(?:${RULE_TARGET_SOURCE}|forbidden[\\s_-]+paths?|protected[\\s_-]+(?:paths?|tests?|files?|milestones?)|s0|s1)`,
+    'i',
+  ),
+  new RegExp(
+    `\\b(?:${RULE_TARGET_SOURCE}|forbidden[\\s_-]+paths?)[^\\n.;]*\\b(?:is|are|may\\s+be|can\\s+be|will\\s+be|become[s]?|made)\\s+${RELAX_PASSIVE_SOURCE}\\b`,
+    'i',
+  ),
+  /\b(?:allow|permit)[\s_-]+forbidden[\s_-]+paths?\b/i,
+  new RegExp(
+    `\\b(?:allow|permit|may|can|authorized\\s+to|allowed\\s+to|permitted\\s+to)[\\s_-]+(?:modify(?:ing)?|edit(?:ing)?|writ(?:e|ing)|chang(?:e|ing)|touch(?:ing)?|delet(?:e|ing)|overwrit(?:e|ing))(?:[\\s_-]+to)?[\\s_-]+${PROTECTED_TARGET_SOURCE}`,
+    'i',
+  ),
+  new RegExp(
+    `(?<![\\w./-])${PROTECTED_TARGET_SOURCE}[^\\n.;]*(?<!\\bnot\\s+)\\bwritable\\b`,
+    'i',
+  ),
+  new RegExp(
+    `\\bwritable\\b[^\\n.;]*(?<![\\w./-])${PROTECTED_TARGET_SOURCE}`,
+    'i',
+  ),
+  new RegExp(
+    `\\b(?:exceptions?|exempt(?:ions?)?)\\s+(?:to|from)\\s+(?:${RULE_TARGET_SOURCE}|${PROTECTED_TARGET_SOURCE}|core\\b|factory\\b)`,
+    'i',
+  ),
 ]
+
+const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/
+const SINGLE_LINE_SCALAR_FIELDS = ['card_id', 'role', 'card_version'] as const
+const SINGLE_LINE_ARRAY_FIELDS = ['capabilities', 'forbidden_paths'] as const
 
 function normalizeLineEndings(raw: string): string {
   return raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
@@ -89,10 +128,31 @@ function parseScalar(rawValue: string): { ok: true; value: unknown } | { ok: fal
     }
   }
   if (trimmed.startsWith("'")) {
-    if (!trimmed.endsWith("'") || trimmed.length < 2) {
+    let out = ''
+    let closedAt = -1
+    for (let i = 1; i < trimmed.length; i++) {
+      const ch = trimmed[i]!
+      if (ch === "'") {
+        if (trimmed[i + 1] === "'") {
+          out += "'"
+          i++
+          continue
+        }
+        closedAt = i
+        break
+      }
+      out += ch
+    }
+    if (closedAt === -1) {
       return { ok: false, error: `Unterminated single-quoted string: ${trimmed}` }
     }
-    return { ok: true, value: trimmed.slice(1, -1).replaceAll("''", "'") }
+    if (closedAt !== trimmed.length - 1) {
+      return { ok: false, error: `Trailing characters after closing quote: ${trimmed}` }
+    }
+    return { ok: true, value: out }
+  }
+  if (/[\[\]{}]/.test(trimmed)) {
+    return { ok: false, error: `Invalid unquoted bracket or brace in scalar: ${trimmed}` }
   }
   if (trimmed === 'true') return { ok: true, value: true }
   if (trimmed === 'false') return { ok: true, value: false }
@@ -273,6 +333,27 @@ function collectOverrideErrors(frontmatter: Record<string, unknown>, body: strin
   return errors
 }
 
+function collectControlCharErrors(data: Record<string, unknown>): string[] {
+  const errors: string[] = []
+  for (const key of SINGLE_LINE_SCALAR_FIELDS) {
+    const value = data[key]
+    if (typeof value === 'string' && CONTROL_CHAR_PATTERN.test(value)) {
+      errors.push(`Metadata field "${key}" must not contain line breaks or control characters`)
+    }
+  }
+  for (const key of SINGLE_LINE_ARRAY_FIELDS) {
+    const value = data[key]
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string' && CONTROL_CHAR_PATTERN.test(item)) {
+          errors.push(`Metadata field "${key}" entries must not contain line breaks or control characters`)
+        }
+      }
+    }
+  }
+  return errors
+}
+
 export function validateCard(raw: string, expectedLayer?: CardLayer): CardValidationResult {
   const rawNormalized = normalizeLineEndings(raw)
   const lines = rawNormalized.split('\n')
@@ -301,7 +382,7 @@ export function validateCard(raw: string, expectedLayer?: CardLayer): CardValida
     return { ok: false, errors: parsedFm.errors }
   }
 
-  const errors: string[] = []
+  const errors: string[] = collectControlCharErrors(parsedFm.data)
   const metaResult = validateCardMetadata(parsedFm.data)
   if (!metaResult.ok) {
     errors.push(...metaResult.errors)
